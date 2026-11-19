@@ -1,0 +1,31 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "packageManager": "npm",
+  "testRunner": "command",
+  "commandRunner": {
+    "command": "node_modules/.bin/tsx test/domain.test.ts && node_modules/.bin/tsx test/writing-skills.test.ts && node_modules/.bin/tsx test/engine.test.ts && node_modules/.bin/tsx test/library-search.test.ts && node_modules/.bin/tsx test/library-backup.test.ts && node_modules/.bin/tsx test/document-store.test.ts && node_modules/.bin/tsx test/zip.test.ts"
+  },
+  "mutate": [
+    "src/domain/article.ts",
+    "src/domain/settings.ts",
+    "src/domain/writing-skills.ts",
+    "src/domain/text-diff.ts",
+    "src/domain/urls.ts",
+    "src/domain/images.ts",
+    "src/domain/library-backup.ts",
+    "src/domain/library-search.ts",
+    "src/domain/base64.ts",
+    "src/application/document-store.ts"
+  ],
+  "reporters": ["clear-text", "progress", "json"],
+  "jsonReporter": {
+    "fileName": "reports/mutation.json"
+  },
+  "concurrency": 4,
+  "timeoutMS": 30000,
+  "thresholds": {
+    "high": 80,
+    "low": 60,
+    "break": 55
+  }
+}

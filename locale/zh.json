@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Markdown Studio 排版工作台",
+    "description": "在 DeepSeek Harness 内提供本地优先的 Markdown 分栏写作与微信公众号排版工作台：内置 8 套全光谱主题与独立自定义 CSS 工作台、支持一键复制带内联样式的公众号富文本、MathJax 矢量公式与 Mermaid 图表、微信深色模式仿真，以及支持自定义 SKILL.md 写作 Skill 行内红绿对比润色。",
+    "detail": "docs/DETAIL.zh.md"
+  }
+}

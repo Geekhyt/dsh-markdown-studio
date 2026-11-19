@@ -1,0 +1,6 @@
+# dsh-markdown-studio bundle for DeepSeek Harness.
+# Install: dsh plugin --profile desktop add dsh-markdown-studio
+- insert:
+    - id: dsh-markdown-studio
+      name: dsh-markdown-studio
+      config: {}

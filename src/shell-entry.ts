@@ -1,0 +1,229 @@
+import type * as ReactNamespace from 'react';
+import type { ComponentType } from 'react';
+import { useLazyChunkReady } from './runtime/react-lifecycle';
+import type { ClientContext, ClientPlugin, LocaleService } from './types/dsh';
+import type { DshPrimitivesModule } from './types/dsh-primitives';
+import { SidebarPanelIcon } from './ui/brand-mark';
+import { mountPluginStyles, unmountPluginStyles } from './ui/style-lifecycle';
+
+const PANEL_ID = 'dsh-markdown-studio';
+const SHELL_LOCALE_NS = 'dsh-markdown-studio.shell';
+const SHELL_DICT = { 'panel.label': 'Markdown Studio' };
+
+export type StudioChunkLoader = () => Promise<ClientPlugin>;
+
+function registerShellLocale(locale: LocaleService): () => void {
+  const disposers: Array<() => void> = [];
+  const ids = new Set<string>(['en', 'zh', 'zh-CN']);
+  try {
+    locale.getSnapshot().locales.forEach((entry) => {
+      ids.add(entry.id);
+    });
+  } catch (_err) {
+    /* keep base locales */
+  }
+  ids.forEach((id) => {
+    try {
+      const dispose = locale.register(SHELL_LOCALE_NS, id, SHELL_DICT);
+      if (typeof dispose === 'function') disposers.push(dispose);
+    } catch (_err) {
+      /* ignore duplicate registration */
+    }
+  });
+  return () => {
+    disposers.forEach((dispose) => {
+      try {
+        dispose();
+      } catch (_err) {
+        /* ignore */
+      }
+    });
+  };
+}
+
+function bindStudioPluginToContext(
+  studio: ClientPlugin,
+  ctx: ClientContext,
+  disposers: Array<() => void>,
+): ComponentType<Record<string, unknown>> | null {
+  let capturedMain: ComponentType<Record<string, unknown>> | null = null;
+  const proxyCtx: ClientContext = {
+    get: (name) => ctx.get(name),
+    effect: (setup) => {
+      const cleanup = setup();
+      if (typeof cleanup === 'function') disposers.push(cleanup);
+    },
+    slots: {
+      inject: (key, callback) => {
+        if (key === 'main') callback();
+        return () => {};
+      },
+      register: (options, component) => {
+        if (options.name === 'main') capturedMain = component;
+        return () => {};
+      },
+    },
+  };
+  studio.apply(proxyCtx);
+  return capturedMain;
+}
+
+export function create(
+  React: typeof ReactNamespace,
+  _primitives?: DshPrimitivesModule | null,
+  loadStudioChunk?: StudioChunkLoader,
+): ClientPlugin {
+  const h = React.createElement;
+  const loader: StudioChunkLoader = loadStudioChunk || (() => Promise.reject(new Error('studio chunk loader missing')));
+
+  let activeCtx: ClientContext | null = null;
+  let activeDisposers: Array<() => void> = [];
+  let cachedMain: ComponentType<Record<string, unknown>> | null = null;
+  let cachedPlugin: ClientPlugin | null = null;
+  let inflight: Promise<ComponentType<Record<string, unknown>>> | null = null;
+
+  function materializeMain(plugin: ClientPlugin): ComponentType<Record<string, unknown>> {
+    cachedPlugin = plugin;
+    if (activeCtx) {
+      const main = bindStudioPluginToContext(plugin, activeCtx, activeDisposers);
+      if (main) cachedMain = main;
+    }
+    if (!cachedMain) throw new Error('Markdown Studio chunk did not register a main view');
+    return cachedMain;
+  }
+
+  function ensureStudioMain(): Promise<ComponentType<Record<string, unknown>>> {
+    if (cachedMain) return Promise.resolve(cachedMain);
+    if (cachedPlugin && activeCtx) return Promise.resolve(materializeMain(cachedPlugin));
+    if (!inflight) {
+      inflight = loader().then(
+        (plugin) => {
+          inflight = null;
+          return materializeMain(plugin);
+        },
+        (err) => {
+          inflight = null;
+          throw err;
+        },
+      );
+    }
+    return inflight;
+  }
+
+  function PanelIcon(props?: { size?: number; active?: boolean }) {
+    return SidebarPanelIcon({
+      React,
+      size: props && props.size ? props.size : 16,
+      active: Boolean(props && props.active),
+    });
+  }
+
+  function LazyStudioView(props: Record<string, unknown>) {
+    const { error: loadError, retry } = useLazyChunkReady(
+      React,
+      () => Boolean(cachedMain),
+      () => ensureStudioMain(),
+    );
+
+    if (cachedMain) return h(cachedMain, props);
+    if (loadError) {
+      return h(
+        'div',
+        {
+          role: 'alert',
+          style: { padding: '32px', color: 'var(--dsw-alias-label-primary, #1f2329)', fontSize: '14px' },
+        },
+        h('p', { style: { margin: '0 0 12px', fontWeight: 600 } }, 'Markdown Studio failed to load'),
+        h(
+          'button',
+          {
+            type: 'button',
+            onClick: retry,
+            style: { padding: '6px 14px', borderRadius: '8px', cursor: 'pointer' },
+          },
+          'Retry',
+        ),
+      );
+    }
+    return h(
+      'div',
+      {
+        role: 'status',
+        'aria-live': 'polite',
+        style: {
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          height: '100%',
+          color: 'var(--dsw-alias-label-secondary, #646a73)',
+          fontSize: '13px',
+        },
+      },
+      'Loading Markdown Studio…',
+    );
+  }
+
+  function apply(ctx: ClientContext): void {
+    activeCtx = ctx;
+    const locale = ctx.get<LocaleService>('locale');
+    let translate: ((key: string) => string) | null = null;
+
+    ctx.effect(() => {
+      mountPluginStyles();
+      const disposers: Array<() => void> = [];
+      activeDisposers = disposers;
+      if (locale) {
+        disposers.push(registerShellLocale(locale));
+        try {
+          translate = locale.bind(SHELL_LOCALE_NS);
+        } catch (_err) {
+          translate = null;
+        }
+      }
+      if (cachedPlugin) {
+        const rebound = bindStudioPluginToContext(cachedPlugin, ctx, disposers);
+        if (rebound) cachedMain = rebound;
+      }
+      return () => {
+        activeDisposers = [];
+        activeCtx = null;
+        cachedMain = null;
+        while (disposers.length > 0) {
+          const dispose = disposers.pop();
+          if (dispose) {
+            try {
+              dispose();
+            } catch (_err) {
+              /* ignore */
+            }
+          }
+        }
+        unmountPluginStyles();
+      };
+    });
+
+    ctx.slots.inject('sidebar.panellist', () =>
+      ctx.slots.register(
+        {
+          name: 'sidebar.panellist',
+          id: PANEL_ID,
+          order: 40,
+          label: () => (translate ? translate('panel.label') : 'Markdown Studio'),
+        },
+        PanelIcon,
+      ),
+    );
+
+    ctx.slots.inject('main', () =>
+      ctx.slots.register(
+        {
+          name: 'main',
+          key: PANEL_ID,
+        },
+        LazyStudioView,
+      ),
+    );
+  }
+
+  return { inject: ['slots'], apply };
+}

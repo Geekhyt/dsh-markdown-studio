@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Markdown Studio",
+    "description": "Local-first Markdown writing and WeChat Official Account typesetting studio inside DeepSeek Harness with 8 full-spectrum themes, custom CSS workbench, one-click inline-styled HTML copy, MathJax vector formulas, Mermaid diagrams, WeChat Dark Mode simulation, and custom SKILL.md Writing Skills with inline red/green diff.",
+    "detail": "docs/DETAIL.md"
+  }
+}
