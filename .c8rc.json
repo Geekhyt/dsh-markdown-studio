@@ -1,0 +1,15 @@
+{
+  "all": true,
+  "include": ["src/**/*.ts", "host/**/*.ts", "index.ts"],
+  "exclude": [
+    "**/*.d.ts",
+    "src/types/**",
+    "src/domain/dialog.ts",
+    "src/domain/document-ref.ts",
+    "src/domain/editor-types.ts",
+    "src/domain/mermaid.ts",
+    "src/domain/workspace.ts"
+  ],
+  "exclude-after-remap": true,
+  "extension": [".ts", ".js"]
+}

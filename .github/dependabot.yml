@@ -1,0 +1,34 @@
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    groups:
+      react-ecosystem:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+    ignore:
+      # DeepSeek Harness 0.2.x host provides React 18 via PLATFORM_MODULES
+      - dependency-name: "react"
+        versions:
+          - ">= 19.0.0"
+      - dependency-name: "react-dom"
+        versions:
+          - ">= 19.0.0"
+      - dependency-name: "@types/react"
+        versions:
+          - ">= 19.0.0"
+      - dependency-name: "@types/react-dom"
+        versions:
+          - ">= 19.0.0"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5

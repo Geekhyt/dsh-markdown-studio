@@ -1,0 +1,21 @@
+name: 功能建议 / Feature Request
+description: 提议新的主题配方、排版能力或跨平台导出体验 / Propose a new theme preset, typography capability, or export workflow
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 使用场景 / Use Case
+      description: 你希望在 Markdown Studio 中解决什么写作、排版或发布场景需求？
+      placeholder: 例如：希望新增面向小红书 / 知乎长文的复制或卡片导出预设。
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 期望的交互行为或 CSS Token 设计 / Proposed Design
+      description: 如果已有初步的交互、排版或 Token 设想，欢迎直接写在这里。
+    validations:
+      required: false

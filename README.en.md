@@ -1,0 +1,130 @@
+# dsh-markdown-studio
+
+[简体中文](./README.md) | **English** | [Developer and architecture guide](./docs/DEVELOPMENT.md)
+
+[![CI](https://github.com/Geekhyt/dsh-markdown-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/Geekhyt/dsh-markdown-studio/actions/workflows/ci.yml) [![npm version](https://img.shields.io/npm/v/dsh-markdown-studio.svg)](https://www.npmjs.com/package/dsh-markdown-studio) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE) [![DSH: >= 0.2.1](https://img.shields.io/badge/DeepSeek%20Harness-%3E%3D%200.2.1-4f46e5.svg)](./package.json)
+
+**Write clean Markdown. Copy publication-grade WeChat Official Account layouts in one click.**
+
+`dsh-markdown-studio` (Markdown Studio) is a local-first Markdown writing and WeChat Official Account typesetting studio built natively for DeepSeek Harness. Write standard Markdown on the left, preview mobile and desktop layouts in real time on the right across 8 original themes or your own named CSS themes, optionally polish selected passages with custom Writing Skills and inline red/green diff review, and copy ready-to-paste rich HTML for WeChat Official Accounts in one click. Every draft, image, and custom theme stays on your machine — **no sign-in, zero telemetry, zero cloud lock-in** (only passages you explicitly submit to a Writing Skill are processed by your configured host model).
+
+## Quick start
+
+**Option 1: Install directly inside DeepSeek Harness (recommended, no terminal or restart needed)**
+
+Open **Plugins** in the left sidebar, click **Add plugin**, enter `dsh-markdown-studio`, and choose **Enable now**. Then open **Markdown Studio** from the left sidebar.
+
+**Option 2: Install via CLI**
+
+```bash
+dsh plugin --profile desktop add dsh-markdown-studio
+```
+
+To install from a local clone instead, run `npm ci && npm run build` and then `dsh plugin --profile desktop add link:.`. To upgrade later, run `dsh plugin --profile desktop add dsh-markdown-studio@latest`; to uninstall, run `dsh plugin --profile desktop remove dsh-markdown-studio`.
+
+## See it in action
+
+### Split-pane writing with live mobile and desktop preview
+
+Write clean Markdown with `/` slash commands, Notion-style conflict-free shortcuts (`⌘/Ctrl + Shift + E` inline math, `⌘/Ctrl + Alt + 4` task list, `⌘/Ctrl + Alt + -` divider — full cheat sheet in **Settings → Help**), document outline jump, and find & replace. Switch between mobile card and desktop full-width previews with bidirectional scroll sync, then press `⌘/Ctrl + Enter` to copy for WeChat.
+
+![Split-pane Markdown editor and mobile preview](assets/screenshots/hero-studio-split.png)
+
+### 8 full-spectrum built-in themes and Custom CSS Workbench
+
+Switch across 8 original editorial presets (**Classic, Gallery, Insight, Botanical, Noir Gold, Anthology, Briefing, Poster**) and 8 independent code-highlighting palettes. Click **New theme** to author, name, and manage multiple custom CSS themes in a dedicated left-pane CSS Workbench that extracts live color swatches into the **Theme presets** grid (or download and open the standalone [8-Theme Interactive Preview Gallery](./docs/theme-gallery.html) locally).
+
+![Theme presets inspector with built-in and custom themes](assets/screenshots/theme-presets-and-custom.png)
+
+#### Real-device mobile WeChat previews across all 8 built-in themes
+
+The exact same clean Markdown draft rendered across all 8 built-in editorial themes on a mobile WeChat reading screen (lead callouts, TL;DR headers, chapter badges, and code surfaces adapt automatically per theme):
+
+<table>
+  <thead>
+    <tr>
+      <th width="25%" align="center">Classic · 经典</th>
+      <th width="25%" align="center">Gallery · 画廊</th>
+      <th width="25%" align="center">Insight · 新知</th>
+      <th width="25%" align="center">Botanical · 森系</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td width="25%" align="center"><img src="assets/screenshots/themes/classic.png" width="180" alt="Classic mobile preview" /></td>
+      <td width="25%" align="center"><img src="assets/screenshots/themes/gallery.png" width="180" alt="Gallery mobile preview" /></td>
+      <td width="25%" align="center"><img src="assets/screenshots/themes/tech.png" width="180" alt="Insight mobile preview" /></td>
+      <td width="25%" align="center"><img src="assets/screenshots/themes/warm.png" width="180" alt="Botanical mobile preview" /></td>
+    </tr>
+    <tr>
+      <td width="25%" align="center">Crisp blue accent<br /><code>01</code> overline badge</td>
+      <td width="25%" align="center">Museum stone paper<br />bold crown rule</td>
+      <td width="25%" align="center"><code>01 /</code> violet sections<br />deep-indigo code</td>
+      <td width="25%" align="center">Warm oat stationery<br /><code>●</code> dotted rule</td>
+    </tr>
+    <tr>
+      <th width="25%" align="center">Noir Gold · 黑金</th>
+      <th width="25%" align="center">Anthology · 文集</th>
+      <th width="25%" align="center">Briefing · 简报</th>
+      <th width="25%" align="center">Poster · 海报</th>
+    </tr>
+    <tr>
+      <td width="25%" align="center"><img src="assets/screenshots/themes/night.png" width="180" alt="Noir Gold mobile preview" /></td>
+      <td width="25%" align="center"><img src="assets/screenshots/themes/ink.png" width="180" alt="Anthology mobile preview" /></td>
+      <td width="25%" align="center"><img src="assets/screenshots/themes/ruby.png" width="180" alt="Briefing mobile preview" /></td>
+      <td width="25%" align="center"><img src="assets/screenshots/themes/poster.png" width="180" alt="Poster mobile preview" /></td>
+    </tr>
+    <tr>
+      <td width="25%" align="center">Obsidian dark<br />champagne-gold chapters</td>
+      <td width="25%" align="center">Celadon bookleaf<br /><code>「」</code> chapter brackets</td>
+      <td width="25%" align="center">Crimson top rule<br /><code>[01]</code> square seal</td>
+      <td width="25%" align="center">Vivid yellow lead<br />hard-shadow cards</td>
+    </tr>
+  </tbody>
+</table>
+
+### Native dark theme and WeChat night-reading preview
+
+The studio automatically follows DeepSeek Harness light and dark themes. In dark mode, the preview simulates WeChat's night-reading appearance (including brightened math formulas and adapted diagrams) while keeping copied clipboard output in the clean authored light palette.
+
+![Dark mode workspace and WeChat dark preview simulation](assets/screenshots/dark-mode-preview.png)
+
+### Custom Writing Skills with inline red/green diff
+
+Create or import standard `SKILL.md` Writing Skills from **More → Writing Skills** for your own house style, tightening, or headline polish (an open-source `Humanize` / `去 AI 味` preset is also included out of the box). Select any passage and press `⌘/Ctrl + J` or click the floating pill: edits stream from your configured host model into a word-level red/green inline diff (`Tab` to accept, `Esc` to reject) without affecting copied output until accepted.
+
+![Inline red and green AI diff review inside the editor](assets/screenshots/ai-writing-skill-diff.png)
+
+### Distraction-free immersive writing
+
+Focus on long-form writing in full-screen Immersive Write or Immersive Preview mode with a minimal floating mode switcher and live word/character counts; press `Esc` anytime to return to the split workbench.
+
+![Distraction-free immersive writing mode](assets/screenshots/immersive-writing.png)
+
+### Searchable article library and `.zip` archives
+
+Manage multiple drafts and a recycle bin with keyword-highlighted title and excerpt search, conflict-aware merge import, full-library `.zip` backups with local images included, and two-way local `.md` folder sync.
+
+![Article library search and backup modal](assets/screenshots/article-library-search.png)
+
+## Why `dsh-markdown-studio`
+
+- **Zero host patches, fast startup**: Built on official DeepSeek Harness plugin APIs with a `2.1 KiB` gzipped core shell; the editor, math, and diagram engines load only when needed so everyday chats pay zero overhead.
+- **What you preview is what pastes into WeChat**: Eight high-contrast editorial themes compile cleanly into self-contained inline styles, collect external links into bottom references, preserve code indentation, and keep dark preview isolated from light clipboard output.
+- **100% local-first, your data stays yours**: Drafts, recycle bin entries, custom themes, and deduplicated local images remain on your machine. Unused images are cleaned up automatically on permanent deletion, linked files warn before overwriting external edits, and full `.zip` backups keep everything portable (see [storage and archive formats](./docs/schema.md)).
+
+## Built-in themes and capabilities
+
+| Category | Built-in capabilities | Details |
+| :--- | :--- | :--- |
+| **8 editorial themes** | `Classic`, `Gallery`, `Insight`, `Botanical`, `Noir Gold`, `Anthology`, `Briefing`, `Poster` | Full-spectrum presets spanning crisp blue, museum stone, violet explainer, warm oat stationery, obsidian gold, celadon bookleaf, crimson executive brief, and bold yellow poster, plus named custom CSS themes |
+| **Code highlighting** | `Follow theme` (8 custom per-theme surfaces) + `GitHub Light/Dark`, `One Dark`, `Dracula`, `Nord`, `Solarized Light/Dark`, `Monokai` | Code blocks adapt live to each theme or switch to dedicated editor palettes, with full custom CSS override support |
+| **Extended syntax** | `:::lead`, `:::tldr`, `:::pull`, `:::meta`, `:::sign`, auto figure captions, GFM tables, task lists, footnotes, `==highlight==`, `++underline++`, 5 callout types, `:::scroll` / `:::scroll-x`, TeX math, Mermaid | One-click insertion via the Format menu, `/` slash palette, and shortcuts (**Settings → Help** reference), with full English and Chinese UI & sample articles; raw HTML is escaped by default and diagrams render in an isolated sandbox |
+| **Custom Writing Skills** | Create, import, and export standard `SKILL.md` skills (ships with open-source `Humanize` / `去 AI 味` preset) | Selection-triggered floating pill (`⌘/Ctrl + J`), word-level red/green inline diff, and Markdown syntax preservation guards |
+| **Import and export** | One-click WeChat rich HTML / plain text copy, `.md`, standalone `.html`, single-article `.zip`, full-library `.zip` archive, local folder sync | Automatically adapts file export across desktop and browser environments with conflict-aware merge and bundled local assets |
+
+## Documentation and license
+
+- [Developer and architecture guide (English)](./docs/DEVELOPMENT.md) | [开发与架构文档（简体中文）](./docs/DEVELOPMENT.zh-CN.md) | [Interactive Theme Gallery](./docs/theme-gallery.html)
+- [Reference docs index (Chinese)](./docs/README.md) | [Contributing guide](./CONTRIBUTING.md) | [Code of conduct](./CODE_OF_CONDUCT.md) | [Security policy](./SECURITY.md) | [Changelog](./CHANGELOG.md)
+- Released under the [MIT License](./LICENSE). See [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) and [THIRD_PARTY_LICENSES.txt](./THIRD_PARTY_LICENSES.txt) for third-party open-source notices.

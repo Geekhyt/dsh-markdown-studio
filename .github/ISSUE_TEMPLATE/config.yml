@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 安全漏洞私密上报 / Report a Security Vulnerability
+    url: https://github.com/Geekhyt/dsh-markdown-studio/security/advisories/new
+    about: 请通过私密安全通告报告潜在的 XSS、沙箱绕过或信息泄漏问题，切勿提交公开 Issue。
+  - name: 开发与技术架构文档 / Developer & Architecture Guide
+    url: https://github.com/Geekhyt/dsh-markdown-studio/blob/main/docs/DEVELOPMENT.zh-CN.md
+    about: 查阅五产物分包架构、宿主 API 漂移校验与本地开发调试指南。

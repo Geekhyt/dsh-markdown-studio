@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    name: Build, Publish to npm & Create GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js 26 LTS
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+
+      - name: Verify tag matches package.json version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "${TAG_VERSION}" != "${PKG_VERSION}" ]; then
+            echo "::error::Git tag (${GITHUB_REF_NAME}) does not match package.json version (v${PKG_VERSION})."
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium for Headless Smoke
+        run: npx playwright install --with-deps chromium
+
+      - name: Lint, Typecheck, Build, Test & Quality Gates
+        run: |
+          npm run lint
+          npm run licenses:check
+          npm run quality
+          npm run mutation
+
+      - name: Publish to npm (OIDC Trusted Publisher or NPM_TOKEN)
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if npm view "dsh-markdown-studio@${PKG_VERSION}" version --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then
+            echo "dsh-markdown-studio@${PKG_VERSION} is already published on npm; skipping npm publish."
+          else
+            if [ -n "${NPM_TOKEN}" ]; then
+              npm config set "//registry.npmjs.org/:_authToken" "${NPM_TOKEN}"
+            fi
+            npm publish --ignore-scripts --provenance --access public --registry=https://registry.npmjs.org/
+          fi
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release create "${GITHUB_REF_NAME}" --generate-notes --verify-tag
+          fi

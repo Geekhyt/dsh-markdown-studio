@@ -1,0 +1,275 @@
+import { HUMANIZER_ZH_SKILL_BODY } from './humanizer-zh-skill';
+
+export interface WritingSkill {
+  id: string;
+  name: string;
+  description: string;
+  instructions: string;
+  builtin?: boolean;
+}
+
+export interface WritingSkillState {
+  activeSkillId: string;
+  customSkills: WritingSkill[];
+}
+
+export interface SkillPatch {
+  id: string;
+  start: number;
+  end: number;
+  original: string;
+  replacement: string;
+}
+
+export const BUILTIN_HUMANIZER_ID = 'builtin:humanizer-zh';
+export const MAX_CUSTOM_SKILLS = 24;
+export const MAX_SKILL_NAME_CHARS = 32;
+export const MAX_SKILL_DESC_CHARS = 96;
+export const MAX_SKILL_BODY_CHARS = 32_000;
+
+export const HUMANIZER_ZH_INSTRUCTIONS = HUMANIZER_ZH_SKILL_BODY;
+
+export const BUILTIN_HUMANIZER_SKILL: WritingSkill = {
+  id: BUILTIN_HUMANIZER_ID,
+  name: '去 AI 味',
+  description: '开源 op7418/Humanizer-zh（MIT）原版完整规则：消除空话、重复与模板化表达，保留事实与作者声音',
+  instructions: HUMANIZER_ZH_INSTRUCTIONS,
+  builtin: true,
+};
+
+export const EXAMPLE_CUSTOM_SKILL_BODY = [
+  '## 适用目标',
+  '将选中文本打磨成克制、平实的一线工程师技术专栏口吻。',
+  '',
+  '## 改写规则',
+  '1. 用平实的「我」或直接陈述事实，删掉「笔者认为」「不难发现」等端架子措辞。',
+  '2. 删掉空洞形容词与感叹号，用具体条件、数字和因果关系说话。',
+  '3. 遇到超过 35 字的多重定语长句时，主动拆成两句短句。',
+  '4. 严禁修改原文中的代码块、行内代码、数学公式、链接 URL 与本地图片路径。',
+].join('\n');
+
+function recordOf(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function clampText(value: unknown, max: number): string {
+  return typeof value === 'string' ? value.trim().slice(0, max) : '';
+}
+
+export function defaultWritingSkillState(): WritingSkillState {
+  return { activeSkillId: BUILTIN_HUMANIZER_ID, customSkills: [] };
+}
+
+export function sanitizeCustomSkill(input: unknown): WritingSkill | null {
+  const rec = recordOf(input);
+  if (!rec) return null;
+  const id = clampText(rec.id, 64);
+  const name = clampText(rec.name, MAX_SKILL_NAME_CHARS);
+  const instructions = clampText(rec.instructions, MAX_SKILL_BODY_CHARS);
+  if (!id || id === BUILTIN_HUMANIZER_ID || !name || !instructions) return null;
+  return {
+    id,
+    name,
+    description: clampText(rec.description, MAX_SKILL_DESC_CHARS),
+    instructions,
+  };
+}
+
+export function sanitizeWritingSkillState(input: unknown): WritingSkillState {
+  const rec = recordOf(input);
+  if (!rec) return defaultWritingSkillState();
+  const seen = new Set<string>();
+  const customSkills: WritingSkill[] = [];
+  const rawList = Array.isArray(rec.customSkills) ? rec.customSkills : [];
+  for (const item of rawList) {
+    const clean = sanitizeCustomSkill(item);
+    if (!clean || seen.has(clean.id)) continue;
+    seen.add(clean.id);
+    customSkills.push(clean);
+    if (customSkills.length >= MAX_CUSTOM_SKILLS) break;
+  }
+  const candidateActive = clampText(rec.activeSkillId, 64);
+  const validActive = candidateActive === BUILTIN_HUMANIZER_ID || seen.has(candidateActive);
+  return {
+    activeSkillId: validActive ? candidateActive : BUILTIN_HUMANIZER_ID,
+    customSkills,
+  };
+}
+
+export function allWritingSkills(state: WritingSkillState): WritingSkill[] {
+  return [BUILTIN_HUMANIZER_SKILL, ...state.customSkills];
+}
+
+export function findWritingSkill(state: WritingSkillState, id: string): WritingSkill | null {
+  if (id === BUILTIN_HUMANIZER_ID) return BUILTIN_HUMANIZER_SKILL;
+  for (const item of state.customSkills) {
+    if (item.id === id) return item;
+  }
+  return null;
+}
+
+export function resolveActiveSkill(state: WritingSkillState): WritingSkill {
+  return findWritingSkill(state, state.activeSkillId) || BUILTIN_HUMANIZER_SKILL;
+}
+
+export function createCustomSkillId(): string {
+  return 'skill:' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+}
+
+export function nextCustomSkillName(list: readonly WritingSkill[], baseName: string): string {
+  const taken = new Set(list.map((item) => item.name));
+  if (!taken.has(baseName)) return baseName;
+  let seq = 2;
+  while (taken.has(`${baseName} ${seq}`)) seq++;
+  return `${baseName} ${seq}`;
+}
+
+export function upsertCustomSkill(list: readonly WritingSkill[], next: WritingSkill): WritingSkill[] {
+  const idx = list.findIndex((item) => item.id === next.id);
+  if (idx >= 0) {
+    const copy = list.slice();
+    copy[idx] = next;
+    return copy;
+  }
+  if (list.length >= MAX_CUSTOM_SKILLS) return list.slice();
+  return [...list, next];
+}
+
+export function removeCustomSkill(list: readonly WritingSkill[], id: string): WritingSkill[] {
+  return list.filter((item) => item.id !== id);
+}
+
+function unquoteYaml(raw: string): string {
+  const trimmed = raw.trim();
+  if (
+    trimmed.length >= 2 &&
+    ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'")))
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+function parseFrontmatterFields(block: string): Record<string, string> {
+  const fields: Record<string, string> = Object.create(null);
+  for (const line of block.split(/\r?\n/)) {
+    const m = /^([a-zA-Z0-9_-]+)\s*:\s*(.+)$/.exec(line.trim());
+    if (m) fields[m[1].toLowerCase()] = unquoteYaml(m[2]);
+  }
+  return fields;
+}
+
+export function parseSkillMarkdown(
+  raw: string,
+  fallbackName = '自定义 Skill',
+): { name: string; description: string; instructions: string } {
+  const normalized = String(raw || '')
+    .replace(/\r\n?/g, '\n')
+    .trim();
+  let body = normalized;
+  let meta: Record<string, string> = {};
+  const fmMatch = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(normalized);
+  if (fmMatch) {
+    meta = parseFrontmatterFields(fmMatch[1]);
+    body = fmMatch[2].trim();
+  }
+  const headingMatch = /^#\s+(.+)$/m.exec(body);
+  const rawName = meta.title || meta.name || (headingMatch ? headingMatch[1] : '') || fallbackName;
+  return {
+    name: rawName.trim().slice(0, MAX_SKILL_NAME_CHARS) || fallbackName,
+    description: (meta.description || '').slice(0, MAX_SKILL_DESC_CHARS),
+    instructions: (body || normalized).slice(0, MAX_SKILL_BODY_CHARS),
+  };
+}
+
+function toSkillSlug(name: string): string {
+  const ascii = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return ascii || 'custom-writing-skill';
+}
+
+export function serializeSkillMarkdown(skill: Pick<WritingSkill, 'name' | 'description' | 'instructions'>): string {
+  const slug = toSkillSlug(skill.name);
+  const titleLine = skill.name && skill.name !== slug ? [`title: ${JSON.stringify(skill.name)}`] : [];
+  const lines = [
+    '---',
+    `name: ${slug}`,
+    ...titleLine,
+    `description: ${JSON.stringify(skill.description || skill.name)}`,
+    '---',
+    '',
+    skill.instructions.trim(),
+    '',
+  ];
+  return lines.join('\n');
+}
+
+const SELECTION_SYSTEM_GUARD = [
+  '你是内嵌在 Markdown Studio 写作器中的精准文本编辑引擎。',
+  '严格执行下方 <skill_instructions> 处理 <target_text>，并遵守以下输出协议：',
+  '1. 直接输出修改后的 <target_text> Markdown 正文，严禁包裹在 ```markdown 代码块中，严禁输出问候、解释或修改说明。',
+  '2. 必须 100% 保留原文中的代码块、行内代码 `...`、数学公式 $...$ / $$...$$、链接地址、脚注与本地图片路径 assets/...。',
+  '3. 若原文表达已自然清晰无需修改，原样输出 <target_text> 即可。',
+].join('\n');
+
+export function buildSelectionSkillPrompt(params: {
+  skill: WritingSkill;
+  title: string;
+  markdown: string;
+  start: number;
+  end: number;
+}): { system: string; prompt: string } {
+  const before = params.markdown.slice(Math.max(0, params.start - 360), params.start).trim();
+  const target = params.markdown.slice(params.start, params.end);
+  const after = params.markdown.slice(params.end, Math.min(params.markdown.length, params.end + 360)).trim();
+  const system = `${SELECTION_SYSTEM_GUARD}\n\n<skill_instructions name=${JSON.stringify(params.skill.name)}>\n${params.skill.instructions}\n</skill_instructions>`;
+  const prompt = [
+    `<document_title>${params.title || '未命名文章'}</document_title>`,
+    before ? `<context_before_readonly>\n${before}\n</context_before_readonly>` : '',
+    `<target_text>\n${target}\n</target_text>`,
+    after ? `<context_after_readonly>\n${after}\n</context_after_readonly>` : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+  return { system, prompt };
+}
+
+export function unwrapMarkdownFenceIfProse(candidate: string, original: string): string {
+  const origTrim = original.trimStart();
+  if (origTrim.startsWith('```') || origTrim.startsWith('~~~')) return candidate;
+  const match = /^```(?:markdown|md|text)?[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/i.exec(candidate.trim());
+  return match ? match[1].trimEnd() : candidate;
+}
+
+export function applySkillPatches(markdown: string, patches: readonly SkillPatch[]): string {
+  if (!patches.length) return markdown;
+  const ordered = patches.slice().sort((a, b) => b.start - a.start);
+  let result = markdown;
+  for (const patch of ordered) {
+    if (patch.start < 0 || patch.end > result.length || patch.start > patch.end) continue;
+    result = result.slice(0, patch.start) + patch.replacement + result.slice(patch.end);
+  }
+  // Only the patched ranges change: the rest of the document (e.g. intentional blank
+  // lines inside code fences) is preserved byte-for-byte.
+  return result;
+}
+
+export function extractProtectedTokens(text: string): string[] {
+  const tokens: string[] = [];
+  const patterns = [/`[^`\n]+`/g, /\$[^$\n]+\$/g, /assets\/[a-zA-Z0-9._-]+/g];
+  for (const re of patterns) {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text))) tokens.push(m[0]);
+  }
+  return tokens;
+}
+
+export function hasMissingProtectedTokens(original: string, candidate: string): boolean {
+  const required = extractProtectedTokens(original);
+  for (const token of required) {
+    if (!candidate.includes(token)) return true;
+  }
+  return false;
+}
