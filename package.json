@@ -153,7 +153,7 @@
     "mermaid": "^11.17.2",
     "mp-darkmode": "^1.2.3-alpha.6",
     "pixelmatch": "^8.0.0",
-    "playwright": "^1.64.1",
+    "playwright": "^1.65.1",
     "pngjs": "^7.0.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
