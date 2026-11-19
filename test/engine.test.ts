@@ -344,11 +344,23 @@ check('markdown footnotes render and number in reference order', () => {
   );
   assert.ok(!html.includes('[^a]:'));
   assert.ok(!html.includes('[^b]:'));
-  const enRefs = engine.renderMarkdown('[DeepSeek](https://example.com)', {
+  const enRefs = engine.renderMarkdown('[DeepSeek](https://example.com) and note[^copy].\n\n[^copy]: Endnote body.', {
+    locale: 'en',
     linkFootnotes: true,
     referencesTitle: 'References',
   });
   assert.match(enRefs.html, /<p class="mdstudio-refs-title">References<\/p>/);
+  assert.match(enRefs.html, /<sup class="mdstudio-ref">\[1\]<\/sup>/);
+  assert.match(enRefs.html, /<sup class="mdstudio-footnote-ref">\[n1\]<\/sup>/);
+  assert.match(enRefs.html, /id="mdstudio-fn-1">\[n1\] Endnote body\.<\/p>/);
+
+  const zhRefs = engine.renderMarkdown('[DeepSeek](https://example.com) 与脚注[^copy]。\n\n[^copy]: 脚注说明。', {
+    locale: 'zh',
+    linkFootnotes: true,
+  });
+  assert.match(zhRefs.html, /<sup class="mdstudio-ref">\[1\]<\/sup>/);
+  assert.match(zhRefs.html, /<sup class="mdstudio-footnote-ref">\[注1\]<\/sup>/);
+  assert.match(zhRefs.html, /id="mdstudio-fn-1">\[注1\] 脚注说明。<\/p>/);
 });
 
 check('vertical and horizontal scroll containers render cleanly', () => {

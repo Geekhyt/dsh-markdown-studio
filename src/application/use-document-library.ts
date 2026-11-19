@@ -59,6 +59,7 @@ export interface DocumentLibraryOptions {
 
 export interface DocumentLibraryApi extends TrashCommandsApi {
   open: boolean;
+  openSeq: number;
   openLibrary: () => void;
   closeLibrary: () => void;
   switchDocument: (id: string) => void;
@@ -69,6 +70,7 @@ export interface DocumentLibraryApi extends TrashCommandsApi {
 export function useDocumentLibrary(options: DocumentLibraryOptions): DocumentLibraryApi {
   const React = options.React;
   const [open, setOpen] = React.useState(false);
+  const [openSeq, setOpenSeq] = React.useState(0);
   const trashCommands = createTrashCommands({
     store: options.store,
     notify: options.notify,
@@ -78,6 +80,7 @@ export function useDocumentLibrary(options: DocumentLibraryOptions): DocumentLib
   });
 
   function openLibrary(): void {
+    setOpenSeq((prev) => prev + 1);
     setOpen(true);
   }
 
@@ -117,6 +120,7 @@ export function useDocumentLibrary(options: DocumentLibraryOptions): DocumentLib
 
   return {
     open,
+    openSeq,
     openLibrary,
     closeLibrary,
     switchDocument,

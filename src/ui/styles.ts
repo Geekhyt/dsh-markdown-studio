@@ -608,7 +608,7 @@ export const CHROME_CSS: string = [
   '.mdstudio-workspace-row .mdstudio-library-main { flex: 1; min-width: 0; gap: 7px; }',
 
   /* Fallback Toast (DSH Toast Tokens) */
-  '.mdstudio-toast { position: absolute; z-index: 85; left: 50%; top: 14px; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 8px; max-width: min(520px, calc(100% - 32px)); padding: 8px 16px; border: 0; border-radius: 999px; background: var(--mdstudio-ui-toast-bg); color: var(--mdstudio-ui-toast-fg); box-shadow: var(--mdstudio-ui-shadow-prominent); font-size: 12.5px; font-weight: 500; line-height: 1.35; }',
+  '.mdstudio-toast { position: absolute; z-index: 85; left: 50%; bottom: 20px; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 8px; max-width: min(520px, calc(100% - 32px)); padding: 8px 16px; border: 0; border-radius: 999px; background: var(--mdstudio-ui-toast-bg); color: var(--mdstudio-ui-toast-fg); box-shadow: var(--mdstudio-ui-shadow-prominent); font-size: 12.5px; font-weight: 500; line-height: 1.35; pointer-events: none; }',
   '.mdstudio-toast-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--mdstudio-ui-success); }',
   '.mdstudio-toast.is-error .mdstudio-toast-dot { background: var(--mdstudio-ui-error); }',
   '.mdstudio-toast-icon { display: inline-flex; align-items: center; flex: none; color: var(--mdstudio-ui-success); }',

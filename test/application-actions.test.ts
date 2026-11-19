@@ -399,6 +399,16 @@ fmtMd = '第一行\n第二行';
 fmtSel = { start: 0, end: fmtMd.length };
 fmt.insertAlert();
 assert.ok(fmtMd.includes('> [!NOTE]\n> 第一行\n> 第二行'), 'insertAlert prefixes multi-line selection');
+
+// Verify insertCode wraps inline backticks when caret is empty or single-line, and fenced block when multi-line
+fmtMd = '调用  接口';
+fmtSel = { start: 3, end: 3 };
+fmt.insertCode();
+assert.equal(fmtMd, '调用 `toolbar.code` 接口', 'empty selection insertCode inserts inline backticks placeholder');
+fmtMd = 'line1\nline2';
+fmtSel = { start: 0, end: fmtMd.length };
+fmt.insertCode();
+assert.ok(fmtMd.includes('```js\nline1\nline2\n```'), 'multi-line selection insertCode wraps fenced block');
 const fmtLine = createFormattingCommands({
   editorValue: () => fmtMd,
   selection: () => fmtSel,

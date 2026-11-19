@@ -1658,6 +1658,17 @@ function renderReferencesHtml(refs: EngineReference[], title: string, sep: strin
   );
 }
 
+function disambiguateFootnoteMarkers(html: string, ctx: RenderContext, locale?: 'zh' | 'en'): string {
+  if (!ctx.footnoteOrder.length || !ctx.refs.length) return html;
+  var prefix = locale === 'en' ? 'n' : '注';
+  return html
+    .replace(
+      /<sup class="mdstudio-footnote-ref">\[(\d+)\]<\/sup>/g,
+      '<sup class="mdstudio-footnote-ref">[' + prefix + '$1]</sup>',
+    )
+    .replace(/(<p class="mdstudio-footnote-item" id="mdstudio-fn-\d+">)\[(\d+)\]/g, '$1[' + prefix + '$2]');
+}
+
 export function renderMarkdown(source: unknown, options?: RenderOptions): RenderResult {
   var opts = options || {};
   var text = String(source == null ? '' : source).replace(/\r\n?/g, '\n');
@@ -1688,6 +1699,7 @@ export function renderMarkdown(source: unknown, options?: RenderOptions): Render
   };
   var html = injectFrontmatterMeta(blocks(text.split('\n'), ctx), buildFrontmatterMetaHtml(meta, text, opts.locale));
   html += renderFootnotesHtml(ctx, footnotesTitle);
+  html = disambiguateFootnoteMarkers(html, ctx, opts.locale);
   html += renderReferencesHtml(ctx.refs, referencesTitle, defaults.refSep);
   return { html: html, meta: meta, refs: ctx.refs };
 }

@@ -1252,6 +1252,7 @@ export function createClientPlugin(
         }),
 
         h(LibraryDialog, {
+          key: 'library-' + docLibrary.openSeq,
           React,
           t,
           ui: uiKit,

@@ -1732,7 +1732,29 @@ await act(async () => {
   workspaceSearch.dispatchEvent(new window.Event('input', { bubbles: true }));
 });
 await settle(60);
-const draftsRow = byText('.mdstudio-workspace-dir', 'drafts').closest('.mdstudio-workspace-row');
+const draftsBtn = byText('.mdstudio-workspace-dir', 'drafts');
+assert.equal(
+  draftsBtn.getAttribute('aria-expanded'),
+  'true',
+  'workspace directory starts expanded with downward caret',
+);
+const draftsCaret = draftsBtn.querySelector<HTMLElement>('.mdstudio-workspace-caret');
+assert.ok(draftsCaret, 'workspace directory caret exists');
+await act(async () => {
+  draftsCaret.click();
+});
+assert.equal(draftsBtn.getAttribute('aria-expanded'), 'false', 'clicking caret collapses workspace directory');
+assert.equal(
+  container.querySelector('button[title="drafts/nested.md"]'),
+  null,
+  'collapsed directory hides nested child files',
+);
+await act(async () => {
+  draftsCaret.click();
+});
+assert.equal(draftsBtn.getAttribute('aria-expanded'), 'true', 'clicking caret again re-expands workspace directory');
+assert.ok(container.querySelector('button[title="drafts/nested.md"]'), 're-expanded directory shows nested child file');
+const draftsRow = draftsBtn.closest('.mdstudio-workspace-row');
 assert.ok(draftsRow, 'directory row exists');
 const renameDirectoryButton = draftsRow.querySelector<HTMLElement>('button[aria-label="重命名"]');
 assert.ok(renameDirectoryButton, 'directory row has a rename icon action');

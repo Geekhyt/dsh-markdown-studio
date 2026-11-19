@@ -742,65 +742,94 @@ function renderWorkspaceActions(
   );
 }
 
-function workspaceNode(props: WorkspaceDialogProps, entry: WorkspaceEntry, depth: number): ReactNode {
+interface WorkspaceTreeState {
+  collapsed: Record<string, boolean>;
+  forceExpand: boolean;
+  onToggleDir: (path: string) => void;
+}
+
+function renderWorkspaceDirectory(
+  props: WorkspaceDialogProps,
+  entry: WorkspaceDirectory,
+  depth: number,
+  tree: WorkspaceTreeState,
+): ReactNode {
   const h = props.React.createElement;
   const t = props.t;
-  if (entry.kind === 'directory') {
-    const selected = entry.path === props.selectedDir;
-    const onRenameDir = function (): void {
-      void props.actions
-        .onPrompt({ title: t('workspace.renamePrompt'), defaultValue: entry.name })
-        .then(function (name) {
-          if (name) props.actions.onRenameDirectory(entry, name);
-        });
-    };
-    return h(
+  const selected = entry.path === props.selectedDir;
+  const expanded = tree.forceExpand || !tree.collapsed[entry.path];
+  const onRenameDir = function (): void {
+    void props.actions.onPrompt({ title: t('workspace.renamePrompt'), defaultValue: entry.name }).then(function (name) {
+      if (name) props.actions.onRenameDirectory(entry, name);
+    });
+  };
+  return h(
+    'div',
+    { key: entry.path },
+    h(
       'div',
-      { key: entry.path },
+      {
+        className: 'mdstudio-workspace-row' + (selected ? ' is-selected' : ''),
+        style: { paddingLeft: 8 + depth * 14 },
+        draggable: true,
+        onDragStart: function (event: ReactNamespace.DragEvent<HTMLDivElement>) {
+          event.dataTransfer?.setData('text/plain', entry.path);
+        },
+        onDragOver: function (event: ReactNamespace.DragEvent<HTMLDivElement>) {
+          event.preventDefault();
+        },
+        onDrop: function (event: ReactNamespace.DragEvent<HTMLDivElement>) {
+          event.preventDefault();
+          const source = event.dataTransfer?.getData('text/plain');
+          const sourceEntry = source ? findWorkspaceEntry(props.entries, source) : undefined;
+          if (sourceEntry && source !== entry.path) props.actions.onMove(sourceEntry, entry.path);
+        },
+      },
       h(
-        'div',
+        'button',
         {
-          className: 'mdstudio-workspace-row' + (selected ? ' is-selected' : ''),
-          style: { paddingLeft: 8 + depth * 14 },
-          draggable: true,
-          onDragStart: function (event: ReactNamespace.DragEvent<HTMLDivElement>) {
-            event.dataTransfer?.setData('text/plain', entry.path);
+          type: 'button',
+          className: 'mdstudio-workspace-dir',
+          'aria-expanded': expanded,
+          onClick: function () {
+            props.actions.onSelectDirectory(entry.path);
           },
-          onDragOver: function (event: ReactNamespace.DragEvent<HTMLDivElement>) {
-            event.preventDefault();
-          },
-          onDrop: function (event: ReactNamespace.DragEvent<HTMLDivElement>) {
-            event.preventDefault();
-            const source = event.dataTransfer?.getData('text/plain');
-            const sourceEntry = source ? findWorkspaceEntry(props.entries, source) : undefined;
-            if (sourceEntry && source !== entry.path) props.actions.onMove(sourceEntry, entry.path);
-          },
+          title: entry.path,
         },
         h(
-          'button',
+          'span',
           {
-            type: 'button',
-            className: 'mdstudio-workspace-dir',
-            onClick: function () {
-              props.actions.onSelectDirectory(entry.path);
+            className: 'mdstudio-workspace-caret',
+            'aria-hidden': 'true',
+            onClick: function (event: ReactNamespace.MouseEvent<HTMLSpanElement>) {
+              event.stopPropagation();
+              tree.onToggleDir(entry.path);
             },
-            title: entry.path,
           },
-          h(
-            'span',
-            { className: 'mdstudio-workspace-caret', 'aria-hidden': 'true' },
-            h(props.ui.Icon, { name: 'chevronRight', size: 12 }),
-          ),
-          h(props.ui.Icon, { name: selected ? 'folderOpen' : 'folder', size: 14 }),
-          h('span', { className: 'mdstudio-workspace-name' }, entry.name),
+          h(props.ui.Icon, { name: expanded ? 'chevronDown' : 'chevronRight', size: 12 }),
         ),
-        renderWorkspaceActions(props, entry, onRenameDir),
+        h(props.ui.Icon, { name: expanded || selected ? 'folderOpen' : 'folder', size: 14 }),
+        h('span', { className: 'mdstudio-workspace-name' }, entry.name),
       ),
-      entry.children.map(function (child) {
-        return workspaceNode(props, child, depth + 1);
-      }),
-    );
-  }
+      renderWorkspaceActions(props, entry, onRenameDir),
+    ),
+    expanded
+      ? entry.children.map(function (child) {
+          return workspaceNode(props, child, depth + 1, tree);
+        })
+      : null,
+  );
+}
+
+function workspaceNode(
+  props: WorkspaceDialogProps,
+  entry: WorkspaceEntry,
+  depth: number,
+  tree: WorkspaceTreeState,
+): ReactNode {
+  if (entry.kind === 'directory') return renderWorkspaceDirectory(props, entry, depth, tree);
+  const h = props.React.createElement;
+  const t = props.t;
   const onRenameFile = function (): void {
     void props.actions.onPrompt({ title: t('workspace.renamePrompt'), defaultValue: entry.name }).then(function (name) {
       if (name) props.actions.onRename(entry, name);
@@ -875,6 +904,7 @@ function buildWorkspaceMenuItems(props: WorkspaceDialogProps): DshMenuEntry[] {
 
 export function WorkspaceDialog(props: WorkspaceDialogProps): ReactNode {
   const [query, setQuery] = props.React.useState('');
+  const [collapsed, setCollapsed] = props.React.useState<Record<string, boolean>>({});
   const { menuOpen, updateMenuOpen, onModalClose } = useModalMenuState(props.React, props.open, props.onClose);
   if (!props.open) return null;
   const h = props.React.createElement;
@@ -882,6 +912,15 @@ export function WorkspaceDialog(props: WorkspaceDialogProps): ReactNode {
   const selectedName = props.selectedDir || t('workspace.root');
   const locationText = props.name ? props.name + (props.selectedDir ? ' / ' + props.selectedDir : '') : selectedName;
   const visibleEntries = filterWorkspace(props.entries, query);
+  const treeState: WorkspaceTreeState = {
+    collapsed,
+    forceExpand: Boolean(query.trim()),
+    onToggleDir: function (dirPath: string) {
+      setCollapsed(function (prev) {
+        return { ...prev, [dirPath]: !prev[dirPath] };
+      });
+    },
+  };
   const title = t('workspace.title') + (props.name ? ' · ' + props.name : '');
   const onNewFile = function (): void {
     void props.actions.onPrompt({ title: t('workspace.filePrompt') }).then(function (name) {
@@ -1021,7 +1060,7 @@ export function WorkspaceDialog(props: WorkspaceDialogProps): ReactNode {
             ),
             visibleEntries.length
               ? visibleEntries.map(function (entry) {
-                  return workspaceNode(props, entry, 0);
+                  return workspaceNode(props, entry, 0, treeState);
                 })
               : h(
                   'p',

@@ -154,10 +154,10 @@ export function createFormattingCommands(options: FormattingOptions): Formatting
     const value = options.editorValue();
     const range = options.selection();
     const selected = value.slice(range.start, range.end);
-    if (!selected || selected.indexOf('\n') !== -1) {
-      insertBlock('```js\n' + (selected || 'const hello = "world";') + '\n```');
+    if (selected.indexOf('\n') !== -1) {
+      insertBlock('```js\n' + selected + '\n```');
     } else {
-      wrapSelection('`', '`');
+      wrapSelection('`', '`', options.t('toolbar.code'));
     }
   }
 
