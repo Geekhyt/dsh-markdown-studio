@@ -55,9 +55,13 @@ const AI_ERROR_CODE_KEYS: Record<string, string> = {
   INTERNAL: 'err.internal',
 };
 
+const API_KEY_MISSING_PATTERN = /api[\s_-]?key|unauthori[sz]ed|authentication|invalid[\s_-]?token|\b401\b/i;
+
 export function formatAiClientError(error: unknown, t: (key: string) => string): string {
   const candidate = error && typeof error === 'object' ? (error as { code?: unknown; message?: unknown }) : null;
   const code = typeof candidate?.code === 'string' ? candidate.code : '';
+  const message = typeof candidate?.message === 'string' ? candidate.message : '';
+  if (API_KEY_MISSING_PATTERN.test(code + ' ' + message)) return t('err.aiApiKeyMissing');
   const httpMatch = /^HTTP_(\d+)$/.exec(code);
   if (httpMatch) return `${t('err.aiHttpError')} (HTTP ${httpMatch[1]})`;
   const key = code ? AI_ERROR_CODE_KEYS[code] : '';

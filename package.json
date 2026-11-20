@@ -1,6 +1,6 @@
 {
   "name": "dsh-markdown-studio",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Local-first Markdown writing and WeChat Official Account typesetting studio for DeepSeek Harness with 8 editorial themes, named custom CSS themes, one-click inline-styled HTML copy, MathJax/Mermaid, and custom SKILL.md writing skills with inline diff.",
   "license": "MIT",
   "author": "Geekhyt",

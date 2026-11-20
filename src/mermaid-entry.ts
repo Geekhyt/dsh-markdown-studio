@@ -21,11 +21,28 @@ function ensureInitialized(): void {
   initialized = true;
 }
 
+let renderSeq = 0;
+
+/** Mermaid mounts a temporary `#d<id>` (or sandbox `#i<id>`) node on <body> and leaves it behind when parsing fails. */
+function removeTempNodes(id: string): void {
+  if (typeof document === 'undefined') return;
+  for (const prefix of ['d', 'i']) {
+    const node = document.getElementById(prefix + id);
+    if (node && node.parentNode === document.body) node.remove();
+  }
+}
+
 export async function render(code: unknown, id?: string): Promise<string> {
   ensureInitialized();
   const source = String(code || '');
-  const result = await mermaid.render(id || `mdstudio-mermaid-${Math.random().toString(36).slice(2)}`, source);
-  return result.svg;
+  renderSeq += 1;
+  const renderId = (id || 'mdstudio-mermaid') + '-r' + renderSeq;
+  try {
+    const result = await mermaid.render(renderId, source);
+    return result.svg;
+  } finally {
+    removeTempNodes(renderId);
+  }
 }
 
 if (typeof window !== 'undefined') {

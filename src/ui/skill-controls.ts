@@ -227,7 +227,7 @@ export function AiReviewOverlay(props: AiReviewHeaderProps): ReactNode {
   const session = props.session;
   if (!session) return null;
 
-  const showErrorBanner = session.status === 'error';
+  const showErrorBanner = session.status === 'error' && !props.useCodeMirror;
 
   return h(
     props.React.Fragment,

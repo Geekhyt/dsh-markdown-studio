@@ -203,6 +203,20 @@ assert.ok(
 await page.waitForTimeout(1200);
 const mermaidCount = await page.locator('.mdstudio-preview-article img[alt="Mermaid diagram"]').count();
 assert.ok(mermaidCount > 0, `Mermaid renders to images (found ${mermaidCount})`);
+const mermaidLeaks = await page.evaluate(async () => {
+  const api = (window as unknown as { __MDSTUDIO_MERMAID__?: { render(code: string, id?: string): Promise<string> } })
+    .__MDSTUDIO_MERMAID__;
+  if (!api) return -1;
+  for (const broken of ['flowchart LR\n  A -->', 'flowchart LR\n  A[x] --> B[', 'sequenceDiagram\n  A->>']) {
+    try {
+      await api.render(broken, 'mdstudio-mermaid-leak-' + Date.now());
+    } catch {
+      // expected syntax error
+    }
+  }
+  return document.querySelectorAll('body > [id^="dmdstudio-mermaid"], body > [id^="imdstudio-mermaid"]').length;
+});
+assert.equal(mermaidLeaks, 0, 'failed Mermaid renders leave no temporary #d<id> nodes on <body>');
 await page.evaluate(() => {
   (window as unknown as { __name?: (fn: unknown) => unknown }).__name = (fn: unknown) => fn;
 });
@@ -849,6 +863,23 @@ assert.equal(
   'write',
   'keyboard shortcut enters immersive writing',
 );
+await page.locator('.cm-content').click();
+await page.keyboard.press(process.platform === 'darwin' ? 'Meta+F' : 'Control+F');
+await page.waitForSelector('.mdstudio-searchbar', { timeout: 3000 });
+const immersiveSearchOverlap = await page.evaluate(() => {
+  const dock = document.querySelector<HTMLElement>('.mdstudio-immersive-dock');
+  const bar = document.querySelector<HTMLElement>('.mdstudio-searchbar');
+  if (!dock || !bar) return ['missing'];
+  const d = dock.getBoundingClientRect();
+  return Array.from(bar.querySelectorAll<HTMLElement>('button, input'))
+    .filter((el) => {
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && !(r.right <= d.left || r.left >= d.right || r.bottom <= d.top || r.top >= d.bottom);
+    })
+    .map((el) => (el.textContent || el.getAttribute('aria-label') || el.tagName).trim());
+});
+assert.deepEqual(immersiveSearchOverlap, [], 'immersive dock never covers search bar controls');
+await page.locator('.mdstudio-searchbar .mdstudio-search-close').click();
 await page.locator('.mdstudio-immersive-exit').click();
 await page.waitForTimeout(100);
 assert.equal(

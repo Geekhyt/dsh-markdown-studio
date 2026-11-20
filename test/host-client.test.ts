@@ -91,5 +91,20 @@ assert.equal(
   'AI service returned an unexpected HTTP error (HTTP 502)',
 );
 assert.equal(formatAiClientError(new Error('Provider quota exceeded'), tEn), 'Provider quota exceeded');
+assert.equal(
+  formatAiClientError(
+    new AiClientError(
+      'LLM_ERROR',
+      'llm-deepseek: no API key for provider route "deepseek-official"; store DEEPSEEK_API_KEY through the credentials service',
+    ),
+    tEn,
+  ),
+  'No model API key is configured. Add one under DeepSeek Harness → Models, then retry.',
+  'raw host "no API key" failures map to a friendly localized message',
+);
+assert.equal(
+  formatAiClientError(new AiClientError('HTTP_401', 'Unauthorized'), (k) => UI_STRINGS_EN[k] || k),
+  'No model API key is configured. Add one under DeepSeek Harness → Models, then retry.',
+);
 
 console.log('17 host-client checks passed.');

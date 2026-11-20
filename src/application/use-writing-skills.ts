@@ -373,8 +373,8 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
     } catch (error) {
       if (controller.signal.aborted) return;
       const msg = formatAiClientError(error, t);
+      // The inline review card (and the fallback banner) already surface the error; no duplicate toast.
       setSession((prev) => (prev ? { ...prev, status: 'error', error: msg } : null));
-      options.notify(msg, 'error');
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
     }

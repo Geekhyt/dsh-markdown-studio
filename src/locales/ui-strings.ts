@@ -441,6 +441,7 @@ export const UI_STRINGS_ZH: Record<string, string> = {
   'err.aiStreamInterrupted': '模型输出意外中断，请重试',
   'err.aiOutputTruncated': '模型输出达到长度上限，结果不完整，请缩短选中范围后重试',
   'err.aiModelUnconfigured': '未检测到可用模型，请先在 DeepSeek Harness 设置中配置默认模型',
+  'err.aiApiKeyMissing': '还没有配置模型 API Key，请先在 DeepSeek Harness 的「模型」设置中填写后重试',
   'err.aiLlmUnavailable': '宿主模型服务不可用，请确认在 DeepSeek Harness 中运行',
   'err.aiHttpError': 'AI 服务响应异常',
 };
@@ -896,6 +897,7 @@ export const UI_STRINGS_EN: Record<string, string> = {
   'err.aiOutputTruncated':
     'The model output hit its length limit and is incomplete. Select a shorter passage and retry.',
   'err.aiModelUnconfigured': 'No model configured. Choose a default model in DeepSeek Harness settings first.',
+  'err.aiApiKeyMissing': 'No model API key is configured. Add one under DeepSeek Harness → Models, then retry.',
   'err.aiLlmUnavailable': 'Host model runtime is unavailable. Ensure the plugin is running inside DeepSeek Harness.',
   'err.aiHttpError': 'AI service returned an unexpected HTTP error',
 };
