@@ -118,8 +118,17 @@ function findMathClose(text: string, from: number, delimiter: string): number {
   return -1;
 }
 
+function skipTeXMath(text: string, index: number): number {
+  if (text.charAt(index) !== '\\') return index;
+  const next = text.charAt(index + 1);
+  if (next !== '(' && next !== '[') return index;
+  const close = findMathClose(text, index + 2, next === '(' ? '\\)' : '\\]');
+  return close === -1 ? index : close + 1;
+}
+
 function skipCodeOrMath(text: string, index: number): number {
   const ch = text[index];
+  if (ch === '\\') return skipTeXMath(text, index);
   if (ch !== '`' && ch !== '$') return index;
   let len = 1;
   while (text[index + len] === ch) len++;
@@ -138,17 +147,21 @@ export function splitTopLevel(text: string, separator: string): string[] {
   var start = 0;
   for (var i = 0; i < text.length; i++) {
     var ch = text[i];
-    if (ch === '\\') {
-      i++;
-      continue;
-    }
     if (quote) {
+      if (ch === '\\') {
+        i++;
+        continue;
+      }
       if (ch === quote) quote = null;
       continue;
     }
     const jumped = skipCodeOrMath(text, i);
     if (jumped > i) {
       i = jumped;
+      continue;
+    }
+    if (ch === '\\') {
+      i++;
       continue;
     }
     if (ch === '"' || ch === "'") {
@@ -399,14 +412,14 @@ function findLinkBracketEnd(text: string, start: number): number {
   if (text.charAt(start) !== '[') return -1;
   var depth = 0;
   for (var i = start; i < text.length; i++) {
-    var ch = text[i];
-    if (ch === '\\') {
-      i++;
-      continue;
-    }
     const jumped = skipCodeOrMath(text, i);
     if (jumped > i) {
       i = jumped;
+      continue;
+    }
+    var ch = text[i];
+    if (ch === '\\') {
+      i++;
       continue;
     }
     if (ch === '[') depth++;
@@ -469,14 +482,14 @@ function findClosingDelimiter(text: string, from: number, delimiter: string): nu
   const ch = delimiter.charAt(0);
   const len = delimiter.length;
   for (let i = from; i <= text.length - len; i++) {
-    const cur = text.charAt(i);
-    if (cur === '\\') {
-      i++;
-      continue;
-    }
     const jumped = skipCodeOrMath(text, i);
     if (jumped > i) {
       i = jumped;
+      continue;
+    }
+    const cur = text.charAt(i);
+    if (cur === '\\') {
+      i++;
       continue;
     }
     if (cur !== ch) continue;
@@ -568,6 +581,28 @@ function inlineEscape(text: string, index: number): InlineToken | null {
   return { html: escapeHtml(nextChar), next: index + 2 };
 }
 
+function renderMathSpan(display: boolean, source: string): string {
+  return (
+    '<span class="mdstudio-math" data-mdstudio-display="' +
+    (display ? '1' : '0') +
+    '" data-mdstudio-tex="' +
+    escapeAttr(source) +
+    '"></span>'
+  );
+}
+
+function inlineTeXMath(text: string, index: number): InlineToken | null {
+  if (text.charAt(index) !== '\\') return null;
+  const next = text.charAt(index + 1);
+  if (next !== '(' && next !== '[') return null;
+  const display = next === '[';
+  const close = findMathClose(text, index + 2, display ? '\\]' : '\\)');
+  if (close === -1) return null;
+  const source = text.slice(index + 2, close).trim();
+  if (!source) return null;
+  return { html: renderMathSpan(display, source), next: close + 2 };
+}
+
 function inlineMath(text: string, index: number): InlineToken | null {
   if (text.charAt(index) !== '$') return null;
   const display = text.substr(index, 2) === '$$';
@@ -577,15 +612,7 @@ function inlineMath(text: string, index: number): InlineToken | null {
   const source = text.slice(index + delimiter.length, close);
   if (!source.trim().length) return null;
   if (!display && (/^\s/.test(source) || /\s$/.test(source))) return null;
-  return {
-    html:
-      '<span class="mdstudio-math" data-mdstudio-display="' +
-      (display ? '1' : '0') +
-      '" data-mdstudio-tex="' +
-      escapeAttr(source) +
-      '"></span>',
-    next: close + delimiter.length,
-  };
+  return { html: renderMathSpan(display, source), next: close + delimiter.length };
 }
 
 function stripCodeSpanPadding(raw: string): string {
@@ -754,7 +781,7 @@ function renderInline(text: string, ctx: RenderContext): string {
     }
   }
   while (i < text.length) {
-    const escaped = inlineEscape(text, i);
+    const escaped = inlineTeXMath(text, i) || inlineEscape(text, i);
     if (escaped) {
       flush();
       out += escaped.html;
@@ -849,7 +876,7 @@ function isEditorialContainerStart(line: string): boolean {
 }
 
 function isMathBlockStart(line: string): boolean {
-  return /^ {0,3}\$\$/.test(line);
+  return /^ {0,3}(?:\$\$|\\\[)/.test(line);
 }
 
 function isListLine(line: string): boolean {
@@ -1320,17 +1347,24 @@ function renderDisplayMathHtml(tex: string): string {
   );
 }
 
-function parseMathBlock(lines: string[], start: number): BlockResult | null {
-  var single = /^ {0,3}\$\$(.+?)\$\$[ \t]*$/.exec(lines[start]);
+function parseDelimitedMathBlock(
+  lines: string[],
+  start: number,
+  singleRe: RegExp,
+  openRe: RegExp,
+  closeRe: RegExp,
+  closeToken: string,
+): BlockResult | null {
+  var single = singleRe.exec(lines[start]);
   if (single && single[1].trim()) {
     return { html: renderDisplayMathHtml(single[1].trim()), next: start + 1 };
   }
-  var open = /^ {0,3}\$\$[ \t]*(.*)$/.exec(lines[start]);
-  if (!open || open[1].indexOf('$$') !== -1) return null;
+  var open = openRe.exec(lines[start]);
+  if (!open || open[1].indexOf(closeToken) !== -1) return null;
   var body: string[] = open[1] ? [open[1]] : [];
   for (var i = start + 1; i < lines.length; i++) {
-    var close = /^(.*?)\$\$[ \t]*$/.exec(lines[i]);
-    if (close) {
+    var close = closeRe.exec(lines[i]);
+    if (close && !isOddBackslashEscaped(lines[i], close[1].length)) {
       if (close[1].trim()) body.push(close[1]);
       var tex = body.join('\n').trim();
       return tex ? { html: renderDisplayMathHtml(tex), next: i + 1 } : null;
@@ -1338,6 +1372,27 @@ function parseMathBlock(lines: string[], start: number): BlockResult | null {
     body.push(lines[i]);
   }
   return null;
+}
+
+function parseMathBlock(lines: string[], start: number): BlockResult | null {
+  return (
+    parseDelimitedMathBlock(
+      lines,
+      start,
+      /^ {0,3}\$\$(.+?)\$\$[ \t]*$/,
+      /^ {0,3}\$\$[ \t]*(.*)$/,
+      /^(.*?)\$\$[ \t]*$/,
+      '$$',
+    ) ||
+    parseDelimitedMathBlock(
+      lines,
+      start,
+      /^ {0,3}\\\[(.+?)\\\][ \t]*$/,
+      /^ {0,3}\\\[[ \t]*(.*)$/,
+      /^(.*?)\\\][ \t]*$/,
+      '\\]',
+    )
+  );
 }
 
 function renderInlineLinesJoined(lines: string[], sep: string, ctx: RenderContext): string {

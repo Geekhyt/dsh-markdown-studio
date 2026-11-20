@@ -12,7 +12,7 @@
 
 1. **极简冷启动壳（`dist/client.js`，仅 `4.2 KiB`）** —— DSH 启动时仅加载极简入口，注册左侧边栏图标（`sidebar.panellist`）、基础多语言与主视图懒加载容器（`main`）。用户在日常 AI 对话期间**零编辑器脚本开销**。
 2. **工作台与可逆排版流水线（`dist/client.studio.js`）** —— 当用户首次点击打开 **Markdown Studio** 时，通过 DSH 官方 `require.async("./client.studio.js")` 按需加载 CodeMirror 6、`DocumentStore`、`Tone × Rhythm × Atoms` 主题系统及内联样式级联编译器。
-3. **重型渲染器按需加载（`dist/math.js` & `dist/mermaid.js`）** —— 仅当当前文稿包含 `$...$` / `$$...$$` 公式或 ```` ```mermaid ```` 代码块时，才从本机 Host 拉取 MathJax 3（自包含矢量 `<path>` SVG）或 Mermaid 11（`strict` 沙箱 + `DOMPurify` 光栅化）。
+3. **重型渲染器按需加载（`dist/math.js` & `dist/mermaid.js`）** —— 仅当当前文稿包含 TeX 公式（`$...$` / `$$...$$` 与 `\(...\)` / `\[...\]`）或 ```` ```mermaid ```` 代码块时，才从本机 Host 拉取 MathJax 3（自包含矢量 `<path>` SVG）或 Mermaid 11（`strict` 沙箱 + `DOMPurify` 光栅化）。
 4. **双通道隔离的本机图片服务与按需回环 AI 路由（`dist/index.js`）** —— 图片写入动作走受宿主鉴权的同源 `POST /api/markdown-studio/wechat`（SHA-256 去重落盘），预览走仅绑定 `127.0.0.1` 的只读回环服务；AI 写作 Skill 走同源回环 `POST /api/markdown-studio/ai`，仅在用户主动触发时调用宿主已配置的 `llm` 服务处理选中片段。
 
 ```mermaid

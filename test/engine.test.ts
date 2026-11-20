@@ -594,4 +594,64 @@ check('v2 editorial containers (tldr, pull, sign, meta), frontmatter eyebrow, an
   assert.match(blockMeta.html, /<section class="mdstudio-pull">单行金句写法<\/section><p>后续正文<\/p>/);
 });
 
+check('TeX math delimiters \\(...\\) and \\[...\\] render natively while preserving escapes and code', () => {
+  const doc = engine.renderMarkdown(
+    [
+      '行内公式 \\(E = mc^2\\) 与带空格的 \\( S = \\alpha R + \\beta C \\)，且强调 **粗体 \\(a * b\\) 保持完整**。',
+      '',
+      '带链接 [\\(a[0]\\)](https://example.com/math) 与代码 `\\(code\\)` 与转义 \\\\(literal\\\\) 与空 \\(\\) 与 \\[note] 与未闭合 \\(open。',
+      '',
+      '\\[ \\text{ROI} = \\frac{1}{2} \\]',
+      '',
+      '\\[',
+      'f(x) = \\begin{cases}',
+      '-x^2, & x < 0 \\\\',
+      '> 0, & x > 0',
+      '\\end{cases}',
+      '\\]',
+      '',
+      '段内展示公式 \\[a + b = c\\] 后接正文。',
+      '',
+      '| 公式 | 说明 |',
+      '| :--- | :--- |',
+      '| \\(P(A|B)\\) | 条件概率 |',
+      '',
+      '```ts',
+      'const raw = "\\(not math\\)";',
+      '```',
+      '',
+      '\\[',
+      'unclosed display',
+    ].join('\n'),
+  );
+
+  assert.match(doc.html, /data-mdstudio-display="0" data-mdstudio-tex="E = mc\^2"/);
+  assert.match(doc.html, /data-mdstudio-display="0" data-mdstudio-tex="S = \\alpha R \+ \\beta C"/);
+  assert.match(
+    doc.html,
+    /<strong>粗体 <span class="mdstudio-math" data-mdstudio-display="0" data-mdstudio-tex="a \* b"><\/span> 保持完整<\/strong>/,
+  );
+  assert.match(doc.html, /data-mdstudio-display="0" data-mdstudio-tex="a\[0\]"/);
+  assert.match(doc.html, /<code>\\\(code\\\)<\/code>/);
+  assert.match(doc.html, /\\\(literal\\\)/);
+  assert.match(doc.html, /与空 \(\) 与 \[note\] 与未闭合 \(open。/);
+  assert.match(
+    doc.html,
+    /<p><span class="mdstudio-math" data-mdstudio-display="1" data-mdstudio-tex="\\text\{ROI\} = \\frac\{1\}\{2\}"><\/span><\/p>/,
+  );
+  assert.match(
+    doc.html,
+    /data-mdstudio-display="1" data-mdstudio-tex="f\(x\) = \\begin\{cases\}&#10;-x\^2, &amp; x &lt; 0 \\\\&#10;&gt; 0, &amp; x &gt; 0&#10;\\end\{cases\}"/,
+  );
+  assert.match(
+    doc.html,
+    /段内展示公式 <span class="mdstudio-math" data-mdstudio-display="1" data-mdstudio-tex="a \+ b = c"><\/span> 后接正文。/,
+  );
+  assert.equal((doc.html.match(/<td/g) || []).length, 2, 'table cell preserves | inside \\(P(A|B)\\)');
+  assert.match(doc.html, /data-mdstudio-display="0" data-mdstudio-tex="P\(A\|B\)"/);
+  assert.equal(doc.html.includes('data-mdstudio-tex="not math"'), false, 'fenced code skips \\(...\\)');
+  assert.equal(doc.html.includes('<blockquote>'), false, '> inside \\[...\\] is not parsed as blockquote');
+  assert.match(doc.html, /unclosed display/);
+});
+
 console.log(`\n${checks} engine checks passed.`);

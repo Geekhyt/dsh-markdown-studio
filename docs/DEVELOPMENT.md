@@ -12,7 +12,7 @@ This guide is written for plugin contributors, architecture reviewers, and maint
 
 1. **Ultra-Light Cold-Boot Shell (`dist/client.js`, `4.2 KiB`)** — On DSH startup, only a minimal entry loads to register the left-sidebar icon (`sidebar.panellist`), base locale labels, and a lazy `main` view container. Normal AI chat sessions pay **zero editor parse or execution cost**.
 2. **On-Demand Studio & Cascade Compiler (`dist/client.studio.js`)** — Clicking **Markdown Studio** triggers DSH's official `require.async("./client.studio.js")` loader, bringing in CodeMirror 6, `DocumentStore`, the `Tone × Rhythm × Atoms` recipe engine, and the deterministic `#mdstudio` inline-CSS compiler.
-3. **On-Demand Heavy Renderers (`dist/math.js` & `dist/mermaid.js`)** — Loaded only when an article contains TeX math (`$...$` / `$$...$$`) or ```` ```mermaid ```` fences, producing self-contained vector `<path>` SVGs (MathJax 3) and `strict`-sandbox rasterized diagrams (Mermaid 11 + `DOMPurify`).
+3. **On-Demand Heavy Renderers (`dist/math.js` & `dist/mermaid.js`)** — Loaded only when an article contains TeX math (`$...$` / `$$...$$` or `\(...\)` / `\[...\]`) or ```` ```mermaid ```` fences, producing self-contained vector `<path>` SVGs (MathJax 3) and `strict`-sandbox rasterized diagrams (Mermaid 11 + `DOMPurify`).
 4. **Dual-Channel Local Image Host & Loopback AI Route (`dist/index.js`)** — Image writes go through the host-authenticated, same-origin `POST /api/markdown-studio/wechat` endpoint (deduplicated by SHA-256 on disk) while previews read from a `127.0.0.1`-bound read-only server; selection-triggered AI Writing Skills stream over same-origin `POST /api/markdown-studio/ai` via the host's configured `llm` service.
 
 ```mermaid
