@@ -18,13 +18,17 @@ function isJsonContentType(value: string): boolean {
   return value.split(';')[0].trim().toLowerCase() === 'application/json';
 }
 
+const ALLOWED_DESKTOP_PROTOCOLS = new Set(['dsh-app:', 'dsh:', 'app:', 'file:']);
+
 function isAllowedOrigin(origin: string, host: string, site: string): boolean {
   if (!origin) return true;
   // An opaque `null` origin is only trusted when the browser vouches for it via Sec-Fetch-Site.
   if (origin === 'null') return site === 'same-origin' || site === 'none';
   try {
     const parsed = new URL(origin);
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return true;
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return ALLOWED_DESKTOP_PROTOCOLS.has(parsed.protocol);
+    }
     return parsed.host === host;
   } catch (error) {
     return false;

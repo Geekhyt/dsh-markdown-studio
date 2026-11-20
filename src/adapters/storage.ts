@@ -125,13 +125,22 @@ export function savePersistedLibrary(value: LibraryState): boolean {
   try {
     const previous = window.localStorage.getItem(LIBRARY_KEY_V2);
     rejectFutureLibrary(previous);
-    if (!parsePersistedLibrary(previous)) rejectFutureLibrary(window.localStorage.getItem(LIBRARY_BACKUP_KEY));
+    const parsedPrevious = parsePersistedLibrary(previous);
+    if (!parsedPrevious) rejectFutureLibrary(window.localStorage.getItem(LIBRARY_BACKUP_KEY));
     // Preserve unreadable bytes before a last-good recovery writes the primary.
-    if (previous && !parsePersistedLibrary(previous)) {
-      window.localStorage.setItem(LIBRARY_UNREADABLE_KEY, previous);
+    if (previous && !parsedPrevious) {
+      try {
+        window.localStorage.setItem(LIBRARY_UNREADABLE_KEY, previous);
+      } catch {
+        /* best-effort preservation */
+      }
     }
-    if (previous && previous.length <= 1_500_000 && parsePersistedLibrary(previous)) {
-      window.localStorage.setItem(LIBRARY_BACKUP_KEY, previous);
+    if (previous && previous.length <= 1_500_000 && parsedPrevious) {
+      try {
+        window.localStorage.setItem(LIBRARY_BACKUP_KEY, previous);
+      } catch {
+        /* backup quota failure must not block primary library persistence */
+      }
     }
     window.localStorage.setItem(
       LIBRARY_KEY_V2,
@@ -188,6 +197,10 @@ async function writeDocumentRef(ref: DocumentRef): Promise<void> {
         reject(tx.error);
         db.close();
       };
+      tx.onabort = () => {
+        reject(tx.error || new Error('transaction aborted'));
+        db.close();
+      };
     });
   } catch (error) {
     /* handles may not be cloneable or IDB unavailable */
@@ -206,6 +219,10 @@ export async function loadDocumentRef(): Promise<DocumentRef | null> {
       };
       request.onerror = () => {
         reject(request.error);
+        db.close();
+      };
+      tx.onabort = () => {
+        reject(tx.error || new Error('transaction aborted'));
         db.close();
       };
     });
@@ -236,6 +253,10 @@ export async function storeWorkspaceHandle(handle: FileSystemDirectoryHandle): P
         reject(tx.error);
         db.close();
       };
+      tx.onabort = () => {
+        reject(tx.error || new Error('transaction aborted'));
+        db.close();
+      };
     });
   } catch (error) {
     /* IDB may be unavailable */
@@ -254,6 +275,10 @@ export async function loadWorkspaceHandle(): Promise<FileSystemDirectoryHandle |
       };
       request.onerror = () => {
         reject(request.error);
+        db.close();
+      };
+      tx.onabort = () => {
+        reject(tx.error || new Error('transaction aborted'));
         db.close();
       };
     });

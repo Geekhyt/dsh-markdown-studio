@@ -124,4 +124,14 @@ assert.equal(darkPreview.accent, '#14b8a6');
 assert.equal(darkPreview.fg, '#f3f4f6');
 assert.ok(darkPreview.border, 'dark custom preview includes subtle light border');
 
-console.log('22 custom-css and custom-themes checks passed.');
+const commentSplitUrl = stripExternalCssUrls(
+  '#mdstudio p { background: u/*x*/rl(https://evil.example/a.png); color: #111; }',
+);
+assert.equal(commentSplitUrl.includes('evil.example'), false, 'comment-split url() is stripped');
+
+const lineContUrl = stripExternalCssUrls(
+  '#mdstudio p { background: u\\\nrl(https://evil.example/b.png); color: #111; }',
+);
+assert.equal(lineContUrl.includes('evil.example'), false, 'newline-escaped url() is stripped');
+
+console.log('24 custom-css and custom-themes checks passed.');

@@ -223,7 +223,7 @@ function emptyLibraryMessage(tab: 'docs' | 'trash', hasQuery: boolean, t: (key: 
 function useModalMenuState(React: typeof ReactNamespace, open: boolean, closeModal: () => void) {
   const [prevOpen, setPrevOpen] = React.useState(open);
   const [rawMenuOpen, setRawMenuOpen] = React.useState(false);
-  const menuOpenRef = React.useRef(false);
+  const lastClosedAtRef = React.useRef(0);
   const insideMenuRef = React.useRef(false);
   if (prevOpen !== open) {
     setPrevOpen(open);
@@ -232,12 +232,10 @@ function useModalMenuState(React: typeof ReactNamespace, open: boolean, closeMod
   const menuOpen = open && rawMenuOpen;
   const updateMenuOpen = function (next: boolean): void {
     setRawMenuOpen(next);
-    if (next) menuOpenRef.current = true;
-    else
-      window.setTimeout(function () {
-        menuOpenRef.current = false;
-        insideMenuRef.current = false;
-      }, 0);
+    if (!next) {
+      lastClosedAtRef.current = Date.now();
+      insideMenuRef.current = false;
+    }
   };
   const markInsideMenu = function (event: Event): void {
     const target = event.target as Element | null;
@@ -251,8 +249,8 @@ function useModalMenuState(React: typeof ReactNamespace, open: boolean, closeMod
   useDocumentEvent(React, 'mousedown', markInsideMenu, menuOpen, true);
   const onModalClose = function (): void {
     if (!open) return;
-    if (menuOpen || menuOpenRef.current) {
-      if (!insideMenuRef.current) updateMenuOpen(false);
+    if (menuOpen || Date.now() - lastClosedAtRef.current < 50) {
+      if (menuOpen && !insideMenuRef.current) updateMenuOpen(false);
       insideMenuRef.current = false;
       return;
     }
@@ -793,6 +791,11 @@ function renderWorkspaceDirectory(
           'aria-expanded': expanded,
           onClick: function () {
             props.actions.onSelectDirectory(entry.path);
+          },
+          onKeyDown: function (event: ReactNamespace.KeyboardEvent<HTMLButtonElement>) {
+            if (event.key !== (expanded ? 'ArrowLeft' : 'ArrowRight')) return;
+            event.preventDefault();
+            tree.onToggleDir(entry.path);
           },
           title: entry.path,
         },

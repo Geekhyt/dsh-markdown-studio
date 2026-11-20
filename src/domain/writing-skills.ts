@@ -141,11 +141,17 @@ export function removeCustomSkill(list: readonly WritingSkill[], id: string): Wr
 
 function unquoteYaml(raw: string): string {
   const trimmed = raw.trim();
-  if (
-    trimmed.length >= 2 &&
-    ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'")))
-  ) {
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (typeof parsed === 'string') return parsed.trim();
+    } catch {
+      /* fall back to slice */
+    }
     return trimmed.slice(1, -1).trim();
+  }
+  if (trimmed.length >= 2 && trimmed.startsWith("'") && trimmed.endsWith("'")) {
+    return trimmed.slice(1, -1).replace(/''/g, "'").trim();
   }
   return trimmed;
 }
@@ -240,7 +246,10 @@ export function unwrapMarkdownFenceIfProse(candidate: string, original: string):
   const origTrim = original.trimStart();
   if (origTrim.startsWith('```') || origTrim.startsWith('~~~')) return candidate;
   const match = /^```(?:markdown|md|text)?[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/i.exec(candidate.trim());
-  return match ? match[1].trimEnd() : candidate;
+  if (!match) return candidate;
+  // Do not unwrap when the match spans across multiple separate fenced code blocks.
+  if (/^[ \t]*```/m.test(match[1])) return candidate;
+  return match[1].trimEnd();
 }
 
 export function applySkillPatches(markdown: string, patches: readonly SkillPatch[]): string {

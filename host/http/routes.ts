@@ -27,11 +27,7 @@ async function readJsonBody(req: IncomingMessage, limit: number): Promise<Record
       size += buffer.length;
       if (size > limit) {
         fail(new ImageHostError('BODY_TOO_LARGE', '请求内容过大', '请减少一次上传的图片数量。'));
-        try {
-          req.destroy();
-        } catch (error) {
-          /* ignore */
-        }
+        if (typeof req.pause === 'function') req.pause();
         return;
       }
       chunks.push(buffer);
@@ -77,6 +73,8 @@ function isJsonContentType(value: string): boolean {
   return value.split(';')[0].trim().toLowerCase() === 'application/json';
 }
 
+const ALLOWED_DESKTOP_PROTOCOLS = new Set(['dsh-app:', 'dsh:', 'app:', 'file:']);
+
 function isAllowedOrigin(origin: string, host: string, site: string): boolean {
   if (!origin) return true;
   // An opaque `null` origin is only trusted when the browser vouches for it via Sec-Fetch-Site.
@@ -87,7 +85,9 @@ function isAllowedOrigin(origin: string, host: string, site: string): boolean {
   } catch (error) {
     return false;
   }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return true;
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return ALLOWED_DESKTOP_PROTOCOLS.has(parsed.protocol);
+  }
   return parsed.host === host;
 }
 
@@ -161,6 +161,14 @@ export function createImageRoute(options: {
       sendJson(res, 400, { ok: false, error: { code: 'UNKNOWN_ACTION', message: '未知操作: ' + action } });
     } catch (error) {
       if (error instanceof ImageHostError) {
+        if (error.code === 'BODY_TOO_LARGE' && !res.headersSent) {
+          res.setHeader('connection', 'close');
+          sendJson(res, 413, {
+            ok: false,
+            error: { code: error.code, message: error.message, hint: error.hint, detail: error.detail },
+          });
+          return;
+        }
         sendJson(res, 200, {
           ok: false,
           error: { code: error.code, message: error.message, hint: error.hint, detail: error.detail },
@@ -179,6 +187,16 @@ export function createImageRoute(options: {
   };
 }
 
+function isLoopbackReq(req: IncomingMessage): boolean {
+  const remote = req.socket?.remoteAddress ? String(req.socket.remoteAddress) : '';
+  return remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
+}
+
+function sendAssetText(res: ServerResponse, status: number, text: string, headOnly = false): void {
+  res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8' });
+  res.end(headOnly ? undefined : text);
+}
+
 export function createAssetRoute(options: {
   service: ImageHostService;
 }): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
@@ -187,29 +205,22 @@ export function createAssetRoute(options: {
 
   return async function assetRoute(req, res) {
     try {
-      const remote = req.socket && req.socket.remoteAddress ? String(req.socket.remoteAddress) : '';
-      const loopback = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
-      if (!loopback) {
-        res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-        res.end('loopback only');
+      if (!isLoopbackReq(req)) {
+        sendAssetText(res, 403, 'loopback only');
         return;
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') {
-        res.writeHead(405, { 'content-type': 'text/plain; charset=utf-8' });
-        res.end('method not allowed');
+        sendAssetText(res, 405, 'method not allowed');
         return;
       }
       const pathname = new URL(req.url || '/', 'http://localhost').pathname;
       if (pathname.indexOf(ASSET_PREFIX) !== 0) {
-        res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
-        res.end('not found');
+        sendAssetText(res, 404, 'not found');
         return;
       }
-      const filename = pathname.slice(ASSET_PREFIX.length);
-      const asset = await service.readAsset(filename);
+      const asset = await service.readAsset(pathname.slice(ASSET_PREFIX.length));
       if (!asset) {
-        res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
-        res.end('not found');
+        sendAssetText(res, 404, 'not found');
         return;
       }
       res.writeHead(200, {
@@ -218,13 +229,10 @@ export function createAssetRoute(options: {
         'cache-control': 'private, max-age=31536000, immutable',
         'x-content-type-options': 'nosniff',
       });
-      if (req.method === 'HEAD') res.end();
-      else res.end(asset.buffer);
-    } catch (error) {
-      if (!res.headersSent) {
-        res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
-      }
-      res.end('internal error');
+      res.end(req.method === 'HEAD' ? undefined : asset.buffer);
+    } catch {
+      if (!res.headersSent) sendAssetText(res, 500, 'internal error', req.method === 'HEAD');
+      else res.end();
     }
   };
 }

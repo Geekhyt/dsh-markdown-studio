@@ -556,7 +556,7 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
   const icons = props.ui;
   const outlineRef = props.React.useRef<HTMLDivElement | null>(null);
   const outlineAnchorRef = props.React.useRef<HTMLSpanElement | null>(null);
-  const outlineLeft = outline.open ? computeOutlineLeft(outlineAnchorRef.current) : 10;
+  const [outlineLeft, setOutlineLeft] = props.React.useState(10);
 
   useDocumentEvent(
     props.React,
@@ -575,10 +575,11 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
     props.React,
     'keydown',
     function (event: KeyboardEvent) {
-      if (event.key !== 'Escape') return;
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      if (typeof document !== 'undefined' && document.querySelector('[aria-modal="true"]')) return;
       event.preventDefault();
       outline.onClose();
-      const trigger = document.querySelector<HTMLElement>('.mdstudio-outline-anchor button');
+      const trigger = outlineAnchorRef.current?.querySelector<HTMLElement>('button');
       if (trigger) trigger.focus();
     },
     outline.open,
@@ -586,7 +587,10 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
 
   return h(
     'div',
-    { className: 'mdstudio-pane mdstudio-editor-pane' + (props.visible ? '' : ' is-hidden') },
+    {
+      className:
+        'mdstudio-pane mdstudio-editor-pane' + (props.visible ? '' : ' is-hidden') + (search.open ? ' has-search' : ''),
+    },
     h(
       'div',
       { className: 'mdstudio-toolbar', role: 'toolbar', 'aria-label': t('toolbar.label') },
@@ -652,7 +656,14 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
         { className: 'mdstudio-outline-anchor', ref: outlineAnchorRef },
         h(
           icons.ToolButton,
-          { title: t('toolbar.outline'), active: outline.open, onClick: toolbar.onOutline },
+          {
+            title: t('toolbar.outline'),
+            active: outline.open,
+            onClick: function () {
+              if (!outline.open) setOutlineLeft(computeOutlineLeft(outlineAnchorRef.current));
+              toolbar.onOutline();
+            },
+          },
           h(icons.Icon, { name: 'listTree', size: 15 }),
         ),
       ),
@@ -709,7 +720,16 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
     search.open
       ? h(
           'div',
-          { className: 'mdstudio-searchbar' },
+          {
+            className: 'mdstudio-searchbar',
+            onKeyDown: function (event: ReactNamespace.KeyboardEvent<HTMLDivElement>) {
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                event.stopPropagation();
+                search.onClose();
+              }
+            },
+          },
           h(icons.Input, {
             ref: function (el: HTMLInputElement | null) {
               (search.inputRef as { current: HTMLInputElement | null }).current = el;

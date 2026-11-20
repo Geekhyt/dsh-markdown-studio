@@ -1,9 +1,47 @@
-import { splitTopLevel } from './markdown-parser';
+import { hasExternalCssUrl } from './domain/custom-css';
 
 /**
  * Pure CSS rule parser, specificity calculator, CSS variable/counter evaluator,
  * pseudo-element materializer, and DOM inline-style writer for WeChat HTML.
  */
+
+export interface InlineCssOptions {
+  allowExternalCssResources?: boolean;
+}
+
+function splitCssTopLevel(text: string, separator: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let quote: string | null = null;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quote) {
+      if (ch === '\\') {
+        i++;
+        continue;
+      }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '\\') {
+      i++;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === '(' || ch === '[') depth++;
+    else if (ch === ')' || ch === ']') depth = Math.max(0, depth - 1);
+    else if (ch === separator && depth === 0) {
+      parts.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(text.slice(start));
+  return parts;
+}
 
 interface Declaration {
   prop: string;
@@ -87,7 +125,7 @@ function findCssBlockEnd(css: string, openIndex: number): number {
 
 export function parseDeclarations(body: string): Declaration[] {
   var decls: Declaration[] = [];
-  splitTopLevel(body, ';').forEach(function (part) {
+  splitCssTopLevel(body, ';').forEach(function (part) {
     if (!part.trim()) return;
     var split = /^\s*([^:]+?)\s*:\s*([\s\S]*)$/.exec(part);
     if (!split) return;
@@ -117,7 +155,7 @@ export function parseRules(css: string): ParsedRule[] {
     var body = clean.slice(open + 1, close);
     if (prelude && prelude.charAt(0) !== '@') {
       rules.push({
-        selectors: splitTopLevel(prelude, ',')
+        selectors: splitCssTopLevel(prelude, ',')
           .map(function (s) {
             return s.trim();
           })
@@ -157,16 +195,30 @@ function splitPseudoElement(selector: string): { base: string; pseudo: string } 
   return null;
 }
 
+function maxBranchSpecificity(inner: string): number {
+  let best = 0;
+  for (const branch of splitCssTopLevel(inner, ',')) {
+    const trimmed = branch.trim();
+    if (!trimmed) continue;
+    best = Math.max(best, selectorSpecificity(trimmed));
+  }
+  return best;
+}
+
 export function selectorSpecificity(selector: string): number {
+  let bonus = 0;
   var source = selector
-    .replace(/:not\(([^)]*)\)/gi, ' $1 ')
-    .replace(/:is\(([^)]*)\)/gi, ' $1 ')
+    .replace(/:where\(([^)]*)\)/gi, ' ')
+    .replace(/:(?:is|not)\(([^)]*)\)/gi, function (_match, inner: string) {
+      bonus += maxBranchSpecificity(inner);
+      return ' ';
+    })
     .replace(/\[[^\]]*\]/g, ' .attr ');
   var ids = (source.match(/#[\w-]+/g) || []).length;
   var classes = (source.match(/\.[\w-]+|:[\w-]+(?:\([^)]*\))?/g) || []).length;
   var types = (source.match(/(^|[\s>+~])([a-zA-Z][\w-]*)/g) || []).length;
   var pseudoElements = (selector.match(/::[\w-]+/g) || []).length;
-  return ids * 100 + classes * 10 + types + pseudoElements;
+  return bonus + ids * 100 + classes * 10 + types + pseudoElements;
 }
 
 function isStateSelector(selector: string): boolean {
@@ -213,10 +265,24 @@ export function resolveVars(value: unknown, vars: Record<string, string>, depth?
     }
     out += input.slice(i, start);
     var depthParen = 1;
+    var quote: string | null = null;
     var end = -1;
     for (var j = start + 4; j < input.length; j++) {
-      if (input[j] === '(') depthParen++;
-      else if (input[j] === ')') {
+      var ch = input[j];
+      if (quote) {
+        if (ch === '\\') {
+          j++;
+          continue;
+        }
+        if (ch === quote) quote = null;
+        continue;
+      }
+      if (ch === '"' || ch === "'") {
+        quote = ch;
+        continue;
+      }
+      if (ch === '(') depthParen++;
+      else if (ch === ')') {
         depthParen--;
         if (depthParen === 0) {
           end = j;
@@ -244,17 +310,17 @@ function decodeContentValue(value: string): string {
   if (!value) return '';
   var match = /^(['"])([\s\S]*)\1$/.exec(String(value).trim());
   if (!match) return '';
-  return match[2]
-    .replace(/\\n/g, '\n')
-    .replace(/\\A/g, '\n')
-    .replace(/\\([\\'"])/g, '$1')
-    .replace(/\\([0-9a-f]{1,6})\s?/gi, function (_, hex) {
+  return match[2].replace(/\\([0-9a-f]{1,6})[ \t\r\n\f]?|\\([\s\S])/gi, function (_, hex?: string, escaped?: string) {
+    if (hex) {
       try {
         return String.fromCodePoint(parseInt(hex, 16));
-      } catch (error) {
+      } catch {
         return '';
       }
-    });
+    }
+    if (escaped === 'n') return '\n';
+    return escaped || '';
+  });
 }
 
 function parseCounterList(raw: string, fallback: number): Array<[string, number]> {
@@ -357,8 +423,29 @@ function queryAll(root: HTMLElement, selector: string): HTMLElement[] {
 
 var VOID_TAGS = /^(img|input|br|hr|source|track|wbr|video|audio|iframe|embed|area|base|col|link|meta|param)$/i;
 
-export function inlineCss<T extends HTMLElement>(root: T, css: string): T {
+function buildElementVars(
+  element: HTMLElement,
+  root: HTMLElement,
+  varMap: Map<HTMLElement, Map<string, StyleValue>>,
+  cache: Map<HTMLElement, Record<string, string>>,
+): Record<string, string> {
+  const cached = cache.get(element);
+  if (cached) return cached;
+  const parent = element !== root ? (element.parentElement as HTMLElement | null) : null;
+  const base = parent && root.contains(parent) ? { ...buildElementVars(parent, root, varMap, cache) } : {};
+  const own = varMap.get(element);
+  if (own) {
+    for (const [name, decl] of own.entries()) {
+      base[name] = decl.value;
+    }
+  }
+  cache.set(element, base);
+  return base;
+}
+
+export function inlineCss<T extends HTMLElement>(root: T, css: string, options?: InlineCssOptions): T {
   if (!root || !css) return root;
+  const allowExternal = Boolean(options?.allowExternalCssResources);
   var rawRules = parseRules(css);
   var entries: CssEntry[] = [];
   rawRules.forEach(function (rule) {
@@ -376,27 +463,18 @@ export function inlineCss<T extends HTMLElement>(root: T, css: string): T {
     });
   });
 
-  var vars: Record<string, string> = {};
-  entries.forEach(function (entry) {
-    if (entry.pseudo) return;
-    if (!matchesElement(root, entry.selector)) return;
-    entry.decls.forEach(function (decl) {
-      if (decl.prop.indexOf('--') !== 0) return;
-      vars[decl.prop] = resolveVars(decl.value, vars);
-    });
-  });
-
   var styleMap = new Map<HTMLElement, Map<string, StyleValue>>();
+  var varMap = new Map<HTMLElement, Map<string, StyleValue>>();
   entries.forEach(function (entry) {
     if (entry.pseudo) return;
     if (isStateSelector(entry.selector)) return;
     var elements = queryAll(root, entry.selector);
     elements.forEach(function (element) {
-      var existingProps = styleMap.get(element);
-      var props: Map<string, StyleValue> = existingProps || new Map<string, StyleValue>();
-      if (!existingProps) styleMap.set(element, props);
       entry.decls.forEach(function (decl, index) {
-        if (decl.prop.indexOf('--') === 0) return;
+        const targetMap = decl.prop.indexOf('--') === 0 ? varMap : styleMap;
+        var existingProps = targetMap.get(element);
+        var props: Map<string, StyleValue> = existingProps || new Map<string, StyleValue>();
+        if (!existingProps) targetMap.set(element, props);
         var previous = props.get(decl.prop);
         var candidate: StyleCandidate = { value: decl.value, important: decl.important };
         if (!previous || beats(candidate, entry, previous)) {
@@ -412,6 +490,8 @@ export function inlineCss<T extends HTMLElement>(root: T, css: string): T {
     });
   });
 
+  var varCache = new Map<HTMLElement, Record<string, string>>();
+  var rootVars = buildElementVars(root, root, varMap, varCache);
   var originalStyles = new Map<HTMLElement, CSSStyleDeclaration>();
   styleMap.forEach(function (_props, element) {
     originalStyles.set(element, (element.cloneNode(false) as HTMLElement).style);
@@ -420,6 +500,7 @@ export function inlineCss<T extends HTMLElement>(root: T, css: string): T {
   styleMap.forEach(function (props, element) {
     const original = originalStyles.get(element);
     if (!original) return;
+    const elementVars = buildElementVars(element, root, varMap, varCache);
     Array.from(props.entries())
       .sort(cascadeOrder)
       .forEach(function (pair) {
@@ -431,8 +512,10 @@ export function inlineCss<T extends HTMLElement>(root: T, css: string): T {
           var existingImportant = original.getPropertyPriority(prop) === 'important';
           if (!(decl.important && !existingImportant)) return;
         }
+        const resolved = resolveVars(decl.value, elementVars);
+        if (!allowExternal && hasExternalCssUrl(resolved)) return;
         try {
-          element.style.setProperty(prop, resolveVars(decl.value, vars), decl.important ? 'important' : '');
+          element.style.setProperty(prop, resolved, decl.important ? 'important' : '');
         } catch (error) {
           /* invalid value: leave it to the browser */
         }
@@ -470,26 +553,29 @@ export function inlineCss<T extends HTMLElement>(root: T, css: string): T {
     });
   });
 
-  var counters = snapshotCounters(root, styleMap, pseudoMap, vars);
+  var counters = snapshotCounters(root, styleMap, pseudoMap, rootVars);
   pseudoMap.forEach(function (record, element) {
     var elementCounters = counters.get(element);
+    var elementVars = buildElementVars(element, root, varMap, varCache);
     Object.keys(record).forEach(function (pseudo) {
       var props = record[pseudo];
+      var contentDecl = props.get('content');
+      if (!contentDecl) return;
+      var rawContent = resolveVars(contentDecl.value, elementVars).trim();
+      if (!rawContent || rawContent === 'none' || rawContent === 'normal') return;
       var span = element.ownerDocument.createElement('span');
       span.setAttribute('data-mdstudio-pseudo', pseudo);
-      var content = '';
+      var content = evaluatePseudoContent(rawContent, elementCounters);
       Array.from(props.entries())
         .sort(cascadeOrder)
         .forEach(function (pair) {
           var prop = pair[0];
           var decl = pair[1];
-          if (prop === 'content') {
-            content = evaluatePseudoContent(resolveVars(decl.value, vars), elementCounters);
-            return;
-          }
-          if (prop.indexOf('--') === 0) return;
+          if (prop === 'content' || prop.indexOf('--') === 0) return;
+          const resolved = resolveVars(decl.value, elementVars);
+          if (!allowExternal && hasExternalCssUrl(resolved)) return;
           try {
-            span.style.setProperty(prop, resolveVars(decl.value, vars), decl.important ? 'important' : '');
+            span.style.setProperty(prop, resolved, decl.important ? 'important' : '');
           } catch (error) {
             /* ignore */
           }

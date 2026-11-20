@@ -185,3 +185,39 @@ const protoMerged = mergeLibraryBackup(
   'incoming',
 );
 assert.equal(protoMerged.docs[0].title, 'New', 'prototype-named article id obeys incoming merge preference');
+
+const nonEmptyMerged = mergeLibraryBackup(
+  {
+    activeId: 'a',
+    docs: [{ id: 'a', title: 'A', markdown: '# A', settings: { ...DEFAULT_SETTINGS }, view: 'split', updatedAt: 1 }],
+    trash: [
+      {
+        id: 'b',
+        title: 'B',
+        markdown: '# B',
+        settings: { ...DEFAULT_SETTINGS },
+        view: 'split',
+        updatedAt: 1,
+        deletedAt: 2,
+      },
+    ],
+  },
+  {
+    activeId: 'b',
+    docs: [{ id: 'b', title: 'B', markdown: '# B', settings: { ...DEFAULT_SETTINGS }, view: 'split', updatedAt: 2 }],
+    trash: [
+      {
+        id: 'a',
+        title: 'A',
+        markdown: '# A',
+        settings: { ...DEFAULT_SETTINGS },
+        view: 'split',
+        updatedAt: 2,
+        deletedAt: 3,
+      },
+    ],
+  },
+  'incoming',
+  { b: 'current', a: 'incoming' },
+);
+assert.ok(nonEmptyMerged.docs.length >= 1, 'mergeLibraryBackup never yields an empty docs array');

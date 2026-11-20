@@ -198,7 +198,7 @@ export function useLazyChunkReady(
   const [error, setError] = React.useState<string | null>(null);
   React.useEffect(
     function () {
-      if (isReady()) return undefined;
+      if (isReady() || error !== null) return undefined;
       let cancelled = false;
       load().then(
         function () {

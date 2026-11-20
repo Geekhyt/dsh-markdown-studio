@@ -39,9 +39,35 @@ for (const [key, action] of [
   ['z', 'undo'],
   ['y', 'redo'],
   ['Enter', 'copyArticle'],
-  ['Tab', 'replaceRange'],
 ])
   press(key, action);
+press('Tab', 'replaceRange', { ctrlKey: false });
+// Verify modifier guards: Ctrl+Tab / Alt+Tab / Shift+Cmd+I / Shift+Cmd+Enter do not misfire
+for (const extras of [{}, { altKey: true, ctrlKey: false }, { metaKey: true, ctrlKey: false }]) {
+  called.length = 0;
+  handler({
+    key: 'Tab',
+    ctrlKey: true,
+    nativeEvent: {},
+    preventDefault() {},
+    ...extras,
+  } as unknown as React.KeyboardEvent<HTMLElement>);
+  assert.equal(called.length, 0, `modified Tab (${JSON.stringify(extras)}) does not insert spaces`);
+}
+for (const [key, extras] of [
+  ['i', { shiftKey: true }],
+  ['Enter', { shiftKey: true }],
+] as const) {
+  called.length = 0;
+  handler({
+    key,
+    ctrlKey: true,
+    nativeEvent: {},
+    preventDefault() {},
+    ...extras,
+  } as unknown as React.KeyboardEvent<HTMLElement>);
+  assert.equal(called.length, 0, `Shift+Ctrl+${key} does not hijack DevTools or copy`);
+}
 for (const key of ['b', 'e', 'x', 'h']) press(key, 'wrapSelection', { shiftKey: true });
 press('z', 'redo', { shiftKey: true });
 for (let i = 1; i <= 6; i++) press(String(i), 'applyHeadingLevel', { code: 'Digit' + i });

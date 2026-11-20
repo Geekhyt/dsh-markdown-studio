@@ -129,12 +129,35 @@ function cssSection(selector: string, body: string): string {
 }
 
 function cssDeclarations(body: string): string[] {
-  return body
-    .split(';')
-    .map(function (part) {
-      return part.trim();
-    })
-    .filter(Boolean);
+  const parts: string[] = [];
+  let depth = 0;
+  let quote: string | null = null;
+  let start = 0;
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (quote) {
+      if (ch === '\\') {
+        i++;
+        continue;
+      }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === '(' || ch === '[') depth++;
+    else if (ch === ')' || ch === ']') depth = Math.max(0, depth - 1);
+    else if (ch === ';' && depth === 0) {
+      const part = body.slice(start, i).trim();
+      if (part) parts.push(part);
+      start = i + 1;
+    }
+  }
+  const tail = body.slice(start).trim();
+  if (tail) parts.push(tail);
+  return parts;
 }
 
 function variableGroup(declaration: string): string {
@@ -228,8 +251,10 @@ export function formatCssSource(css: string, locale: 'zh' | 'en' = 'zh'): string
     const lines: string[] = [];
     if (section === 'variables') {
       const groups: Record<string, string[]> = { color: [], type: [], code: [] };
+      const extra: string[] = [];
       declarations.forEach(function (declaration) {
         if (declaration.indexOf('--mdstudio-') === 0) groups[variableGroup(declaration)].push(declaration);
+        else extra.push(declaration);
       });
       (['color', 'type', 'code'] as const).forEach(function (group) {
         if (!groups[group].length) return;
@@ -239,6 +264,12 @@ export function formatCssSource(css: string, locale: 'zh' | 'en' = 'zh'): string
           lines.push('  ' + declaration + ';');
         });
       });
+      if (extra.length) {
+        if (lines.length) lines.push('');
+        extra.forEach(function (declaration) {
+          lines.push('  ' + declaration + ';');
+        });
+      }
     } else {
       declarations.forEach(function (declaration) {
         lines.push('  ' + declaration + ';');
@@ -633,12 +664,13 @@ export function buildCss(settings: ThemeSettings): string {
     '\n.mdstudio-content > h1:first-child, .mdstudio-content > h2:first-child, .mdstudio-content > h3:first-child, .mdstudio-content > h4:first-child, .mdstudio-content > h5:first-child, .mdstudio-content > h6:first-child { margin: 0 0 0.8em; }';
   var paper = paperCardRules(theme.id);
   if (paper) css += '\n' + paper;
-  var codeCss = codeThemeCss(settings.codeTheme);
-  if (codeCss) css += '\n' + codeCss;
   var userCss = resolveUserCss(settings);
   if (userCss.trim()) {
     css += '\n/* user styles */\n' + (settings.allowExternalCssResources ? userCss : stripExternalCssUrls(userCss));
   }
+  // Apply independent code theme overrides after custom theme CSS so selecting a code theme works on custom themes too.
+  var codeCss = codeThemeCss(settings.codeTheme);
+  if (codeCss) css += '\n' + codeCss;
   return css;
 }
 
@@ -715,12 +747,20 @@ export function themeCodePreview(
 ): { bg: string; fg: string; accent: string } {
   var custom = findCustomTheme(settings.customThemes, settings.theme);
   if (custom) {
-    var codeBgMatch = /--mdstudio-code-bg\s*:\s*(#[0-9a-f]{3,6})/i.exec(custom.css);
-    var codeFgMatch = /--mdstudio-code-text\s*:\s*(#[0-9a-f]{3,6})/i.exec(custom.css);
+    var cleanCustomCss = custom.css.replace(/\/\*[\s\S]*?\*\//g, '');
+    var lastHex = function (prop: string): string {
+      var re = new RegExp(prop + '\\s*:\\s*(#[0-9a-f]{3}(?:[0-9a-f]{3})?)\\b', 'gi');
+      var found = '';
+      var m: RegExpExecArray | null;
+      while ((m = re.exec(cleanCustomCss))) found = m[1];
+      return found;
+    };
+    var codeBg = lastHex('--mdstudio-code-bg');
+    var codeFg = lastHex('--mdstudio-code-text');
     var preview = extractCustomThemePreview(custom.css, settings.accent);
     return {
-      bg: codeBgMatch ? codeBgMatch[1] : preview.bg,
-      fg: codeFgMatch ? codeFgMatch[1] : preview.fg,
+      bg: codeBg || preview.bg,
+      fg: codeFg || preview.fg,
       accent: preview.accent,
     };
   }

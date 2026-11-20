@@ -107,8 +107,13 @@ export function trapModalTab(event: ReactNamespace.KeyboardEvent<HTMLDivElement>
       'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
     ),
   ).filter((element) => {
-    const style = window.getComputedStyle(element);
-    return style.display !== 'none' && style.visibility !== 'hidden';
+    let cur: HTMLElement | null = element;
+    while (cur && cur !== event.currentTarget) {
+      const style = window.getComputedStyle(cur);
+      if (style.display === 'none' || style.visibility === 'hidden') return false;
+      cur = cur.parentElement;
+    }
+    return true;
   });
   if (!focusable.length) return;
   const first = focusable[0];
@@ -295,7 +300,7 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
           child.props.onClick?.(event);
         },
       }),
-      tip && resolved
+      !props.disabled && tip && resolved
         ? h(
             'span',
             {
@@ -330,6 +335,23 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
   }
 
   function FallbackModal(props: DshModalProps): ReactElement | null {
+    const focusedOnOpenRef = React.useRef(false);
+    const attachDialogRef = React.useCallback(function (el: HTMLDivElement | null): void {
+      if (!el) {
+        focusedOnOpenRef.current = false;
+        return;
+      }
+      if (!focusedOnOpenRef.current) {
+        focusedOnOpenRef.current = true;
+        window.setTimeout(function () {
+          if (!el.isConnected || el.contains(document.activeElement)) return;
+          const first = el.querySelector<HTMLElement>(
+            '[autofocus], input:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          );
+          (first || el).focus();
+        }, 0);
+      }
+    }, []);
     useDocumentEvent(
       React,
       'keydown',
@@ -352,10 +374,12 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
       h(
         'div',
         {
+          ref: attachDialogRef,
           className: joinClass(modalBase, props.className),
           role: 'dialog',
           'aria-modal': 'true',
           'aria-label': props.title,
+          tabIndex: -1,
           onClick: function (event: ReactNamespace.MouseEvent<HTMLDivElement>) {
             event.stopPropagation();
           },
@@ -513,10 +537,9 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
       { ref: wrapRef, className: joinClass('mdstudio-menu-wrap', props.className) },
       props.anchor,
       props.open
-        ? h('button', {
-            type: 'button',
+        ? h('div', {
             className: 'mdstudio-menu-scrim',
-            'aria-label': props.ariaLabel || 'Close',
+            'aria-hidden': 'true',
             onClick: props.onClose,
           })
         : null,

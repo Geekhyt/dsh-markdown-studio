@@ -115,6 +115,8 @@ function clampPaletteContrast(p: Palette): void {
   p.muted = clampPair(p.muted, p.bg, 4.5);
   p.muted = clampPair(p.muted, p.soft, 4.5);
   p.delColor = clampPair(p.delColor, p.bg, 4.5);
+  p.delColor = clampPair(p.delColor, p.tldrBg, 4.5);
+  p.delColor = clampPair(p.delColor, p.quoteBg, 4.5);
   if (isHexColor(p.accent)) p.onAccent = readableOn(p.accent, '#111111', '#ffffff');
   if (isHexColor(p.accent2)) p.onAccent2 = readableOn(p.accent2, '#111111', '#ffffff');
   if (isHexColor(p.codeBg)) {

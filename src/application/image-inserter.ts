@@ -10,6 +10,7 @@ export interface ImageInsertOptions {
   hostClient: HostClient;
   describeHostError: (error: unknown) => string;
   insertBlock: (block: string, blockOptions?: { collapseToEnd?: boolean }) => void;
+  onTrackInFlight?: (filename: string, active: boolean) => void;
 }
 
 export interface ImageInsertApi {
@@ -46,38 +47,45 @@ export function createImageInserter(options: ImageInsertOptions): ImageInsertApi
       options.notify(options.t('toast.imageTooLarge'), 'error');
       return;
     }
-    const items: Array<{ file: File; url: string }> = [];
+    const items: Array<{ file: File; url: string; filename: string }> = [];
     let failed = 0;
     let lastError: unknown = null;
-    for (const file of accepted) {
-      try {
-        const dataUrl = await fileToDataUrl(file);
-        const prepared = await prepareImageForWechat(dataUrl);
-        const stored = await options.hostClient.storeAsset(prepared.dataUrl, prepared.filename);
-        const itemUrl = stored.assetPath || stored.localUrl || stored.url;
-        if (itemUrl) items.push({ file, url: itemUrl });
-      } catch (error) {
-        failed++;
-        lastError = error;
+    try {
+      for (const file of accepted) {
+        try {
+          const dataUrl = await fileToDataUrl(file);
+          const prepared = await prepareImageForWechat(dataUrl);
+          const stored = await options.hostClient.storeAsset(prepared.dataUrl, prepared.filename);
+          const itemUrl = stored.assetPath || stored.localUrl || stored.url;
+          if (stored.filename) options.onTrackInFlight?.(stored.filename, true);
+          if (itemUrl) items.push({ file, url: itemUrl, filename: stored.filename || '' });
+        } catch (error) {
+          failed++;
+          lastError = error;
+        }
+      }
+      if (!items.length) {
+        options.notify(lastError ? options.describeHostError(lastError) : options.t('toast.imageTooLarge'), 'error');
+        return;
+      }
+      const block = items
+        .map(function (item) {
+          const name = String(item.file.name || 'image')
+            .replace(/\.[^.]+$/, '')
+            .replace(/[[\]]/g, '');
+          return '![' + name + '](' + item.url + ')';
+        })
+        .join('\n\n');
+      options.insertBlock(block, { collapseToEnd: true });
+      let message = items.length + ' ' + options.t('toast.imagesInserted');
+      if (skipped) message += ' · ' + skipped + ' ' + options.t('toast.imagesSkipped');
+      if (failed) message += ' · ' + failed + ' ' + options.t('toast.assetsFailed');
+      options.notify(message, skipped || failed ? 'error' : 'success');
+    } finally {
+      for (const item of items) {
+        if (item.filename) options.onTrackInFlight?.(item.filename, false);
       }
     }
-    if (!items.length) {
-      options.notify(lastError ? options.describeHostError(lastError) : options.t('toast.imageTooLarge'), 'error');
-      return;
-    }
-    const block = items
-      .map(function (item) {
-        const name = String(item.file.name || 'image')
-          .replace(/\.[^.]+$/, '')
-          .replace(/[[\]]/g, '');
-        return '![' + name + '](' + item.url + ')';
-      })
-      .join('\n\n');
-    options.insertBlock(block, { collapseToEnd: true });
-    let message = items.length + ' ' + options.t('toast.imagesInserted');
-    if (skipped) message += ' · ' + skipped + ' ' + options.t('toast.imagesSkipped');
-    if (failed) message += ' · ' + failed + ' ' + options.t('toast.assetsFailed');
-    options.notify(message, skipped || failed ? 'error' : 'success');
   }
 
   function handlePaste(event: ReactNamespace.ClipboardEvent<HTMLElement>): void {

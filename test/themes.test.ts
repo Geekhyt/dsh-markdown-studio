@@ -163,4 +163,21 @@ const enExampleCss = exampleCss('en');
 assert.ok(enExampleCss.includes('/* ---- Theme Variables ---- */'), 'English example CSS uses English section headers');
 assert.ok(!/[\u4e00-\u9fff]/.test(enExampleCss), 'English example CSS contains zero Chinese characters');
 
-console.log('23 theme checks passed.');
+const customWithDracula = buildCss({
+  ...DEFAULT_SETTINGS,
+  theme: 'custom:violet',
+  codeTheme: 'dracula',
+  customThemes: [
+    {
+      id: 'custom:violet',
+      name: '暮光紫',
+      css: '#mdstudio pre { background-color: #221144; color: #f0e8ff; }',
+    },
+  ],
+});
+assert.ok(
+  customWithDracula.lastIndexOf('#282a36') > customWithDracula.indexOf('#221144'),
+  'explicit codeTheme overrides custom theme pre colors',
+);
+
+console.log('24 theme checks passed.');

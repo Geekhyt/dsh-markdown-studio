@@ -23,9 +23,10 @@ import {
   type WritingSkillState,
 } from '../domain/writing-skills';
 import type { EditorDiffTransition, EditorInlineBlock } from '../domain/editor-types';
-import { useLatest, useMountDisposable } from '../runtime/react-lifecycle';
+import { useDebouncedKeyTask, useLatest, useMountDisposable } from '../runtime/react-lifecycle';
 
 type Notify = (text: string, tone?: 'success' | 'error' | 'info') => void;
+const EMPTY_INLINE_BLOCKS: readonly EditorInlineBlock[] = [];
 
 export interface AiReviewSession {
   status: 'streaming' | 'ready' | 'error';
@@ -55,6 +56,7 @@ export interface UseWritingSkillsOptions {
   editorValue: () => string;
   selection: () => SelectionRange;
   setMarkdown: (next: string, opts?: { boundary?: boolean; prevSelection?: SelectionRange }) => void;
+  focusEditor?: () => void;
   download: (name: string, content: Blob | string, mime: string) => boolean;
 }
 
@@ -207,6 +209,7 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
     transitionSeqRef.current += 1;
     setSession(null);
     startDiffTransition(toRejectTransition(transitionSeqRef.current, patch), 240);
+    options.focusEditor?.();
   };
 
   const commitSkillState = (next: WritingSkillState): void => {
@@ -231,16 +234,21 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
       abortRef.current.abort();
       abortRef.current = null;
     }
-    if (session && session.status === 'ready' && session.patches.length > 0) {
-      rejectReadyPatch(session.patches[0]);
+    const active = sessionRef.current;
+    if (active && active.status === 'ready' && active.patches.length > 0) {
+      rejectReadyPatch(active.patches[0]);
       return;
     }
     setSession(null);
   };
 
-  if (options.markdown !== undefined && session && session.baseMarkdown !== options.markdown) {
-    resetSession();
-  }
+  useDebouncedKeyTask(
+    React,
+    String(options.markdown ?? ''),
+    0,
+    Boolean(options.markdown !== undefined && session && session.baseMarkdown !== options.markdown),
+    resetSession,
+  );
 
   useMountDisposable(React, () => () => {
     if (abortRef.current) abortRef.current.abort();
@@ -326,10 +334,12 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
       prompt,
       signal: controller.signal,
       onDelta: (delta) => {
+        if (abortRef.current !== controller || controller.signal.aborted) return;
         raw += delta;
         setSession((prev) => (prev ? { ...prev, streamText: raw.trimEnd() } : null));
       },
     });
+    if (abortRef.current !== controller || controller.signal.aborted) return;
     const unwrapped = unwrapMarkdownFenceIfProse((raw || res.text).trimEnd(), selectedText);
     const cleanText = unwrapped.trim();
     if (!cleanText || cleanText === selectedText.trim()) {
@@ -371,7 +381,7 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
     try {
       await runSelectionFlow(skill, markdown, range, controller);
     } catch (error) {
-      if (controller.signal.aborted) return;
+      if (abortRef.current !== controller || controller.signal.aborted) return;
       const msg = formatAiClientError(error, t);
       // The inline review card (and the fallback banner) already surface the error; no duplicate toast.
       setSession((prev) => (prev ? { ...prev, status: 'error', error: msg } : null));
@@ -381,8 +391,9 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
   };
 
   const acceptPatch = (id: string): void => {
-    if (!session) return;
-    const target = session.patches.find((p) => p.id === id);
+    const active = sessionRef.current;
+    if (!active) return;
+    const target = active.patches.find((p) => p.id === id);
     if (!target) return;
     const beforeMd = options.editorValue();
     if (beforeMd.slice(target.start, target.end) !== target.original) {
@@ -394,11 +405,13 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
     options.setMarkdown(afterMd, { boundary: true, prevSelection: options.selection() });
     setSession(null);
     startDiffTransition(toAcceptTransition(transitionSeqRef.current, target, beforeMd), 640);
+    options.focusEditor?.();
   };
 
   const dismissPatch = (id: string): void => {
-    if (!session) return;
-    const target = session.patches.find((p) => p.id === id);
+    const active = sessionRef.current;
+    if (!active) return;
+    const target = active.patches.find((p) => p.id === id);
     if (target) rejectReadyPatch(target);
   };
 
@@ -414,8 +427,8 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
     return rawMarkdown;
   };
 
-  const buildInlineBlocks = (): EditorInlineBlock[] => {
-    if (!session) return [];
+  const memoInlineBlocks = React.useMemo<readonly EditorInlineBlock[]>(() => {
+    if (!session) return EMPTY_INLINE_BLOCKS;
     if (session.patches.length === 0) {
       return [
         buildSelectionStreamingBlock(session, t, cancelSession, () => {
@@ -435,7 +448,9 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
         },
       ),
     );
-  };
+  }, [session, t]);
+
+  const buildInlineBlocks = (): EditorInlineBlock[] => memoInlineBlocks as EditorInlineBlock[];
 
   const localizeBuiltin = (item: WritingSkill): WritingSkill =>
     item.id === BUILTIN_HUMANIZER_ID ? { ...item, name: t('ai.builtinName'), description: t('ai.builtinDesc') } : item;

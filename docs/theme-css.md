@@ -33,7 +33,7 @@ Markdown Studio 的八套主题都定义在 `src/theme-system/` 与 `src/themes.
 | 表格 / 图片 | `--mdstudio-table-border`、`--mdstudio-image-radius` |
 | 段落 | `--mdstudio-paragraph-spacing`、`--mdstudio-paragraph-letter-spacing` |
 
-Token 作用于整篇文章，不按元素单独生效。内置代码配色（`github`、`one-dark` 等）在主题之后应用；需要不同代码表面时，覆盖对应组件选择器。
+Token 支持在根节点与元素作用域内级联继承；内置独立代码配色（`github`、`one-dark`、`dracula` 等）在自定义主题之后应用，当代码配色选择“跟随主题”时由自定义 CSS 决定代码表面。
 
 ### 2. 结构选择器
 
@@ -58,7 +58,7 @@ Token 作用于整篇文章，不按元素单独生效。内置代码配色（`g
 
 - Harness / 编辑器 chrome 变量（`--dsw-*`）和面板布局。
 - 内联复制内部实现、剪贴板、图片 host URL、Mermaid / MathJax 运行时。
-- 微信无法内联的 CSS：`@media`、`@font-face`、`:hover` / `:focus` 等状态伪类，以及按元素定义的自定义属性（注：`counter-reset` / `counter-increment` / `counter()` 会在复制前静态求值并注入文本 span）。
+- 微信无法内联的 CSS：`@media`、`@font-face`、`:hover` / `:focus` 等状态伪类（注：`counter-reset` / `counter-increment` / `counter()` 会在复制前静态求值并注入文本 span）。
 - 任意 HTML / script。Markdown 清洗器仍是边界。
 
 ## 起始模板
@@ -67,7 +67,7 @@ Token 作用于整篇文章，不按元素单独生效。内置代码配色（`g
 
 示例经过格式化：带分节注释、分组 token 注释、逐组件中文注释（引用、粗体、斜体、链接、列表、代码、表格、图片、分割线）、规则之间空行和一行一个声明。填写主题名称并编辑后点击 **保存并启用**，即可保存或更新该自定义主题并应用到当前文章；在文章库切换文章时，所有已保存的自定义主题都会共享保留。**恢复示例**会放回 Classic 源码，**删除**会移除当前自定义主题。
 
-`::marker` 和状态伪类不会被内联；普通选择器上的 `::before` / `::after` 会物化为 span。自定义 CSS 中的外部 `url(http/https)` 资源与 `@import` 规则始终会被剥离；该限制不提供界面开关，导入的主题 JSON 或文章库备份也无法关闭它，避免不可信文件在预览中触发外部追踪请求。
+`::marker` 和状态伪类不会被内联；普通选择器上的 `::before` / `::after` 会物化为 span。自定义 CSS 中的外部 `url(http/https)` 资源与 `@import` 规则（包括注释拆分、反斜杠换行续行与 `var()` 展开后的外部 URL）始终会被剥离；该限制不提供界面开关，导入的主题 JSON 或文章库备份也无法关闭它，避免不可信文件在预览中触发外部追踪请求。
 
 
 ## 微信规范校验

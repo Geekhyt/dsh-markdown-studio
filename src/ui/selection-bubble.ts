@@ -7,6 +7,7 @@ import { useMountDisposable } from '../runtime/react-lifecycle';
 interface PointerPoint {
   x: number;
   y: number;
+  at: number;
 }
 
 function isInlineCardEventTarget(target: EventTarget | null): boolean {
@@ -39,12 +40,12 @@ function computeSelectionBubblePos(
   const paneRect = pane.getBoundingClientRect();
   const anchor = resolveBubbleViewportPoint(api, range, pointer);
   if (!anchor) {
-    return { top: 52, left: clamp(24, 12, Math.max(12, paneRect.width - 124)) };
+    return { top: 52, left: clamp(24, 12, Math.max(12, paneRect.width - 144)) };
   }
   const rawBelow = anchor.yBottom - paneRect.top + 6;
   const rawTop = rawBelow + 38 <= paneRect.height ? rawBelow : anchor.yTop - paneRect.top - 38;
   const top = clamp(Math.round(rawTop), 44, Math.max(44, paneRect.height - 40));
-  const left = clamp(Math.round(anchor.x - paneRect.left - 24), 12, Math.max(12, paneRect.width - 124));
+  const left = clamp(Math.round(anchor.x - paneRect.left - 24), 12, Math.max(12, paneRect.width - 144));
   return { top, left };
 }
 
@@ -92,15 +93,10 @@ export function useSelectionBubble(options: SelectionBubbleOptions): SelectionBu
       setPos(null);
       return;
     }
-    setPos(
-      computeSelectionBubblePos(
-        rootRef.current,
-        codeMirrorApiRef.current,
-        markdown,
-        nextSelection,
-        pointerPointRef.current,
-      ),
-    );
+    const raw = pointerPointRef.current;
+    const pointer = raw && Date.now() - raw.at < 150 ? raw : null;
+    if (!pointer) pointerPointRef.current = null;
+    setPos(computeSelectionBubblePos(rootRef.current, codeMirrorApiRef.current, markdown, nextSelection, pointer));
   }
 
   function onPointerDown(event: ReactNamespace.MouseEvent<HTMLDivElement>): void {
@@ -114,7 +110,7 @@ export function useSelectionBubble(options: SelectionBubbleOptions): SelectionBu
       pointerCleanupRef.current = null;
       pointerSelectingRef.current = false;
       pointerPointRef.current =
-        upEvent.clientX > 0 || upEvent.clientY > 0 ? { x: upEvent.clientX, y: upEvent.clientY } : null;
+        upEvent.clientX > 0 || upEvent.clientY > 0 ? { x: upEvent.clientX, y: upEvent.clientY, at: Date.now() } : null;
       window.requestAnimationFrame(function () {
         const curRange = codeMirrorApiRef.current ? codeMirrorApiRef.current.getSelection() : options.selection();
         lastSelectionRef.current = curRange;

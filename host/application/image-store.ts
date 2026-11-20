@@ -6,7 +6,7 @@
  */
 const ASSET_URL_PREFIX = '/api/markdown-studio/assets/';
 
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { SAMPLE_IMAGE_BUFFER, SAMPLE_IMAGE_FILENAME, SAMPLE_IMAGE_MIME } from '../sample-asset';
@@ -70,8 +70,10 @@ export class ImageHostError extends Error {
   }
 }
 
-function digest(value: unknown): string {
-  return createHash('sha256').update(String(value)).digest('hex');
+function digest(value: Buffer | string): string {
+  return createHash('sha256')
+    .update(Buffer.isBuffer(value) ? value : String(value))
+    .digest('hex');
 }
 
 function hasImageMagicBytes(buffer: Buffer, mime: ImageMime): boolean {
@@ -189,35 +191,39 @@ export class ImageHostService {
     const filename = id + '.' + image.ext;
     const dir = this.assetsDir();
     const file = path.join(dir, filename);
-    await mkdir(dir, { recursive: true, mode: 0o700 });
-    let exists = false;
-    try {
-      const info = await stat(file);
-      // A size mismatch means an earlier write was interrupted; rewrite it.
-      exists = info.isFile() && info.size === image.buffer.length;
-    } catch (error) {
-      exists = false;
-    }
-    if (!exists) {
-      // Write-then-rename keeps content-addressed files all-or-nothing across crashes.
-      const temp = file + '.' + process.pid + '-' + Date.now().toString(36) + '.tmp';
-      try {
-        await writeFile(temp, image.buffer, { mode: 0o644 });
-        await rename(temp, file);
-      } catch (error) {
-        await unlink(temp).catch(() => undefined);
-        throw error;
-      }
-    }
     await this.enqueueManifest(async () => {
+      await mkdir(dir, { recursive: true, mode: 0o700 });
+      let exists = false;
+      try {
+        const info = await stat(file);
+        // A size mismatch means an earlier write was interrupted; rewrite it.
+        exists = info.isFile() && info.size === image.buffer.length;
+      } catch (error) {
+        exists = false;
+      }
+      if (!exists) {
+        // Write-then-rename keeps content-addressed files all-or-nothing across crashes.
+        const temp =
+          file + '.' + process.pid + '-' + Date.now().toString(36) + '-' + randomBytes(6).toString('hex') + '.tmp';
+        try {
+          await writeFile(temp, image.buffer, { mode: 0o644 });
+          await rename(temp, file);
+        } catch (error) {
+          await unlink(temp).catch(() => undefined);
+          throw error;
+        }
+      }
       const manifest = await this.loadManifest();
       if (!manifest[filename]) {
-        manifest[filename] = {
-          mime: image.mime,
-          bytes: image.buffer.length,
-          storedAt: new Date().toISOString(),
+        const next: Manifest = {
+          ...manifest,
+          [filename]: {
+            mime: image.mime,
+            bytes: image.buffer.length,
+            storedAt: new Date().toISOString(),
+          },
         };
-        await this.saveManifest(manifest);
+        await this.saveManifest(next);
       }
     });
     const localUrl = this.localServerInfo ? `${this.localServerInfo.url}/uploads/${filename}` : '';
@@ -287,12 +293,12 @@ export class ImageHostService {
     if (!filename) {
       throw new ImageHostError('ASSET_NOT_FOUND', '本地图片不存在', '请刷新图片列表。');
     }
-    try {
-      await unlink(path.join(this.assetsDir(), filename));
-    } catch (error) {
-      if (!error || (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    }
     await this.enqueueManifest(async () => {
+      try {
+        await unlink(path.join(this.assetsDir(), filename));
+      } catch (error) {
+        if (!error || (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
       const manifest = await this.loadManifest();
       if (manifest[filename]) {
         const next: Manifest = { ...manifest };

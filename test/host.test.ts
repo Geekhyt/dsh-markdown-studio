@@ -328,6 +328,52 @@ try {
     assert.equal(malformed.status, 200);
     assert.equal(((await malformed.json()) as { error: { code: string } }).error.code, 'BAD_JSON');
   });
+
+  await check('binary SHA-256 distinguishes distinct non-UTF-8 PNG bytes without U+FFFD collision', async () => {
+    const base = Buffer.from(IMAGE.split(',')[1], 'base64');
+    const imgA = Buffer.concat([base, Buffer.from([0x80, 0xfe, 0x91])]);
+    const imgB = Buffer.concat([base, Buffer.from([0x81, 0xff, 0x92])]);
+    const a = await service.storeAsset({ dataUrl: `data:image/png;base64,${imgA.toString('base64')}` });
+    const b = await service.storeAsset({ dataUrl: `data:image/png;base64,${imgB.toString('base64')}` });
+    assert.notEqual(a.filename, b.filename, 'distinct binary payloads hash to distinct asset filenames');
+  });
+
+  await check('desktop origin allowlist accepts dsh-app:// and rejects arbitrary custom schemes', async () => {
+    const allowed = await fetch(`http://127.0.0.1:${routeServer.port}/api/markdown-studio/wechat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: 'dsh-app://main' },
+      body: JSON.stringify({ action: 'health' }),
+    });
+    assert.equal(allowed.status, 200);
+    const blocked = await fetch(`http://127.0.0.1:${routeServer.port}/api/markdown-studio/wechat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: 'evil-scheme://attacker' },
+      body: JSON.stringify({ action: 'health' }),
+    });
+    assert.equal(blocked.status, 403);
+  });
+
+  await check('asset route handles HEAD requests and internal errors safely', async () => {
+    const stored = await service.storeAsset({ dataUrl: IMAGE });
+    const failingService = {
+      ...service,
+      readAsset: async (name: string) => {
+        if (name === 'boom.png') throw new Error('disk failure');
+        return service.readAsset(name);
+      },
+    } as unknown as ImageHostService;
+    const assetServer = await listen((req, res) => {
+      void createAssetRoute({ service: failingService })(req, res);
+    });
+    const headOk = await fetch(`http://127.0.0.1:${assetServer.port}${stored.assetUrl}`, { method: 'HEAD' });
+    assert.equal(headOk.status, 200);
+    const headErr = await fetch(`http://127.0.0.1:${assetServer.port}${ASSET_PREFIX}boom.png`, { method: 'HEAD' });
+    assert.equal(headErr.status, 500);
+    assert.equal(await headErr.text(), '');
+    const getErr = await fetch(`http://127.0.0.1:${assetServer.port}${ASSET_PREFIX}boom.png`);
+    assert.equal(getErr.status, 500);
+    assetServer.server.close();
+  });
 } finally {
   routeServer.server.close();
   if (local) await local.stop();

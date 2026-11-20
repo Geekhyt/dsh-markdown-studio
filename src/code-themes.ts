@@ -28,22 +28,22 @@ interface CodePalette {
 
 function codeCss(p: CodePalette): string {
   return [
-    '.mdstudio-content pre { background-color: ' +
+    '#mdstudio.mdstudio-content pre { background-color: ' +
       p.bg +
       '; color: ' +
       p.fg +
       '; border: 1px solid ' +
       p.border +
       '; border-radius: 8px; }',
-    '.mdstudio-content pre code { background-color: transparent; color: ' + p.fg + '; }',
-    '.mdstudio-content .mdstudio-tok-comment { color: ' + p.comment + '; }',
-    '.mdstudio-content .mdstudio-tok-keyword { color: ' + p.keyword + '; }',
-    '.mdstudio-content .mdstudio-tok-string { color: ' + p.string + '; }',
-    '.mdstudio-content .mdstudio-tok-number { color: ' + p.number + '; }',
-    '.mdstudio-content .mdstudio-tok-function { color: ' + p.function + '; }',
-    '.mdstudio-content .mdstudio-tok-tag { color: ' + p.tag + '; }',
-    '.mdstudio-content .mdstudio-tok-attr { color: ' + p.attr + '; }',
-    '.mdstudio-content .mdstudio-tok-literal { color: ' + p.literal + '; }',
+    '#mdstudio.mdstudio-content pre code { background-color: transparent; color: ' + p.fg + '; }',
+    '#mdstudio.mdstudio-content .mdstudio-tok-comment { color: ' + p.comment + '; }',
+    '#mdstudio.mdstudio-content .mdstudio-tok-keyword { color: ' + p.keyword + '; }',
+    '#mdstudio.mdstudio-content .mdstudio-tok-string { color: ' + p.string + '; }',
+    '#mdstudio.mdstudio-content .mdstudio-tok-number { color: ' + p.number + '; }',
+    '#mdstudio.mdstudio-content .mdstudio-tok-function { color: ' + p.function + '; }',
+    '#mdstudio.mdstudio-content .mdstudio-tok-tag { color: ' + p.tag + '; }',
+    '#mdstudio.mdstudio-content .mdstudio-tok-attr { color: ' + p.attr + '; }',
+    '#mdstudio.mdstudio-content .mdstudio-tok-literal { color: ' + p.literal + '; }',
   ].join('\n');
 }
 

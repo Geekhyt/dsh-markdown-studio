@@ -137,4 +137,22 @@ const customPatch = parseThemePatch({
 });
 assert.equal(customPatch?.theme, 'custom:aurora');
 assert.equal(customPatch?.customThemes?.length, 1);
-console.log('23 settings edge checks passed.');
+const extracted = assetFilesInMarkdown(
+  [
+    '![a](assets/0123456789abcdef01234567.png "my title")',
+    '![b](./assets/1123456789abcdef01234567.jpg?v=1)',
+    '<img src="http://127.0.0.1:4010/uploads/2123456789abcdef01234567.png" />',
+    '![c](/api/markdown-studio/assets/3123456789abcdef01234567.JPG)',
+  ].join('\n'),
+);
+assert.deepEqual(
+  extracted.sort(),
+  [
+    '0123456789abcdef01234567.png',
+    '1123456789abcdef01234567.jpg',
+    '2123456789abcdef01234567.png',
+    '3123456789abcdef01234567.jpg',
+  ],
+  'assetFilesInMarkdown detects titled Markdown, ./assets, HTML img, and host URLs',
+);
+console.log('24 settings & image asset edge checks passed.');

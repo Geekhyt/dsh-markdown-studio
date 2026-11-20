@@ -68,6 +68,7 @@ export interface EditorApi {
   focus(): void;
   destroy(): void;
   setDark(dark: boolean): void;
+  setPlaceholder?(placeholder: string, ariaLabel?: string): void;
   coordsAtPos?(pos: number): EditorCoords | null;
   setInlineBlocks?(blocks: readonly EditorInlineBlock[]): void;
   setDiffTransition?(transition: EditorDiffTransition | null): void;

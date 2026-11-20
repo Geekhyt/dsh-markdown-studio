@@ -26,13 +26,15 @@ export interface AssetEntry {
 }
 
 export function assetFilenameFromSrc(src: unknown): string {
-  const value = String(src || '');
-  let match = /(?:^|\/)(assets\/[a-f0-9]{24}\.(?:png|jpg))$/i.exec(value);
-  if (match) return match[1].split('/').pop() || '';
+  const value = String(src || '')
+    .split('?')[0]
+    .split('#')[0];
+  let match = /(?:^|\/)assets\/([a-f0-9]{24}\.(?:png|jpg))$/i.exec(value);
+  if (match) return match[1].toLowerCase();
   match = /\/api\/markdown-studio\/assets\/([a-f0-9]{24}\.(?:png|jpg))$/i.exec(value);
-  if (match) return match[1];
+  if (match) return match[1].toLowerCase();
   match = /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):\d+\/uploads\/([a-f0-9]{24}\.(?:png|jpg))$/i.exec(value);
-  return match ? match[1] : '';
+  return match ? match[1].toLowerCase() : '';
 }
 
 export function resolveArticleImageSrc(src: string, imageBaseUrl: string): string {
@@ -74,10 +76,16 @@ export function approximateDataBytes(dataUrl: unknown): number {
 
 export function assetFilesInMarkdown(text: unknown): string[] {
   const files = new Set<string>();
-  const pattern = /!\[[^\]]*\]\((assets\/[a-f0-9]{24}\.(?:png|jpg))\)/g;
+  const source = String(text || '');
+  const mdPattern = /!\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)/g;
   let match: RegExpExecArray | null;
-  while ((match = pattern.exec(String(text || '')))) {
-    const filename = match[1].split('/').pop();
+  while ((match = mdPattern.exec(source))) {
+    const filename = assetFilenameFromSrc(match[1]);
+    if (filename) files.add(filename);
+  }
+  const htmlPattern = /<img\b[^>]*\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/gi;
+  while ((match = htmlPattern.exec(source))) {
+    const filename = assetFilenameFromSrc(match[1] || match[2] || match[3]);
     if (filename) files.add(filename);
   }
   return Array.from(files);

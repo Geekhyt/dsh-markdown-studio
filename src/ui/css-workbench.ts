@@ -10,7 +10,7 @@ import {
   removeCustomTheme,
   upsertCustomTheme,
 } from '../domain/custom-themes';
-import { useMountDisposable } from '../runtime/react-lifecycle';
+import { useDebouncedKeyTask, useMountDisposable } from '../runtime/react-lifecycle';
 import type { CustomTheme, ThemeSettings } from '../themes';
 import * as themes from '../themes';
 import type { DshTagTone } from '../types/dsh-primitives';
@@ -67,6 +67,7 @@ export interface CssWorkbenchProps {
   React: typeof ReactNamespace;
   t: (key: string) => string;
   ui: UiKit;
+  open?: boolean;
   visible: boolean;
   targetId: string | null;
   requestSeq: number;
@@ -222,7 +223,7 @@ function buildSavedThemeUpdate(
 }
 
 export function CssWorkbenchPane(props: CssWorkbenchProps): ReactNode {
-  if (!props.visible) return null;
+  if (!(props.open ?? props.visible)) return null;
   return props.React.createElement(CssWorkbenchContent, { ...props, key: 'css-wb-' + props.requestSeq });
 }
 
@@ -264,7 +265,8 @@ function CssWorkbenchContent(props: CssWorkbenchProps): ReactNode {
     };
   });
 
-  if (editingId && !findCustomTheme(customList, editingId)) {
+  const editingMissing = Boolean(editingId && !findCustomTheme(customList, editingId));
+  useDebouncedKeyTask(React, editingId || '', 0, editingMissing, function () {
     const fallback = customList[0] || null;
     if (fallback) {
       commitDraft({ editingId: fallback.id, nameDraft: fallback.name, cssDraft: fallback.css });
@@ -275,7 +277,7 @@ function CssWorkbenchContent(props: CssWorkbenchProps): ReactNode {
         cssDraft: themes.exampleCss(cssLocale),
       });
     }
-  }
+  });
 
   const editing = editingId ? findCustomTheme(customList, editingId) : null;
   const dirty = isCustomDirty(editing, nameDraft, cssDraft);
@@ -335,7 +337,7 @@ function CssWorkbenchContent(props: CssWorkbenchProps): ReactNode {
   return h(
     'div',
     {
-      className: 'mdstudio-pane mdstudio-editor-pane mdstudio-css-workbench',
+      className: 'mdstudio-pane mdstudio-editor-pane mdstudio-css-workbench' + (props.visible ? '' : ' is-hidden'),
       role: 'region',
       'aria-label': t('drawer.tabCss'),
     },
@@ -421,7 +423,7 @@ function CssWorkbenchContent(props: CssWorkbenchProps): ReactNode {
             variant: 'primary',
             size: 'sm',
             className: 'mdstudio-css-btn',
-            disabled: !cssDraft.trim(),
+            disabled: !canSaveTheme(customList, editing, cssDraft.trim()),
             onClick: saveCustomTheme,
           },
           t('drawer.saveCustomTheme'),

@@ -543,6 +543,24 @@ check('prepareClipboardDom unwraps section blocks nested inside paragraphs with 
     cssParent.remove();
     checks += 2;
     console.log('ok - applyDarkPreview and CodeMirror create() work in JSDOM');
+
+    check('CSS $= attribute selectors and post-var() external URL blocking work', () => {
+      const box = document.createElement('section');
+      box.id = 'mdstudio';
+      box.innerHTML = '<a href="a.pdf">pdf</a><p>body</p>';
+      engine.inlineCss(box, '#mdstudio a[href$=".pdf"], #mdstudio p { color: #123456; }');
+      assert.equal(q(box, 'p').style.color, 'rgb(18, 52, 86)');
+
+      const box2 = document.createElement('section');
+      box2.id = 'mdstudio';
+      box2.innerHTML = '<p>text</p>';
+      engine.inlineCss(
+        box2,
+        '#mdstudio { --u: url("https://evil.example/track.png"); } #mdstudio p { background-image: var(--u); color: #222; }',
+      );
+      assert.equal(box2.innerHTML.includes('evil.example'), false, 'CSS var() cannot smuggle external url()');
+      assert.equal(q(box2, 'p').style.color, 'rgb(34, 34, 34)');
+    });
   } finally {
     for (const [key, prev] of saved.entries()) {
       if (prev === undefined) delete (globalThis as Record<string, unknown>)[key];

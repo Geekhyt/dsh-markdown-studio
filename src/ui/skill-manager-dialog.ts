@@ -95,7 +95,7 @@ function renderInstructionsSurface(
 ): ReactNode {
   const h = React.createElement;
   if (readOnly) {
-    return h('pre', { className: 'mdstudio-skill-readonly' }, value);
+    return h('pre', { className: 'mdstudio-skill-readonly', tabIndex: 0 }, value);
   }
   const useCm = typeof window !== 'undefined' && typeof window.ResizeObserver === 'function';
   if (useCm) {
@@ -378,7 +378,7 @@ function SkillManagerDialogContent(props: SkillManagerDialogProps): ReactNode {
               'div',
               { className: 'mdstudio-skill-item is-active is-draft' },
               h('span', { className: 'mdstudio-skill-item-name' }, form.name.trim() || t('ai.newSkillDraft')),
-              h('span', { className: 'mdstudio-skill-item-chip is-draft' }, t('drawer.customDraftChip')),
+              h('span', { className: 'mdstudio-skill-item-chip is-draft' }, t('ai.newDraftChip')),
             )
           : null,
       ),

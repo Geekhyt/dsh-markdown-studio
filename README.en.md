@@ -109,7 +109,7 @@ Manage multiple drafts and a recycle bin with keyword-highlighted title and exce
 
 ## Why `dsh-markdown-studio`
 
-- **Zero host patches, fast startup**: Built on official DeepSeek Harness plugin APIs with a `2.1 KiB` gzipped core shell; the editor, math, and diagram engines load only when needed so everyday chats pay zero overhead.
+- **Zero host patches, fast startup**: Built on official DeepSeek Harness plugin APIs with a `2.3 KiB` gzipped core shell; the editor, math, and diagram engines load only when needed so everyday chats pay zero overhead.
 - **What you preview is what pastes into WeChat**: Eight high-contrast editorial themes compile cleanly into self-contained inline styles, collect external links into bottom references, preserve code indentation, and keep dark preview isolated from light clipboard output.
 - **100% local-first, your data stays yours**: Drafts, recycle bin entries, custom themes, and deduplicated local images remain on your machine. Unused images are cleaned up automatically on permanent deletion, linked files warn before overwriting external edits, and full `.zip` backups keep everything portable (see [storage and archive formats](./docs/schema.md)).
 

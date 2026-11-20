@@ -2,6 +2,7 @@ import type * as ReactNamespace from 'react';
 import type { HostClient } from '../adapters/host-client';
 import { prepareImageForWechat } from '../adapters/image-encode';
 import type { MermaidCacheEntry } from '../domain/mermaid';
+import { renderMarkdown } from '../markdown-parser';
 import { useDebouncedKeyTask, useLatest } from '../runtime/react-lifecycle';
 import { type MermaidTheme, mermaidCacheKey } from '../themes';
 
@@ -25,12 +26,22 @@ export interface MermaidAssetsApi {
   filenames: () => Set<string>;
 }
 
+function decodeHtmlEntities(text: string): string {
+  return text
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&gt;/g, '>')
+    .replace(/&lt;/g, '<')
+    .replace(/&amp;/g, '&');
+}
+
 export function extractMermaidBlocks(markdown: unknown): string[] {
   const blocks: string[] = [];
-  const pattern = /(?:^|\n) {0,3}(`{3,}|~{3,})[ \t]*mermaid[^\r\n]*\r?\n([\s\S]*?)\r?\n {0,3}\1[ \t]*(?=\r?\n|$)/gi;
+  const html = renderMarkdown(String(markdown || ''), { linkFootnotes: false }).html;
+  const pattern = /<code class="mdstudio-lang-mermaid">([\s\S]*?)<\/code>/g;
   let match: RegExpExecArray | null;
-  while ((match = pattern.exec(String(markdown || '')))) {
-    const code = match[2].trim();
+  while ((match = pattern.exec(html))) {
+    const code = decodeHtmlEntities(match[1]).trim();
     if (code) blocks.push(code);
   }
   return blocks;
@@ -71,6 +82,7 @@ function svgToPng(svg: string, background: string): Promise<string> {
           canvas.height = Math.max(1, Math.ceil(height * scale));
           const context = canvas.getContext('2d');
           if (!context) {
+            URL.revokeObjectURL(url);
             reject(new Error('canvas unavailable'));
             return;
           }
@@ -100,6 +112,7 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
   const cacheRef = React.useRef<Map<string, MermaidCacheEntry>>(new Map());
   const [version, setVersion] = React.useState(0);
   const loadPromiseRef = React.useRef<Promise<MermaidModule | null> | null>(null);
+  const ensureGenRef = React.useRef(0);
   const themeRef = useLatest(React, options.theme);
 
   function load(): Promise<MermaidModule | null> {
@@ -130,11 +143,50 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
     return loadPromiseRef.current;
   }
 
+  async function renderAndStore(
+    mermaid: MermaidModule,
+    theme: MermaidTheme,
+    currentKey: string,
+    currentCode: string,
+    currentIndex: number,
+  ): Promise<void> {
+    try {
+      const svg = await mermaid.render(
+        prependMermaidDirective(currentCode, theme.directive),
+        'mdstudio-mermaid-' + Date.now() + '-' + currentIndex,
+      );
+      if (!cacheRef.current.has(currentKey)) return;
+      const png = await svgToPng(svg, theme.background);
+      const prepared = await prepareImageForWechat(png);
+      const stored = await options.hostClient.storeAsset(prepared.dataUrl, prepared.filename);
+      if (!cacheRef.current.has(currentKey)) return;
+      cacheRef.current.set(currentKey, {
+        status: 'ready',
+        filename: stored.filename,
+        assetPath: stored.assetPath || 'assets/' + stored.filename,
+      });
+    } catch (error) {
+      if (cacheRef.current.has(currentKey)) {
+        cacheRef.current.set(currentKey, {
+          status: 'error',
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    if (options.pageAliveRef.current) {
+      setVersion((value) => value + 1);
+    }
+  }
+
   async function ensure(markdown: string): Promise<void> {
+    const gen = ++ensureGenRef.current;
     const blocks = extractMermaidBlocks(markdown);
-    if (!blocks.length) return;
+    if (!blocks.length) {
+      cacheRef.current.clear();
+      return;
+    }
     const mermaid = await load();
-    if (!mermaid || typeof mermaid.render !== 'function') return;
+    if (!mermaid || typeof mermaid.render !== 'function' || gen !== ensureGenRef.current) return;
     const theme = themeRef.current;
     const keys = blocks.map(function (code) {
       return mermaidCacheKey(code, theme);
@@ -144,6 +196,7 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
       if (!active.has(key)) cacheRef.current.delete(key);
     });
     for (let index = 0; index < blocks.length; index++) {
+      if (gen !== ensureGenRef.current) return;
       const key = keys[index];
       const cached = cacheRef.current.get(key);
       if (cached && cached.status === 'ready') continue;
@@ -151,31 +204,7 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
         if (cached.promise) await cached.promise;
         continue;
       }
-      const task = (async function (currentKey: string, currentCode: string, currentIndex: number) {
-        try {
-          const svg = await mermaid.render(
-            prependMermaidDirective(currentCode, theme.directive),
-            'mdstudio-mermaid-' + Date.now() + '-' + currentIndex,
-          );
-          const png = await svgToPng(svg, theme.background);
-          const prepared = await prepareImageForWechat(png);
-          const stored = await options.hostClient.storeAsset(prepared.dataUrl, prepared.filename);
-          cacheRef.current.set(currentKey, {
-            status: 'ready',
-            filename: stored.filename,
-            assetPath: stored.assetPath || 'assets/' + stored.filename,
-          });
-        } catch (error) {
-          cacheRef.current.set(currentKey, {
-            status: 'error',
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-        if (options.pageAliveRef.current)
-          setVersion(function (value) {
-            return value + 1;
-          });
-      })(key, blocks[index], index);
+      const task = renderAndStore(mermaid, theme, key, blocks[index], index);
       cacheRef.current.set(key, { status: 'loading', promise: task });
       await task;
     }

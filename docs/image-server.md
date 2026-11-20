@@ -27,7 +27,7 @@ Origin: http://127.0.0.1:52359          # 或桌面 shell scheme
 GET /api/markdown-studio/assets/<24-hex>.(png|jpg)
 ```
 
-该路由受 DSH Web cookie 保护，对普通图片请求返回 401，因此编辑器使用下面的只读回环服务。action 路由拒绝非 POST、主类型不是 `application/json` 的请求和外部 Web origin；桌面 shell 的自定义 scheme origin 与缺失 origin 允许通过，`null` origin 仅在 `Sec-Fetch-Site: same-origin/none` 时允许通过。图片以“临时文件写入 + 原子重命名”落盘，避免中断写入留下残缺文件。
+该路由受 DSH Web cookie 保护，对普通图片请求返回 401，因此编辑器使用下面的只读回环服务。action 路由拒绝非 POST、主类型不是 `application/json` 的请求和外部 Web origin；受信任的桌面 shell origin（`dsh-app:` / `dsh:` / `app:` / `file:`）与缺失 origin 允许通过，`null` origin 仅在 `Sec-Fetch-Site: same-origin/none` 时允许通过。图片以“临时文件写入 + 原子重命名”落盘，避免中断写入留下残缺文件。
 
 ## 本地图片服务
 

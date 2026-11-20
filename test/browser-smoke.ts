@@ -186,7 +186,7 @@ await page.route('**/api/markdown-studio/ai', async (route) => {
   }
   const ndjson =
     [
-      JSON.stringify({ type: 'delta', text: '清理套话后的自然正文。\n<<<REASON: 删去空泛铺垫>>>' }),
+      JSON.stringify({ type: 'delta', text: '清理套话后的自然正文。' }),
       JSON.stringify({ type: 'done', provider: 'deepseek', model: 'deepseek-chat' }),
     ].join('\n') + '\n';
   await route.fulfill({ status: 200, contentType: 'application/x-ndjson; charset=utf-8', body: ndjson });
@@ -354,14 +354,18 @@ const darkAxeViolations = await page.evaluate(async () => {
   ).axe;
   if (!axe) return null;
   const result = await axe.run(document, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa'] } });
-  return result.violations.map((violation) => ({ id: violation.id, impact: violation.impact }));
+  return result.violations.map((violation) => ({
+    id: violation.id,
+    impact: violation.impact,
+    targets: violation.nodes.map((node) => {
+      const item = node as { target: string[]; html: string; failureSummary?: string };
+      return { target: item.target, summary: item.failureSummary, html: item.html.slice(0, 140) };
+    }),
+  }));
 });
 assert.ok(darkAxeViolations, 'axe-core runs in dark mode');
-assert.deepEqual(
-  darkAxeViolations.filter((v) => v.impact === 'critical' || v.impact === 'serious'),
-  [],
-  'no serious axe violations in dark mode',
-);
+const seriousDarkAxe = darkAxeViolations.filter((v) => v.impact === 'critical' || v.impact === 'serious');
+assert.deepEqual(seriousDarkAxe, [], `no serious axe violations in dark mode: ${JSON.stringify(seriousDarkAxe)}`);
 await page.evaluate(() => document.body.removeAttribute('data-ds-dark-theme'));
 await page.waitForTimeout(80);
 

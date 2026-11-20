@@ -169,8 +169,21 @@ export class AiHostService {
       models = [];
     }
     const def = this.getDefaultModel()?.currentSelection();
-    const provider = trimString(def?.provider) || (models[0]?.provider ?? '');
-    const model = trimString(def?.model) || (models[0]?.id ?? '');
+    const defProvider = trimString(def?.provider);
+    const defModel = trimString(def?.model);
+    const matched =
+      defProvider && defModel
+        ? { provider: defProvider, model: defModel }
+        : defProvider
+          ? (() => {
+              const first = models.find((item) => item.provider === defProvider);
+              return first ? { provider: first.provider, model: first.id } : { provider: '', model: '' };
+            })()
+          : models[0]
+            ? { provider: models[0].provider, model: models[0].id }
+            : { provider: '', model: '' };
+    const provider = matched.provider;
+    const model = matched.model;
     return {
       available: Boolean(provider && model),
       provider,
@@ -204,6 +217,7 @@ export class AiHostService {
     const { system, prompt } = validateStreamTexts(input.system, input.prompt);
     const route = await this.resolveRoute(input.provider, input.model);
     const reasoningEffort = await resolveFastReasoningEffort(llm, route.provider, route.model, signal);
+    if (signal?.aborted) throw new AiHostError('ABORTED', '已停止生成');
     const message: HostLlmMessage = {
       id: crypto.randomUUID(),
       role: 'user',

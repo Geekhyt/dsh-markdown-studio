@@ -39,6 +39,7 @@ interface RenderContext {
   footnotes: Map<string, FootnoteDefinition>;
   footnoteNumbers: Map<string, number>;
   footnoteOrder: string[];
+  inLink?: boolean;
   options: {
     linkFootnotes: boolean;
     footnotesTitle: string;
@@ -113,7 +114,7 @@ function findMathClose(text: string, from: number, delimiter: string): number {
     const next = text.indexOf(delimiter, pos);
     if (next === -1) return -1;
     if (!isOddBackslashEscaped(text, next)) return next;
-    pos = next + delimiter.length;
+    pos = next + 1;
   }
   return -1;
 }
@@ -124,6 +125,16 @@ function skipTeXMath(text: string, index: number): number {
   if (next !== '(' && next !== '[') return index;
   const close = findMathClose(text, index + 2, next === '(' ? '\\)' : '\\]');
   return close === -1 ? index : close + 1;
+}
+
+function isInlineCurrencyMath(text: string, openEnd: number, close: number): boolean {
+  if (/[0-9]/.test(text.charAt(close + 1))) return true;
+  const source = text.slice(openEnd, close);
+  if (!source.trim().length || /^\s/.test(source) || /\s$/.test(source)) return true;
+  if (/^[0-9]/.test(source) && !source.includes('\\') && /[\u3000-\u303f\uff00-\uffef\u4e00-\u9fff]/.test(source)) {
+    return true;
+  }
+  return false;
 }
 
 function skipCodeOrMath(text: string, index: number): number {
@@ -137,51 +148,14 @@ function skipCodeOrMath(text: string, index: number): number {
     return close === -1 ? index + len - 1 : close + len - 1;
   }
   const close = findMathClose(text, index + len, '$'.repeat(len));
-  return close === -1 ? index : close + len - 1;
-}
-
-export function splitTopLevel(text: string, separator: string): string[] {
-  var parts: string[] = [];
-  var depth = 0;
-  var quote = null;
-  var start = 0;
-  for (var i = 0; i < text.length; i++) {
-    var ch = text[i];
-    if (quote) {
-      if (ch === '\\') {
-        i++;
-        continue;
-      }
-      if (ch === quote) quote = null;
-      continue;
-    }
-    const jumped = skipCodeOrMath(text, i);
-    if (jumped > i) {
-      i = jumped;
-      continue;
-    }
-    if (ch === '\\') {
-      i++;
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      quote = ch;
-      continue;
-    }
-    if (ch === '(' || ch === '[') depth++;
-    else if (ch === ')' || ch === ']') depth = Math.max(0, depth - 1);
-    else if (ch === separator && depth === 0) {
-      parts.push(text.slice(start, i));
-      start = i + 1;
-    }
-  }
-  parts.push(text.slice(start));
-  return parts;
+  if (close === -1) return index;
+  if (len === 1 && isInlineCurrencyMath(text, index + 1, close)) return index;
+  return close + len - 1;
 }
 
 function isExternalHref(href: string): boolean {
-  if (!/^https?:\/\//i.test(href)) return false;
-  return !/^https?:\/\/(mp\.weixin\.qq\.com|mp\.weixin\.com)\//i.test(href);
+  if (!/^(?:https?:)?\/\//i.test(href)) return false;
+  return !/^(?:https?:)?\/\/(mp\.weixin\.qq\.com|mp\.weixin\.com)\//i.test(href);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -192,14 +166,14 @@ const JS_KEYWORDS = new Set<string>(
   (
     'const let var function return if else for while do switch case break continue new class extends ' +
     'import export from default try catch finally throw typeof instanceof in of async await yield static get set ' +
-    'delete void this super null undefined true false interface type enum implements public private protected readonly ' +
+    'delete void this super interface type enum implements public private protected readonly ' +
     'declare namespace abstract as satisfies keyof infer never unknown any string number boolean object'
   ).split(/\s+/),
 );
 
 const PY_KEYWORDS = new Set<string>(
   (
-    'def class return if elif else for while in not and or is None True False import from as ' +
+    'def class return if elif else for while in not and or is import from as ' +
     'with try except finally raise lambda pass yield async await global nonlocal assert del print self match case'
   ).split(/\s+/),
 );
@@ -217,28 +191,33 @@ function tokenSpan(kind: string | null, text: string): string {
 }
 
 function highlightScript(code: string, keywords: Set<string>, language: string): string {
-  var re =
-    /(\/\/[^\n]*|\/\*[\s\S]*?\*\/|#[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b\d[\w.]*\b|[A-Za-z_$][\w$]*)/g;
+  var hashComments = language === 'py' || language === 'sh' || language === 'yaml' || language === 'toml';
+  var re = hashComments
+    ? /(#[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b\d[\w.]*\b|[A-Za-z_$][\w$]*)/g
+    : /(\/\/[^\n]*|\/\*[\s\S]*?\*\/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b\d[\w.]*\b|[A-Za-z_$][\w$]*)/g;
   var out = '';
   var last = 0;
   var m;
-  var hashComments = language === 'py' || language === 'sh' || language === 'yaml' || language === 'toml';
   while ((m = re.exec(code)) !== null) {
     out += escapeHtml(code.slice(last, m.index));
     var token = m[0];
     var kind = '';
-    if (token.indexOf('//') === 0 || token.indexOf('/*') === 0 || (token.charAt(0) === '#' && hashComments)) {
+    if (
+      (!hashComments && (token.indexOf('//') === 0 || token.indexOf('/*') === 0)) ||
+      (hashComments && token.charAt(0) === '#')
+    ) {
       kind = 'comment';
     } else if (/^["'`]/.test(token)) {
       kind = 'string';
     } else if (/^\d/.test(token)) {
       kind = 'number';
+    } else if (/^(true|false|null|undefined|None|True|False)$/.test(token)) {
+      kind = 'literal';
     } else if (keywords.has(token)) {
       kind = 'keyword';
     } else if (/^[A-Za-z_$]/.test(token)) {
       var after = code.slice(m.index + token.length);
       if (/^\s*\(/.test(after)) kind = 'function';
-      else if (/^(true|false|null|undefined|None|True|False)$/.test(token)) kind = 'literal';
     }
     out += tokenSpan(kind, token);
     last = m.index + token.length;
@@ -395,7 +374,12 @@ function findMatching(text: string, start: number, open: string, close: string):
       if (ch === quote) quote = null;
       continue;
     }
-    if (ch === '"' || ch === "'") {
+    if (ch === '\\') {
+      i++;
+      continue;
+    }
+    // Only treat quotes as title delimiters after whitespace so apostrophes inside URLs (e.g. Newton's_laws) stay intact.
+    if ((ch === '"' || ch === "'") && i > start && /\s/.test(text[i - 1])) {
       quote = ch;
       continue;
     }
@@ -464,23 +448,49 @@ function parseRefLinkAt(text: string, start: number, linkDefs: Map<string, Desti
   return shortcut ? { label, href: shortcut.href, title: shortcut.title, end: end + 1 } : null;
 }
 
-function isUnderscoreNeighbor(ch: string): boolean {
-  return ch === '_' || /[A-Za-z0-9]/.test(ch);
+function isIntrawordNeighbor(ch: string, delimiterChar: string): boolean {
+  return ch === delimiterChar || /[A-Za-z0-9]/.test(ch);
+}
+
+function isIntrawordGuarded(ch: string): boolean {
+  return ch === '_' || ch === '+' || ch === '=';
 }
 
 function canOpenEmphasis(text: string, index: number, delimiter: string): boolean {
   const ch = delimiter.charAt(0);
   const after = text.charAt(index + delimiter.length);
-  if (!after || /\s/.test(after) || after === ch) return false;
+  if (!after || /\s/.test(after)) return false;
+  // Allow `**` to open at `***italic* and bold**` while rejecting `****`.
+  if (
+    after === ch &&
+    !(
+      delimiter === '**' &&
+      text.charAt(index + 3) &&
+      text.charAt(index + 3) !== ch &&
+      !/\s/.test(text.charAt(index + 3))
+    )
+  ) {
+    return false;
+  }
   const before = index > 0 ? text.charAt(index - 1) : '';
   if (before === ch) return false;
-  if (ch === '_' && before && isUnderscoreNeighbor(before)) return false;
+  if (isIntrawordGuarded(ch) && before && isIntrawordNeighbor(before, ch)) return false;
   return true;
+}
+
+function canCloseAt(text: string, from: number, i: number, closeAt: number, ch: string, len: number): boolean {
+  if (i <= from || /\s/.test(text.charAt(i - 1))) return false;
+  return ch !== '_' || !isIntrawordNeighbor(text.charAt(closeAt + len), ch);
 }
 
 function findClosingDelimiter(text: string, from: number, delimiter: string): number {
   const ch = delimiter.charAt(0);
   const len = delimiter.length;
+  const isStarOrUnder = ch === '*' || ch === '_';
+  const complementLen = len === 2 ? 1 : 2;
+  let complementOpen = false;
+  let tripleDepth = 0;
+  let fallbackTriple = -1;
   for (let i = from; i <= text.length - len; i++) {
     const jumped = skipCodeOrMath(text, i);
     if (jumped > i) {
@@ -495,16 +505,23 @@ function findClosingDelimiter(text: string, from: number, delimiter: string): nu
     if (cur !== ch) continue;
     let runLen = 1;
     while (text.charAt(i + runLen) === ch) runLen++;
-    if (runLen !== len) {
-      i += runLen - 1;
-      continue;
-    }
-    if (i > from && !/\s/.test(text.charAt(i - 1))) {
-      if (ch !== '_' || !isUnderscoreNeighbor(text.charAt(i + len))) return i;
+    if (runLen === len && canCloseAt(text, from, i, i, ch, len)) return i;
+    if (isStarOrUnder && len < 3) {
+      const canOpen = Boolean(text.charAt(i + runLen) && !/\s/.test(text.charAt(i + runLen)));
+      const canClose = i > from && !/\s/.test(text.charAt(i - 1));
+      if (runLen === complementLen) {
+        if (canOpen && !complementOpen) complementOpen = true;
+        else if (canClose && complementOpen) complementOpen = false;
+      } else if (runLen === 3) {
+        if (complementOpen && canClose && canCloseAt(text, from, i, i + 3 - len, ch, len)) return i + 3 - len;
+        if (tripleDepth > 0 && canClose) tripleDepth--;
+        else if (canOpen) tripleDepth++;
+        else if (canClose && fallbackTriple === -1 && canCloseAt(text, from, i, i, ch, len)) fallbackTriple = i;
+      }
     }
     i += runLen - 1;
   }
-  return -1;
+  return fallbackTriple;
 }
 
 interface InlineToken {
@@ -607,11 +624,12 @@ function inlineMath(text: string, index: number): InlineToken | null {
   if (text.charAt(index) !== '$') return null;
   const display = text.substr(index, 2) === '$$';
   const delimiter = display ? '$$' : '$';
-  const close = findMathClose(text, index + delimiter.length, delimiter);
+  const openEnd = index + delimiter.length;
+  const close = findMathClose(text, openEnd, delimiter);
   if (close === -1) return null;
-  const source = text.slice(index + delimiter.length, close);
+  const source = text.slice(openEnd, close);
   if (!source.trim().length) return null;
-  if (!display && (/^\s/.test(source) || /\s$/.test(source))) return null;
+  if (!display && isInlineCurrencyMath(text, openEnd, close)) return null;
   return { html: renderMathSpan(display, source), next: close + delimiter.length };
 }
 
@@ -672,12 +690,16 @@ function inlineLink(text: string, index: number, ctx: RenderContext): InlineToke
   if (text.charAt(index) !== '[') return null;
   const footnote = inlineFootnote(text, index, ctx);
   if (footnote) return footnote;
+  if (ctx.inLink) return null;
   const link = parseLinkAt(text, index) || parseRefLinkAt(text, index, ctx.linkDefs);
   if (!link) return null;
   const label = normalizeLabel(link.label);
   const hideUrlLabel = /^https?:\/\//i.test(label) && ctx.options.linkFootnotes && isExternalHref(link.href);
+  ctx.inLink = true;
+  const innerHtml = hideUrlLabel ? '' : renderInline(link.label, ctx);
+  ctx.inLink = false;
   return {
-    html: renderLink(ctx, hideUrlLabel ? '' : renderInline(link.label, ctx), label, link.href, link.title),
+    html: renderLink(ctx, innerHtml, label, link.href, link.title),
     next: link.end,
   };
 }
@@ -897,13 +919,33 @@ function isBlockStart(line: string, lines: string[], index: number): boolean {
   );
 }
 
+function splitTableCells(row: string): string[] {
+  const cells: string[] = [];
+  let start = 0;
+  for (let i = 0; i < row.length; i++) {
+    const jumped = skipCodeOrMath(row, i);
+    if (jumped > i) {
+      i = jumped;
+      continue;
+    }
+    if (row[i] === '\\') {
+      i++;
+      continue;
+    }
+    if (row[i] === '|') {
+      cells.push(row.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  cells.push(row.slice(start).trim());
+  return cells;
+}
+
 function splitTableRow(line: string): string[] {
   var row = String(line || '').trim();
   if (row.charAt(0) === '|') row = row.slice(1);
-  if (row.charAt(row.length - 1) === '|' && row.charAt(row.length - 2) !== '\\') row = row.slice(0, -1);
-  return splitTopLevel(row, '|').map(function (cell) {
-    return cell.trim();
-  });
+  if (row.charAt(row.length - 1) === '|' && !isOddBackslashEscaped(row, row.length - 1)) row = row.slice(0, -1);
+  return splitTableCells(row);
 }
 
 function renderTable(lines: string[], start: number, ctx: RenderContext): BlockResult {
@@ -1114,12 +1156,15 @@ function isQuoteLazyContinuation(
 function parseBlockquote(lines: string[], start: number, ctx: RenderContext): BlockResult {
   var content: string[] = [];
   var isAlertBlock = ALERT_MARKER_RE.test(lines[start] || '');
+  var fenceState: FenceOpening | null = null;
   var i = start;
   while (i < lines.length) {
     var line = lines[i];
     if (/^ {0,3}>/.test(line)) {
-      if (i > start && ALERT_MARKER_RE.test(line)) break;
-      content.push(line.replace(/^ {0,3}> ?/, ''));
+      if (!fenceState && i > start && ALERT_MARKER_RE.test(line)) break;
+      var stripped = line.replace(/^ {0,3}> ?/, '');
+      fenceState = stepFenceState(fenceState, stripped);
+      content.push(stripped);
       i++;
       continue;
     }
@@ -1139,7 +1184,9 @@ function parseBlockquote(lines: string[], start: number, ctx: RenderContext): Bl
       break;
     }
     if (isQuoteLazyContinuation(isAlertBlock, content, line, lines, i)) {
-      content.push(line.replace(/^[ \t]+|[ \t]+$/g, ''));
+      var trimmed = line.replace(/^[ \t]+|[ \t]+$/g, '');
+      fenceState = stepFenceState(fenceState, trimmed);
+      content.push(trimmed);
       i++;
       continue;
     }
@@ -1178,14 +1225,35 @@ function parseBlockquote(lines: string[], start: number, ctx: RenderContext): Bl
   return { html: '<blockquote>' + blocks(content, ctx) + '</blockquote>', next: i };
 }
 
+function isBlockDirectiveStart(line: string): boolean {
+  return (
+    isScrollContainerStart(line) ||
+    /^ {0,3}:::tldr(?:[ \t]+.*)?$/i.test(line) ||
+    /^ {0,3}:::(?:lead|pull|sign|meta)[ \t]*$/i.test(line)
+  );
+}
+
 function collectScrollBody(lines: string[], start: number): { body: string[]; next: number } {
   var body: string[] = [];
   var fenceState: FenceOpening | null = null;
+  var depth = 0;
   var i = start;
   while (i < lines.length) {
     var line = lines[i];
     fenceState = stepFenceState(fenceState, line);
+    if (!fenceState && isBlockDirectiveStart(line)) {
+      depth++;
+      body.push(line);
+      i++;
+      continue;
+    }
     if (!fenceState && /^ {0,3}:::[ \t]*$/.test(line)) {
+      if (depth > 0) {
+        depth--;
+        body.push(line);
+        i++;
+        continue;
+      }
       i++;
       break;
     }
@@ -1195,12 +1263,12 @@ function collectScrollBody(lines: string[], start: number): { body: string[]; ne
   return { body: body, next: i };
 }
 
-function parseStandaloneImageLine(line: string): { html: string; caption: string } | null {
+function parseStandaloneImageLine(line: string, ctx?: RenderContext): { html: string; caption: string } | null {
   var trimmed = line.trim();
   if (trimmed.charAt(0) !== '!' || trimmed.charAt(1) !== '[') return null;
-  var parsed = parseLinkAt(trimmed, 1);
+  var parsed = parseLinkAt(trimmed, 1) || (ctx ? parseRefLinkAt(trimmed, 1, ctx.linkDefs) : null);
   if (!parsed || parsed.end !== trimmed.length) return null;
-  var token = inlineImage(trimmed, 0);
+  var token = inlineImage(trimmed, 0, ctx);
   if (!token || token.html.indexOf('<img ') !== 0) return null;
   return { html: token.html, caption: parsed.label.trim() };
 }
@@ -1244,7 +1312,7 @@ function hasTopLevelHr(body: string[]): boolean {
   return false;
 }
 
-function splitHorizontalSlides(body: string[]): string[][] {
+function splitHorizontalSlides(body: string[], ctx: RenderContext): string[][] {
   if (hasTopLevelHr(body)) return splitSlideGroups(body, false);
   var nonEmpty = body.filter(function (line) {
     return line.trim().length > 0;
@@ -1252,7 +1320,7 @@ function splitHorizontalSlides(body: string[]): string[][] {
   if (
     nonEmpty.length >= 2 &&
     nonEmpty.every(function (line) {
-      return parseStandaloneImageLine(line) !== null;
+      return parseStandaloneImageLine(line, ctx) !== null;
     })
   ) {
     return nonEmpty.map(function (line) {
@@ -1266,7 +1334,7 @@ function renderHorizontalSlide(slide: string[], ctx: RenderContext): string {
   var nonEmpty = slide.filter(function (line) {
     return line.trim().length > 0;
   });
-  var standalone = nonEmpty.length === 1 ? parseStandaloneImageLine(nonEmpty[0]) : null;
+  var standalone = nonEmpty.length === 1 ? parseStandaloneImageLine(nonEmpty[0], ctx) : null;
   if (standalone) {
     var captionHtml = standalone.caption
       ? '<p class="mdstudio-scroll-caption" data-ignore-width="">' + escapeHtml(standalone.caption) + '</p>'
@@ -1288,7 +1356,7 @@ function parseScrollContainer(lines: string[], start: number, ctx: RenderContext
   var isHorizontal = !!match[1];
   var collected = collectScrollBody(lines, start + 1);
   if (isHorizontal) {
-    var slides = splitHorizontalSlides(collected.body);
+    var slides = splitHorizontalSlides(collected.body, ctx);
     var trackInner = slides
       .map(function (slide) {
         return renderHorizontalSlide(slide, ctx);
@@ -1324,9 +1392,16 @@ function parseFrontmatter(text: string): { meta: Record<string, string>; rest: s
   if (!match) return null;
   var lines = match[1].split(/\r?\n/);
   var meta: Record<string, string> = {};
+  var lastKey = '';
   for (var i = 0; i < lines.length; i++) {
-    var line = lines[i].trim();
+    var raw = lines[i];
+    var line = raw.trim();
     if (!line || line.charAt(0) === '#') continue;
+    if (lastKey && /^[ \t]+-[ \t]+(.*)$/.test(raw)) {
+      var item = raw.replace(/^[ \t]+-[ \t]+/, '').trim();
+      meta[lastKey] = meta[lastKey] ? meta[lastKey] + ', ' + item : item;
+      continue;
+    }
     var pair = /^([A-Za-z_][\w-]*)\s*:\s*(.*)$/.exec(line);
     if (!pair) return null;
     var value = pair[2].trim();
@@ -1336,7 +1411,8 @@ function parseFrontmatter(text: string): { meta: Record<string, string>; rest: s
     ) {
       value = value.slice(1, -1);
     }
-    meta[pair[1]] = value;
+    lastKey = pair[1];
+    meta[lastKey] = value;
   }
   return { meta: meta, rest: text.slice(match[0].length) };
 }
@@ -1356,7 +1432,7 @@ function parseDelimitedMathBlock(
   closeToken: string,
 ): BlockResult | null {
   var single = singleRe.exec(lines[start]);
-  if (single && single[1].trim()) {
+  if (single && single[1].trim() && single[1].indexOf(closeToken) === -1) {
     return { html: renderDisplayMathHtml(single[1].trim()), next: start + 1 };
   }
   var open = openRe.exec(lines[start]);
@@ -1505,7 +1581,7 @@ function parseParagraph(lines: string[], start: number, ctx: RenderContext): Blo
     i++;
   }
   if (paragraph.length === 1) {
-    var standaloneImg = parseStandaloneImageLine(paragraph[0]);
+    var standaloneImg = parseStandaloneImageLine(paragraph[0], ctx);
     if (standaloneImg && shouldEmitImageCaption(standaloneImg.caption)) {
       return {
         html:
@@ -1646,9 +1722,27 @@ function buildFrontmatterMetaHtml(meta: Record<string, string>, rawBody: string,
   return '<p class="mdstudio-meta">' + escapeHtml(parts.join(' · ')) + '</p>';
 }
 
+function findTopLevelH1Index(html: string): number {
+  const tagRe = /<(\/?)(blockquote|section|h1)\b[^>]*>/gi;
+  let depth = 0;
+  let match: RegExpExecArray | null;
+  while ((match = tagRe.exec(html))) {
+    const closing = match[1] === '/';
+    const tag = match[2].toLowerCase();
+    if (tag === 'h1') {
+      if (!closing && depth === 0) return match.index;
+    } else if (closing) {
+      depth = Math.max(0, depth - 1);
+    } else {
+      depth++;
+    }
+  }
+  return -1;
+}
+
 function injectFrontmatterMeta(html: string, metaHtml: string): string {
   if (!metaHtml || html.indexOf('class="mdstudio-meta"') !== -1) return html;
-  var h1Index = html.indexOf('<h1');
+  var h1Index = findTopLevelH1Index(html);
   if (h1Index === -1) return metaHtml + html;
   return html.slice(0, h1Index) + metaHtml + html.slice(h1Index);
 }

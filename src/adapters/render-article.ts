@@ -177,6 +177,13 @@ export function renderArticle(
       if (parent.nextElementSibling?.classList.contains('mdstudio-caption')) {
         parent.nextElementSibling.remove();
       }
+      const onlyImage = Array.from(parent.childNodes).every(
+        (node) => node === img || (node.nodeType === 3 && !(node.nodeValue || '').trim()),
+      );
+      if (onlyImage && parent.parentNode) {
+        parent.parentNode.replaceChild(placeholder, parent);
+        return;
+      }
     }
     if (img.parentNode) img.parentNode.replaceChild(placeholder, img);
   }
@@ -208,7 +215,9 @@ export function renderArticle(
     localPlaceholder(img, src);
   });
   if (options.forCopy) prepareClipboardDom(root);
-  engine.inlineCss(root, css + (mathNodes.length && math ? '\n' + math.cssText : ''));
+  engine.inlineCss(root, css + (mathNodes.length && math ? '\n' + math.cssText : ''), {
+    allowExternalCssResources: Boolean(settings.allowExternalCssResources),
+  });
   if (options.forCopy) {
     removeEmptyHeadingDecorations(root);
     removeEmptyZeroHeightContainers(root);
@@ -216,9 +225,9 @@ export function renderArticle(
   }
   var codeBlockAria = options.codeBlockAriaLabel || (options.locale === 'en' ? 'Code block' : '代码块');
   Array.from(root.querySelectorAll<HTMLPreElement>('pre')).forEach(function (pre) {
-    pre.style.setProperty('overflow-x', 'auto');
-    pre.style.setProperty('white-space', 'pre');
-    pre.style.setProperty('word-break', 'normal');
+    if (!pre.style.getPropertyValue('overflow-x')) pre.style.setProperty('overflow-x', 'auto');
+    if (!pre.style.getPropertyValue('white-space')) pre.style.setProperty('white-space', 'pre');
+    if (!pre.style.getPropertyValue('word-break')) pre.style.setProperty('word-break', 'normal');
     pre.setAttribute('tabindex', '0');
     pre.setAttribute('role', 'region');
     pre.setAttribute('aria-label', codeBlockAria);

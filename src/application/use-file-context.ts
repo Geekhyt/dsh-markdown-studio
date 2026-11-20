@@ -223,7 +223,14 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
 
   function linkFolder(directory: FileSystemDirectoryHandle, file: FileSystemFileHandle): void {
     workspacePickRef.current = directory;
-    persist({ kind: 'folder', directory, file, articleId: optionsRef.current.getDocument().id });
+    const version = stampRef.current?.handle === file ? stampRef.current : undefined;
+    persist({
+      kind: 'folder',
+      directory,
+      file,
+      articleId: optionsRef.current.getDocument().id,
+      version: version && { fingerprint: version.fingerprint, lastModified: version.lastModified, size: version.size },
+    });
     void refreshPermission();
   }
 
@@ -250,6 +257,8 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
       request === reloadRef.current &&
       originalText === optionsRef.current.getDocument().markdown;
     try {
+      await writesRef.current;
+      if (!valid()) return;
       const file = await handle.getFile();
       const text = await file.text();
       const fingerprint = await fileFingerprint(text);

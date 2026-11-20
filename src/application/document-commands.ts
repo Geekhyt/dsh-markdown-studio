@@ -105,14 +105,14 @@ export function createDocumentCommands(options: DocumentActionsOptions): Documen
         try {
           const mime = match[2].toLowerCase() === 'png' ? 'image/png' : 'image/jpeg';
           const dataUrl = 'data:' + mime + ';base64,' + bytesToBase64(entry.data);
-          const stored = await options.hostClient.storeAsset(dataUrl, match[1]);
-          mapping.set('assets/' + match[1], stored.assetPath || 'assets/' + stored.filename);
+          const stored = await options.hostClient.storeAsset(dataUrl, match[1].toLowerCase());
+          mapping.set('assets/' + match[1].toLowerCase(), stored.assetPath || 'assets/' + stored.filename);
         } catch (error) {
           failed++;
         }
       }
-      const next = text.replace(/assets\/[a-f0-9]{24}\.(?:png|jpg)/g, function (path: string) {
-        return mapping.get(path) || path;
+      const next = text.replace(/assets\/[a-f0-9]{24}\.(?:png|jpg)/gi, function (path: string) {
+        return mapping.get(path.toLowerCase()) || path;
       });
       options.detachFileContext();
       options.setMarkdown(next, { boundary: true, title: options.deriveTitle(next), resetHistory: true });

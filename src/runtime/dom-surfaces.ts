@@ -54,12 +54,30 @@ export interface PreviewSurfaceSpec {
   paper: boolean;
   dark: boolean;
   applyDark: (articleEl: HTMLElement) => Promise<boolean>;
+  cleanupDark?: () => void;
 }
 
 function paintStageBackground(screen: HTMLElement, color: string): void {
   const bg = color || '#191919';
   screen.style.backgroundColor = bg;
   if (screen.parentElement) screen.parentElement.style.backgroundColor = bg;
+}
+
+function resolveDarkStageBg(article: HTMLElement): string {
+  const root = article.querySelector<HTMLElement>('#mdstudio') || article;
+  const resolved =
+    typeof window !== 'undefined' ? window.getComputedStyle(root).backgroundColor : root.style.backgroundColor;
+  if (!resolved || resolved === 'rgba(0, 0, 0, 0)' || resolved === 'transparent') return '#191919';
+  return resolved;
+}
+
+function resetArticleSurface(article: HTMLElement): void {
+  article.className = 'mdstudio-preview-article';
+  article.style.removeProperty('background-color');
+  article.style.removeProperty('color');
+  for (const attr of Array.from(article.attributes)) {
+    if (attr.name.startsWith('data-') && !attr.name.startsWith('data-mdstudio-')) article.removeAttribute(attr.name);
+  }
 }
 
 /**
@@ -72,6 +90,7 @@ export function usePreviewHtmlSurface(
   spec: PreviewSurfaceSpec,
 ): void {
   const applyDarkRef = useLatest(React, spec.applyDark);
+  const cleanupDarkRef = useLatest(React, spec.cleanupDark);
   React.useEffect(
     function () {
       const article = articleRef.current;
@@ -79,13 +98,17 @@ export function usePreviewHtmlSurface(
       if (!article || !screen) return undefined;
       const lightStage = spec.paper ? spec.stageBg : spec.bg;
       const darkStage = spec.paper ? '#0e1013' : '#191919';
+      resetArticleSurface(article);
       article.innerHTML = spec.html;
       paintStageBackground(screen, spec.dark ? darkStage : lightStage);
-      if (!spec.dark) return undefined;
+      if (!spec.dark) {
+        cleanupDarkRef.current?.();
+        return undefined;
+      }
       let cancelled = false;
       void applyDarkRef.current(article).then(function (applied) {
         if (cancelled || !applied || spec.paper) return;
-        paintStageBackground(screen, article.style.backgroundColor);
+        paintStageBackground(screen, resolveDarkStageBg(article));
       });
       return function () {
         cancelled = true;
@@ -93,12 +116,18 @@ export function usePreviewHtmlSurface(
     },
     [spec.html, spec.bg, spec.stageBg, spec.paper, spec.dark],
   );
+  React.useEffect(function () {
+    return function () {
+      cleanupDarkRef.current?.();
+    };
+  }, []);
 }
 
 export interface ImperativeEditorHandle<TBlock, TTransition> {
   getValue(): string;
   setValue(value: string): void;
   setDark(dark: boolean): void;
+  setPlaceholder?(placeholder: string, ariaLabel?: string): void;
   setInlineBlocks?(blocks: readonly TBlock[]): void;
   setDiffTransition?(transition: TTransition | null): void;
   destroy(): void;
@@ -111,6 +140,8 @@ export interface ImperativeEditorMountSpec<
 > {
   value: string;
   dark: boolean;
+  placeholder?: string;
+  ariaLabel?: string;
   inlineBlocks?: readonly TBlock[];
   diffTransition?: TTransition | null;
   mount: (parent: HTMLDivElement, initialDark: boolean) => TApi;
@@ -166,6 +197,14 @@ export function useImperativeEditor<TApi extends ImperativeEditorHandle<TBlock, 
       if (api && api.getValue() !== spec.value) api.setValue(spec.value);
     },
     [spec.value],
+  );
+
+  React.useEffect(
+    function () {
+      const api = apiRef.current;
+      if (api?.setPlaceholder) api.setPlaceholder(spec.placeholder || '', spec.ariaLabel);
+    },
+    [spec.placeholder, spec.ariaLabel],
   );
 
   React.useEffect(

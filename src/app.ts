@@ -22,13 +22,18 @@ import { createFormattingCommands } from './application/editor-formatting';
 import { createEditorSearch, type SearchState } from './application/editor-search';
 import { createEditorShortcuts } from './application/editor-shortcuts';
 import { createFileCommands } from './application/file-commands';
-import { importFolderAssets } from './application/folder-assets';
+import { importFolderAssets, writeFolderAssets } from './application/folder-assets';
 import { createImageInserter } from './application/image-inserter';
 import { useCopyActions } from './application/use-copy-actions';
 import { useDocumentHistory } from './application/use-document-history';
 import { useDocumentLibrary } from './application/use-document-library';
 import { useFileContext } from './application/use-file-context';
-import { type ImportBackupSummary, type ImportModeChoice, useLibraryArchive } from './application/use-library-archive';
+import {
+  collectImportRecoveryAssets,
+  type ImportBackupSummary,
+  type ImportModeChoice,
+  useLibraryArchive,
+} from './application/use-library-archive';
 import { useMathAssets } from './application/use-math-assets';
 import { useMermaidAssets } from './application/use-mermaid-assets';
 import { useScrollSync } from './application/use-scroll-sync';
@@ -44,13 +49,13 @@ import {
 } from './domain/article';
 import { extractCustomThemePreview, findCustomTheme } from './domain/custom-themes';
 import type { EditorApi, EditorSelection } from './domain/editor-types';
-import { collectLocalImages, portableizeAssetUrls, replaceLocalImages } from './domain/images';
+import { assetFilesInMarkdown, collectLocalImages, portableizeAssetUrls, replaceLocalImages } from './domain/images';
 import type { MergeConflict, MergeDecision } from './domain/library-backup';
 import { sanitizeSettings } from './domain/settings';
 import type { WritingSkill } from './domain/writing-skills';
 import { createStudioLocaleController } from './locales/ui-strings';
 import { useElementBinding } from './runtime/dom-surfaces';
-import { useExternalStore, useMountDisposable, useWindowEvent } from './runtime/react-lifecycle';
+import { useExternalStore, useLatest, useMountDisposable, useWindowEvent } from './runtime/react-lifecycle';
 import * as themes from './themes';
 import type { ClientContext, ClientPlugin, LocaleService } from './types/dsh';
 import type { DshPrimitivesModule } from './types/dsh-primitives';
@@ -117,15 +122,21 @@ async function migrateDataImages(
 ): Promise<{ mapping: Map<string, string>; migrated: number }> {
   const entries = Array.from(collectLocalImages(markdown).entries()).filter(([, info]) => info.kind === 'data');
   const mapping = new Map<string, string>();
-  for (const [rawUrl] of entries) {
-    try {
-      const prepared = await prepareImageForWechat(rawUrl);
-      const stored = await client.storeAsset(prepared.dataUrl, prepared.filename);
-      const nextPath = stored.assetPath || stored.localUrl || stored.url;
-      if (nextPath) mapping.set(rawUrl, nextPath);
-    } catch {
-      /* keep inline base64 when local image service is unreachable */
-    }
+  const results = await Promise.all(
+    entries.map(async ([rawUrl]) => {
+      try {
+        const prepared = await prepareImageForWechat(rawUrl);
+        const stored = await client.storeAsset(prepared.dataUrl, prepared.filename);
+        const nextPath = stored.assetPath || stored.localUrl || stored.url;
+        return nextPath ? ([rawUrl, nextPath] as const) : null;
+      } catch {
+        /* keep inline base64 when local image service is unreachable */
+        return null;
+      }
+    }),
+  );
+  for (const pair of results) {
+    if (pair) mapping.set(pair[0], pair[1]);
   }
   return { mapping, migrated: mapping.size };
 }
@@ -236,6 +247,8 @@ export function createClientPlugin(
     const dialogReturnFocusRef = React.useRef<HTMLElement | null>(null);
     const pageAliveRef = React.useRef(true);
     const toastSeq = React.useRef(0);
+    const inFlightAssetsRef = React.useRef<Set<string>>(new Set());
+    const cancelAutosaveRef = React.useRef<() => void>(() => {});
 
     const [previewMode, setPreviewMode] = React.useState<PreviewMode>(() =>
       typeof window !== 'undefined' && window.innerWidth >= 900 ? 'desktop' : 'mobile',
@@ -252,6 +265,7 @@ export function createClientPlugin(
     const [menuOpen, setMenuOpen] = React.useState(false);
     const [toast, setToast] = React.useState<ToastState | null>(null);
     const [localImageServerUrl, setLocalImageServerUrl] = React.useState('');
+    const localImageServerUrlRef = useLatest(React, localImageServerUrl);
     const [searchPanel, setSearchPanel] = React.useState<SearchState>({ open: false, query: '', replacement: '' });
     const [outlineOpen, setOutlineOpen] = React.useState(false);
     const [editorFailed, setEditorFailed] = React.useState(false);
@@ -356,6 +370,7 @@ export function createClientPlugin(
     });
 
     function detachFileContext(): void {
+      cancelAutosaveRef.current();
       fileContext.reset(store.getActive().id);
       fileContext.setFileName('');
     }
@@ -370,25 +385,31 @@ export function createClientPlugin(
       editorValue,
       selection,
       setMarkdown,
+      focusEditor: focusEditorSoon,
       download: downloadFile,
     });
 
-    function resetEditorTo(entry: DocumentSeed): void {
+    function resetEditorTo(entry: DocumentSeed, alreadyActive = false): void {
       const markdown = String(entry.markdown || '');
       writingSkills.resetSession();
       selectionBubble.clear();
+      selectionBubble.clearPointer();
       docHistory.reset(markdown);
-      store.updateActive({
-        title: entry.title || t('untitled'),
-        markdown,
-        settings: sanitizeSettings(entry.settings || settings),
-        view: entry.view === 'edit' || entry.view === 'preview' ? entry.view : 'split',
-      });
+      if (!alreadyActive) {
+        store.updateActive({
+          title: entry.title || t('untitled'),
+          markdown,
+          settings: sanitizeSettings(entry.settings || settings),
+          view: entry.view === 'edit' || entry.view === 'preview' ? entry.view : 'split',
+        });
+      }
       slashMenu.close();
+      setOutlineOpen(false);
       setCssWorkbench((prev) => ({ open: false, targetId: null, seq: prev.seq }));
+      setLiveCssDraft('');
       setSearchPanel((prev) => ({ ...prev, open: false }));
       detachFileContext();
-      window.setTimeout(() => focusRange(markdown.length, markdown.length), 30);
+      window.setTimeout(() => focusRange(0, 0), 30);
     }
 
     const mermaidTheme = React.useMemo(
@@ -409,6 +430,14 @@ export function createClientPlugin(
         hostClient,
         getSnapshot: () => store.getSnapshot(),
         mermaidFilenames: () => mermaidAssets.filenames(),
+        extraFilenames: () => {
+          const extra = new Set<string>(inFlightAssetsRef.current);
+          for (const name of collectImportRecoveryAssets()) extra.add(name);
+          for (const md of docHistory.historyMarkdowns()) {
+            for (const name of assetFilesInMarkdown(md)) extra.add(name);
+          }
+          return extra;
+        },
       }),
     );
     const pruneOrphanAssets = () => {
@@ -423,7 +452,7 @@ export function createClientPlugin(
       confirm: dialogHost.confirm,
       settings,
       view,
-      onActivate: resetEditorTo,
+      onActivate: (entry) => resetEditorTo(entry, true),
       onPruneAssets: pruneOrphanAssets,
     });
 
@@ -526,7 +555,7 @@ export function createClientPlugin(
       localImageServerUrl,
       download: downloadFile,
       onReplace: (entry) => {
-        resetEditorTo(entry);
+        resetEditorTo(entry, true);
         pruneOrphanAssets();
       },
       onClose: () => {
@@ -563,6 +592,10 @@ export function createClientPlugin(
         const preview = extractCustomThemePreview(custom.css, settings.accent);
         updateSettings({ theme: id, accent: preview.accent });
         return;
+      }
+      if (cssWorkbench.open) {
+        setCssWorkbench((prev) => ({ open: false, targetId: null, seq: prev.seq }));
+        setLiveCssDraft('');
       }
       updateSettings({ theme: id, accent: themes.getTheme(id).defaultAccent });
     }
@@ -640,6 +673,10 @@ export function createClientPlugin(
       hostClient,
       describeHostError,
       insertBlock: formatting.insertBlock,
+      onTrackInFlight: (filename, active) => {
+        if (active) inFlightAssetsRef.current.add(filename);
+        else inFlightAssetsRef.current.delete(filename);
+      },
     });
 
     function undo(): void {
@@ -718,9 +755,8 @@ export function createClientPlugin(
       textareaRef,
       onCodeMirrorReady: (api) => {
         if (!api) return;
-        const value = api.getValue();
-        api.focusRange(value.length, value.length);
-        lastSelectionRef.current = { start: value.length, end: value.length };
+        api.focusRange(0, 0);
+        lastSelectionRef.current = { start: 0, end: 0 };
       },
     });
 
@@ -801,21 +837,46 @@ export function createClientPlugin(
       }, 800);
 
       // Event-driven 1200ms debounced autosave to linked local file via DocumentStore subscription
+      let lastObservedId = store.getActive().id;
       let lastObservedMd = store.getActive().markdown;
       let autoSaveTimer: number | null = null;
+      const clearAutosaveTimer = (): void => {
+        if (autoSaveTimer !== null) {
+          window.clearTimeout(autoSaveTimer);
+          autoSaveTimer = null;
+        }
+      };
+      cancelAutosaveRef.current = clearAutosaveTimer;
       const unsubscribeAutosave = store.subscribe(() => {
-        const activeMd = store.getActive().markdown;
-        if (activeMd === lastObservedMd) return;
-        lastObservedMd = activeMd;
-        if (autoSaveTimer !== null) window.clearTimeout(autoSaveTimer);
+        const active = store.getActive();
+        if (active.id !== lastObservedId) {
+          lastObservedId = active.id;
+          lastObservedMd = active.markdown;
+          clearAutosaveTimer();
+          return;
+        }
+        if (active.markdown === lastObservedMd) return;
+        lastObservedMd = active.markdown;
+        clearAutosaveTimer();
+        const targetArticleId = active.id;
         if (!fileContext.linkedFile() || fileContext.conflictRef.current) return;
         autoSaveTimer = window.setTimeout(() => {
           autoSaveTimer = null;
+          if (store.getActive().id !== targetArticleId) return;
           const currentHandle = fileContext.linkedFile();
           if (!currentHandle || fileContext.conflictRef.current) return;
-          fileContext.writeFile(currentHandle, markdownRef.current).catch(() => {
-            notify(t('file.saveFailed'), 'error');
-          });
+          const snapshotMd = markdownRef.current;
+          fileContext
+            .writeFile(currentHandle, snapshotMd)
+            .then((result) => {
+              const folder = result === 'saved' ? fileContext.linkedFolder() : null;
+              if (folder && store.getActive().id === targetArticleId) {
+                void writeFolderAssets(folder, snapshotMd, localImageServerUrlRef.current).catch(() => {});
+              }
+            })
+            .catch(() => {
+              notify(t('file.saveFailed'), 'error');
+            });
         }, 1200);
       });
 
@@ -823,7 +884,8 @@ export function createClientPlugin(
         alive = false;
         pageAliveRef.current = false;
         window.clearTimeout(migrateTimer);
-        if (autoSaveTimer !== null) window.clearTimeout(autoSaveTimer);
+        clearAutosaveTimer();
+        cancelAutosaveRef.current = () => {};
         unsubscribeAutosave();
         if (cmScrollCleanupRef.current) cmScrollCleanupRef.current();
       };
@@ -834,6 +896,8 @@ export function createClientPlugin(
       setMenuOpen(false);
       slashMenu.close();
       setOutlineOpen(false);
+      selectionBubble.clear();
+      selectionBubble.clearPointer();
       if (view !== 'split') store.updateActive({ view: 'split' });
       setCssWorkbench((prev) => ({ open: true, targetId, seq: prev.seq + 1 }));
     }
@@ -849,6 +913,8 @@ export function createClientPlugin(
       setMenuOpen(false);
       slashMenu.close();
       setOutlineOpen(false);
+      selectionBubble.clear();
+      selectionBubble.clearPointer();
       setCssWorkbench((prev) => ({ open: false, targetId: null, seq: prev.seq }));
       setLiveCssDraft('');
       setSearchPanel((prev) => (prev.open ? { ...prev, open: false } : prev));
@@ -858,13 +924,31 @@ export function createClientPlugin(
     }
 
     function exitImmersive(): void {
+      selectionBubble.clear();
+      selectionBubble.clearPointer();
       setImmersive(null);
       window.setTimeout(() => {
         rootRef.current?.querySelector<HTMLElement>('.mdstudio-focus-btn')?.focus();
       }, 0);
     }
 
-    useImmersiveShortcuts(React, immersive, enterImmersive, exitImmersive);
+    function canHandleImmersiveShortcut(action: 'toggle' | 'exit'): boolean {
+      const modalOpen = [
+        dialogHost.open,
+        importModePrompt,
+        mergeReview,
+        docLibrary.open,
+        workspace.open,
+        writingSkills.managerOpen,
+      ].some(Boolean);
+      if (modalOpen) return false;
+      if (action === 'toggle') return true;
+      return ![searchPanel.open, slashMenu.open, outlineOpen, menuOpen, drawerOpen, writingSkills.session].some(
+        Boolean,
+      );
+    }
+
+    useImmersiveShortcuts(React, immersive, enterImmersive, exitImmersive, canHandleImmersiveShortcut);
 
     function handleEditorKeyDown(event: React.KeyboardEvent<HTMLElement>): void {
       if (event.nativeEvent.isComposing) return;
@@ -888,20 +972,25 @@ export function createClientPlugin(
         return;
       }
       if (!/\.(md|markdown|txt)$/i.test(first.name)) return;
+      const targetArticleId = store.getActive().id;
       first
         .text()
         .then((text) => {
+          if (!pageAliveRef.current || store.getActive().id !== targetArticleId) return;
+          detachFileContext();
+          writingSkills.resetSession();
+          selectionBubble.clear();
+          selectionBubble.clearPointer();
           setMarkdown(text, { boundary: true, title: deriveTitleWithFallback(text), resetHistory: true });
-          focusRange(text.length, text.length);
+          focusRange(0, 0);
           notify(t('toast.imported'));
         })
         .catch(() => {});
     }
 
     function previewClick(event: React.MouseEvent<HTMLElement>): void {
-      const target = event.target as Element | null;
       // `closest('a')` also matches SVG `<a>` elements (e.g. inside formulas or diagrams).
-      const link = target && typeof target.closest === 'function' ? target.closest('a') : null;
+      const link = (event.target as Element | null)?.closest?.('a');
       if (link && event.currentTarget.contains(link)) event.preventDefault();
     }
 
@@ -1002,8 +1091,14 @@ export function createClientPlugin(
           onTitle: (value) => store.updateActive({ title: value }),
           onView: (next) => {
             store.updateActive({ view: next });
-            setCssWorkbench((prev) => ({ open: false, targetId: null, seq: prev.seq }));
-            setLiveCssDraft('');
+            const keepWorkbench =
+              cssWorkbench.open && typeof window !== 'undefined' && window.innerWidth <= 720 && next !== 'split';
+            if (!keepWorkbench) {
+              setCssWorkbench((prev) => ({ open: false, targetId: null, seq: prev.seq }));
+              setLiveCssDraft('');
+            }
+            selectionBubble.clear();
+            selectionBubble.clearPointer();
             slashMenu.close();
             setOutlineOpen(false);
             setMenuOpen(false);
@@ -1132,7 +1227,10 @@ export function createClientPlugin(
             inputRef: searchInputRef,
             onQuery: (value) => searchCmds.updateSearch({ query: value }),
             onReplacement: (value) => searchCmds.updateSearch({ replacement: value }),
-            onFind: searchCmds.findNext,
+            onFind: () => {
+              selectionBubble.clearPointer();
+              searchCmds.findNext();
+            },
             onReplaceOne: searchCmds.replaceOne,
             onReplaceAll: searchCmds.replaceAll,
             onClose: () => {
@@ -1143,7 +1241,10 @@ export function createClientPlugin(
           outline: {
             open: outlineOpen,
             headings,
-            onFocus: searchCmds.focusHeading,
+            onFocus: (heading) => {
+              selectionBubble.clearPointer();
+              searchCmds.focusHeading(heading);
+            },
             onClose: () => setOutlineOpen(false),
           },
           content: {
@@ -1205,6 +1306,7 @@ export function createClientPlugin(
           React,
           t,
           ui: uiKit,
+          open: cssWorkbench.open,
           visible: panes.showCssWorkbench,
           targetId: cssWorkbench.targetId,
           requestSeq: cssWorkbench.seq,
@@ -1239,6 +1341,7 @@ export function createClientPlugin(
           ui: uiKit,
           open: drawerOpen,
           initialTab: drawerTab,
+          onTabChange: setDrawerTab,
           settings,
           shortcuts: shortcutRows,
           onClose: () => setDrawerOpen(false),
@@ -1314,6 +1417,7 @@ export function createClientPlugin(
           : null,
 
         h(WorkspaceDialog, {
+          key: 'workspace-' + (workspace.open ? workspace.name || 'open' : 'closed'),
           React,
           t,
           ui: uiKit,
@@ -1440,6 +1544,7 @@ export function createClientPlugin(
   }
 
   function SafeStudioPage(): ReactNamespace.ReactElement {
+    useLocaleRevision();
     return h(StudioErrorBoundary, { t }, h(LoadedStudioPage));
   }
 

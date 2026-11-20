@@ -40,6 +40,7 @@ export interface DocumentHistoryApi {
   canUndo: () => boolean;
   canRedo: () => boolean;
   reset: (markdown: string) => void;
+  historyMarkdowns: () => string[];
 }
 
 /**
@@ -71,10 +72,6 @@ export function useDocumentHistory(options: DocumentHistoryOptions): DocumentHis
   function setMarkdown(next: string, nextOptions?: SetMarkdownOptions): void {
     const previous = markdownRef.current;
     const opts = nextOptions || {};
-    if (next === previous) {
-      if (opts.title !== undefined) options.onApply(next, opts.title);
-      return;
-    }
     const history = historyRef.current;
     if (opts.resetHistory) {
       history.undo = [];
@@ -83,7 +80,12 @@ export function useDocumentHistory(options: DocumentHistoryOptions): DocumentHis
       history.redoChars = 0;
       history.lastAt = 0;
       history.forceBoundary = true;
-    } else {
+    }
+    if (next === previous) {
+      if (opts.title !== undefined) options.onApply(next, opts.title);
+      return;
+    }
+    if (!opts.resetHistory) {
       const now = Date.now();
       const canCoalesce =
         !opts.boundary && !history.forceBoundary && history.undo.length > 0 && now - history.lastAt < 700;
@@ -155,5 +157,9 @@ export function useDocumentHistory(options: DocumentHistoryOptions): DocumentHis
     canUndo: () => historyRef.current.undo.length > 0,
     canRedo: () => historyRef.current.redo.length > 0,
     reset,
+    historyMarkdowns: () => [
+      ...historyRef.current.undo.map((entry) => entry.markdown),
+      ...historyRef.current.redo.map((entry) => entry.markdown),
+    ],
   };
 }

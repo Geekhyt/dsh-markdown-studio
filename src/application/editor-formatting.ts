@@ -83,7 +83,7 @@ export function createFormattingCommands(options: FormattingOptions): Formatting
   function setLinePrefix(prefix: string): void {
     const value = options.editorValue();
     const range = options.selection();
-    const lineStart = value.lastIndexOf('\n', range.start - 1) + 1;
+    const lineStart = range.start > 0 ? value.lastIndexOf('\n', range.start - 1) + 1 : 0;
     let lineEnd = value.indexOf('\n', range.start);
     if (lineEnd === -1) lineEnd = value.length;
     const line = value.slice(lineStart, lineEnd);

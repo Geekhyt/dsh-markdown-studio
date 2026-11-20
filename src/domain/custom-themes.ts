@@ -139,10 +139,18 @@ function lastCssHex(cleanCss: string, variableName: string): string {
 }
 
 function rootPropertyHex(cleanCss: string, prop: string): string {
-  const rootMatch = /(?:#mdstudio|\.mdstudio-content)\s*\{([^}]*)\}/i.exec(cleanCss);
-  if (!rootMatch) return '';
-  const propMatch = new RegExp(`(?:^|;|\\s)${prop}\\s*:\\s*(#[0-9a-fA-F]{3,6})\\b`).exec(rootMatch[1]);
-  return propMatch ? normalizeHexColor(propMatch[1]) : '';
+  const blockRe = /(?:#mdstudio|\.mdstudio-content)\s*\{([^}]*)\}/gi;
+  const propRe = new RegExp(`(?:^|;|\\s)${prop}\\s*:\\s*(#[0-9a-fA-F]{3,6})\\b`, 'g');
+  let found = '';
+  let blockMatch: RegExpExecArray | null;
+  while ((blockMatch = blockRe.exec(cleanCss))) {
+    propRe.lastIndex = 0;
+    let propMatch: RegExpExecArray | null;
+    while ((propMatch = propRe.exec(blockMatch[1]))) {
+      found = normalizeHexColor(propMatch[1]) || found;
+    }
+  }
+  return found;
 }
 
 export function extractCustomThemePreview(css: string, fallbackAccent = '#3d57e6'): CustomThemePreview {

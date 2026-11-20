@@ -50,6 +50,7 @@ function unwrapParagraphSections(root: HTMLElement): void {
     const paragraph = section.parentElement;
     if (!paragraph || paragraph.tagName !== 'P' || !paragraph.parentNode) return;
     const before = paragraph.ownerDocument.createElement('p');
+    if (paragraph.className) before.className = paragraph.className;
     while (paragraph.firstChild && paragraph.firstChild !== section) {
       before.appendChild(paragraph.firstChild);
     }
@@ -91,6 +92,16 @@ function stripFragmentLinks(root: HTMLElement): void {
   });
 }
 
+function inheritedSvgFill(element: SVGElement, stopAt: Element): string {
+  let cursor: Element | null = element;
+  while (cursor && cursor !== stopAt) {
+    const fill = (cursor.getAttribute('fill') || '').trim();
+    if (fill && fill.toLowerCase() !== 'currentcolor' && fill.toLowerCase() !== 'none') return fill;
+    cursor = cursor.parentElement;
+  }
+  return '';
+}
+
 function sanitizeMathSvgs(root: HTMLElement): void {
   Array.from(root.querySelectorAll<HTMLElement>('.mdstudio-math')).forEach(function (node) {
     const display = node.getAttribute('data-mdstudio-display') === '1';
@@ -116,7 +127,8 @@ function sanitizeMathSvgs(root: HTMLElement): void {
         });
         if (element.tagName.toLowerCase() !== 'svg') element.removeAttribute('style');
         if (element.tagName.toLowerCase() === 'path') {
-          element.setAttribute('fill', 'currentColor');
+          const explicitFill = inheritedSvgFill(element, svg);
+          element.setAttribute('fill', explicitFill || 'currentColor');
           element.setAttribute('stroke', 'none');
         }
       });
@@ -150,6 +162,30 @@ export function removeEmptyHeadingDecorations(root: HTMLElement): void {
   });
 }
 
+function isPositiveCssLength(value: string): boolean {
+  const trimmed = String(value || '').trim();
+  if (!/^[0-9]*\.?[0-9]+(?:px|em|rem|%|vh|vw|pt|cm|mm|in)?$/i.test(trimmed)) return false;
+  return parseFloat(trimmed) > 0;
+}
+
+function hasNonZeroBoxStyle(element: HTMLElement): boolean {
+  const style = element.style;
+  if (!style) return false;
+  const topBorder =
+    isPositiveCssLength(style.borderTopWidth) && Boolean(style.borderTopStyle && style.borderTopStyle !== 'none');
+  const botBorder =
+    isPositiveCssLength(style.borderBottomWidth) &&
+    Boolean(style.borderBottomStyle && style.borderBottomStyle !== 'none');
+  return (
+    isPositiveCssLength(style.height) ||
+    isPositiveCssLength(style.minHeight) ||
+    isPositiveCssLength(style.paddingTop) ||
+    isPositiveCssLength(style.paddingBottom) ||
+    topBorder ||
+    botBorder
+  );
+}
+
 /**
  * Final safety net for WeChat's height:0 check. Empty presentational nodes
  * that do not contain text or media have no useful mobile layout.
@@ -161,7 +197,8 @@ export function removeEmptyZeroHeightContainers(root: HTMLElement): void {
     if (element.matches(media)) return;
     if (element.closest('table')) return;
     if ((element.textContent || '').length) return;
-    if (element.querySelector('img,svg,video,iframe,canvas')) return;
+    if (element.querySelector(media)) return;
+    if (hasNonZeroBoxStyle(element)) return;
     const rect = element.getBoundingClientRect();
     if (rect.height === 0) element.remove();
   });

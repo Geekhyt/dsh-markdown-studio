@@ -62,8 +62,8 @@ export function createFileCommands(options: FileActionsOptions): FileActionsApi 
         settings: options.settings,
         view: options.view,
       });
-      options.setDocumentRef({ kind: 'file', handle });
       await options.stampFile(handle, file);
+      options.setDocumentRef({ kind: 'file', handle });
       options.setFileName(file.name);
       options.notify(t('file.opened'));
       options.setMenuOpen(false);
@@ -97,9 +97,9 @@ export function createFileCommands(options: FileActionsOptions): FileActionsApi 
     content: string,
     articleId: string,
     linked: FileSystemFileHandle | null,
-  ) {
+  ): Promise<{ result: 'saved' | 'conflict' | 'denied' | 'stale'; writtenContent: string }> {
     const result = await options.fileContext.writeFile(handle, content, false, true);
-    if (result !== 'conflict') return result;
+    if (result !== 'conflict') return { result, writtenContent: content };
     const confirmed = await options.confirm({
       title: t('file.overwriteConfirm'),
       description: t('file.overwriteDescription'),
@@ -107,8 +107,10 @@ export function createFileCommands(options: FileActionsOptions): FileActionsApi 
       danger: true,
     });
     if (!confirmed || options.store.getActive().id !== articleId || options.fileContext.linkedFile() !== linked)
-      return 'stale';
-    return options.fileContext.writeFile(handle, String(options.markdownRef.current || ''), true, true);
+      return { result: 'stale', writtenContent: content };
+    const freshContent = String(options.markdownRef.current || '');
+    const overwritten = await options.fileContext.writeFile(handle, freshContent, true, true);
+    return { result: overwritten, writtenContent: freshContent };
   }
 
   async function saveLocalFile(forceDialog?: boolean): Promise<void> {
@@ -119,17 +121,17 @@ export function createFileCommands(options: FileActionsOptions): FileActionsApi 
     try {
       const handle = await chooseSaveHandle(forceDialog, title, content);
       if (!handle || options.store.getActive().id !== articleId) return;
-      const result = await writeWithConflict(handle, content, articleId, linkedBefore);
+      const { result, writtenContent } = await writeWithConflict(handle, content, articleId, linkedBefore);
       if (result === 'denied') options.notify(t('file.permission'), 'error');
       if (result !== 'saved' || options.store.getActive().id !== articleId) return;
-      if (options.fileContext.linkedFolder() === null || options.fileContext.linkedFile() !== handle) {
+      if (options.fileContext.linkedFile() !== handle) {
         options.setDocumentRef({ kind: 'file', handle });
       }
       options.setFileName(handle.name || options.fileName);
       const folder = options.fileContext.linkedFolder();
       if (folder) {
         try {
-          await writeFolderAssets(folder, content, options.localImageServerUrl);
+          await writeFolderAssets(folder, writtenContent, options.localImageServerUrl);
         } catch (error) {
           /* best effort */
         }

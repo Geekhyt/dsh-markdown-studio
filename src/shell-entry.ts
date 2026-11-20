@@ -8,7 +8,18 @@ import { mountPluginStyles, unmountPluginStyles } from './ui/style-lifecycle';
 
 const PANEL_ID = 'dsh-markdown-studio';
 const SHELL_LOCALE_NS = 'dsh-markdown-studio.shell';
-const SHELL_DICT = { 'panel.label': 'Markdown Studio' };
+const SHELL_DICT_EN: Record<string, string> = {
+  'panel.label': 'Markdown Studio',
+  'shell.loading': 'Loading Markdown Studio…',
+  'shell.failed': 'Markdown Studio failed to load',
+  'shell.retry': 'Retry',
+};
+const SHELL_DICT_ZH: Record<string, string> = {
+  'panel.label': 'Markdown Studio',
+  'shell.loading': '正在加载 Markdown Studio…',
+  'shell.failed': 'Markdown Studio 加载失败',
+  'shell.retry': '重试',
+};
 
 export type StudioChunkLoader = () => Promise<ClientPlugin>;
 
@@ -24,7 +35,8 @@ function registerShellLocale(locale: LocaleService): () => void {
   }
   ids.forEach((id) => {
     try {
-      const dispose = locale.register(SHELL_LOCALE_NS, id, SHELL_DICT);
+      const dict = /^zh/i.test(id) ? SHELL_DICT_ZH : SHELL_DICT_EN;
+      const dispose = locale.register(SHELL_LOCALE_NS, id, dict);
       if (typeof dispose === 'function') disposers.push(dispose);
     } catch (_err) {
       /* ignore duplicate registration */
@@ -81,6 +93,19 @@ export function create(
   let cachedMain: ComponentType<Record<string, unknown>> | null = null;
   let cachedPlugin: ClientPlugin | null = null;
   let inflight: Promise<ComponentType<Record<string, unknown>>> | null = null;
+  let activeTranslate: ((key: string) => string) | null = null;
+
+  function shellText(key: string): string {
+    if (activeTranslate) {
+      try {
+        const value = activeTranslate(key);
+        if (value && value !== key) return value;
+      } catch (_err) {
+        /* fallback */
+      }
+    }
+    return SHELL_DICT_EN[key] || key;
+  }
 
   function materializeMain(plugin: ClientPlugin): ComponentType<Record<string, unknown>> {
     cachedPlugin = plugin;
@@ -133,15 +158,22 @@ export function create(
           role: 'alert',
           style: { padding: '32px', color: 'var(--dsw-alias-label-primary, #1f2329)', fontSize: '14px' },
         },
-        h('p', { style: { margin: '0 0 12px', fontWeight: 600 } }, 'Markdown Studio failed to load'),
+        h('p', { style: { margin: '0 0 12px', fontWeight: 600 } }, shellText('shell.failed')),
         h(
           'button',
           {
             type: 'button',
             onClick: retry,
-            style: { padding: '6px 14px', borderRadius: '8px', cursor: 'pointer' },
+            style: {
+              padding: '6px 14px',
+              borderRadius: '8px',
+              border: '0.5px solid var(--dsw-alias-border-l2, rgba(15, 17, 21, 0.16))',
+              background: 'var(--dsw-alias-bg-layer-2, #f2f4f7)',
+              color: 'var(--dsw-alias-label-primary, #0f1115)',
+              cursor: 'pointer',
+            },
           },
-          'Retry',
+          shellText('shell.retry'),
         ),
       );
     }
@@ -159,7 +191,7 @@ export function create(
           fontSize: '13px',
         },
       },
-      'Loading Markdown Studio…',
+      shellText('shell.loading'),
     );
   }
 
@@ -176,8 +208,10 @@ export function create(
         disposers.push(registerShellLocale(locale));
         try {
           translate = locale.bind(SHELL_LOCALE_NS);
+          activeTranslate = translate;
         } catch (_err) {
           translate = null;
+          activeTranslate = null;
         }
       }
       if (cachedPlugin) {
@@ -187,6 +221,7 @@ export function create(
       return () => {
         activeDisposers = [];
         activeCtx = null;
+        activeTranslate = null;
         cachedMain = null;
         while (disposers.length > 0) {
           const dispose = disposers.pop();

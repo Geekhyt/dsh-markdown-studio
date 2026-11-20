@@ -58,24 +58,25 @@ export interface MergeConflict {
 
 /** Articles/trash entries that exist on both sides and need a per-id choice. */
 export function mergeConflicts(current: LibraryState, incoming: LibraryState): MergeConflict[] {
-  const currentDocs = new Map(
-    current.docs.map(function (entry) {
-      return [entry.id, entry] as const;
-    }),
-  );
-  return incoming.docs
-    .filter(function (entry) {
-      return currentDocs.has(entry.id);
-    })
-    .map(function (entry) {
-      const existing = currentDocs.get(entry.id)!;
-      return {
-        id: entry.id,
-        title: entry.title || existing.title,
-        currentTitle: existing.title,
-        incomingTitle: entry.title,
-      };
+  const currentAll = new Map<string, Article>();
+  for (const entry of current.docs) currentAll.set(entry.id, entry);
+  for (const entry of current.trash || []) {
+    if (!currentAll.has(entry.id)) currentAll.set(entry.id, entry);
+  }
+  const seen = new Set<string>();
+  const conflicts: MergeConflict[] = [];
+  for (const entry of [...incoming.docs, ...(incoming.trash || [])]) {
+    if (seen.has(entry.id) || !currentAll.has(entry.id)) continue;
+    seen.add(entry.id);
+    const existing = currentAll.get(entry.id)!;
+    conflicts.push({
+      id: entry.id,
+      title: entry.title || existing.title,
+      currentTitle: existing.title,
+      incomingTitle: entry.title,
     });
+  }
+  return conflicts;
 }
 
 /** Merge an imported library into the current one. Per-id decisions win over the default. */
@@ -85,36 +86,41 @@ export function mergeLibraryBackup(
   prefer: MergeDecision = 'incoming',
   decisions: Record<string, MergeDecision> = {},
 ): LibraryState {
-  const docs = new Map(
-    current.docs.map(function (entry) {
-      return [entry.id, entry] as const;
-    }),
-  );
+  const docs = new Map(current.docs.map((entry) => [entry.id, entry] as const));
+  const trash = new Map((current.trash || []).map((entry) => [entry.id, entry] as const));
   const decisionFor = (id: string, exists: boolean): MergeDecision =>
     Object.hasOwn(decisions, id) ? decisions[id] : exists ? prefer : 'incoming';
   for (const entry of incoming.docs) {
-    const decision = decisionFor(entry.id, docs.has(entry.id));
-    if (decision === 'incoming' || !docs.has(entry.id)) docs.set(entry.id, entry);
+    const exists = docs.has(entry.id) || trash.has(entry.id);
+    const decision = decisionFor(entry.id, exists);
+    if (decision === 'incoming' || !exists) {
+      docs.set(entry.id, entry);
+      trash.delete(entry.id);
+    }
   }
-  const trash = new Map(
-    (current.trash || []).map(function (entry) {
-      return [entry.id, entry] as const;
-    }),
-  );
   for (const entry of incoming.trash || []) {
-    const decision = decisionFor(entry.id, trash.has(entry.id));
-    if (decision === 'incoming' || !trash.has(entry.id)) trash.set(entry.id, entry);
+    const exists = docs.has(entry.id) || trash.has(entry.id);
+    const decision = decisionFor(entry.id, exists);
+    if (decision === 'incoming' || !exists) {
+      trash.set(entry.id, entry);
+      docs.delete(entry.id);
+    }
+  }
+  if (!docs.size) {
+    const fallback = current.docs.find((entry) => entry.id === current.activeId) || current.docs[0] || incoming.docs[0];
+    if (fallback) {
+      docs.set(fallback.id, fallback);
+      trash.delete(fallback.id);
+    }
   }
   const nextDocs = Array.from(docs.values());
-  const activeId = nextDocs.some(function (entry) {
-    return entry.id === current.activeId;
-  })
+  const activeId = nextDocs.some((entry) => entry.id === current.activeId)
     ? current.activeId
-    : nextDocs.some(function (entry) {
-          return entry.id === incoming.activeId;
-        })
+    : nextDocs.some((entry) => entry.id === incoming.activeId)
       ? incoming.activeId
-      : nextDocs[0].id;
+      : nextDocs[0]
+        ? nextDocs[0].id
+        : current.activeId;
   return { activeId, docs: nextDocs, trash: Array.from(trash.values()) };
 }
 

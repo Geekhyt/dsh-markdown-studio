@@ -1,6 +1,6 @@
 import type * as ReactNamespace from 'react';
 import type { ReactNode } from 'react';
-import { applyDarkPreview } from '../adapters/dark-preview';
+import { applyDarkPreview, cleanupDarkPreview } from '../adapters/dark-preview';
 import type { RenderedArticle } from '../adapters/render-article';
 import { useHostDarkTheme, usePreviewHtmlSurface } from '../runtime/dom-surfaces';
 import type { UiKit } from './ui-kit';
@@ -41,6 +41,7 @@ export function PreviewPane(props: PreviewPaneProps): ReactNode {
     paper: props.rendered.paper,
     dark,
     applyDark: applyDarkPreview,
+    cleanupDark: cleanupDarkPreview,
   });
 
   return h(
@@ -107,6 +108,7 @@ export function PreviewPane(props: PreviewPaneProps): ReactNode {
       'div',
       {
         className: 'mdstudio-stage' + (props.previewMode === 'desktop' ? ' is-desktop' : ''),
+        style: props.previewMode === 'desktop' ? { backgroundColor: surfaceBg } : undefined,
       },
       props.empty
         ? null

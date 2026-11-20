@@ -13,6 +13,7 @@ export interface AssetGarbageCollectorOptions {
   hostClient: Pick<HostClient, 'listAssets' | 'deleteAsset'>;
   getSnapshot: () => LibraryState;
   mermaidFilenames?: () => ReadonlySet<string>;
+  extraFilenames?: () => Iterable<string>;
 }
 
 export interface AssetGarbageCollector {
@@ -28,6 +29,11 @@ export function createAssetGarbageCollector(options: AssetGarbageCollectorOption
     if (options.mermaidFilenames) {
       for (const filename of options.mermaidFilenames()) {
         kept.add(filename);
+      }
+    }
+    if (options.extraFilenames) {
+      for (const filename of options.extraFilenames()) {
+        if (filename) kept.add(filename);
       }
     }
     return kept;

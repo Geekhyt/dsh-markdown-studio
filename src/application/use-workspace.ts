@@ -53,7 +53,7 @@ function parentPath(path: string): string {
 
 function validateName(name: string, markdown: boolean): string | null {
   let value = name.trim();
-  if (!value) return null;
+  if (!value || value === '.' || value === '..') return null;
   if (value.includes('/') || value.includes('\\') || value.includes('\0')) return null;
   if (markdown && !/\.(md|markdown)$/i.test(value)) value += '.md';
   return value;
@@ -130,14 +130,42 @@ async function directoryExists(directory: FileSystemDirectoryHandle, name: strin
   }
 }
 
-function containsWorkspaceFile(
-  entry: import('../domain/workspace').WorkspaceDirectory,
-  file: FileSystemFileHandle,
-): boolean {
-  return entry.children.some(function (child) {
-    if (child.kind === 'file') return child.handle === file;
-    return containsWorkspaceFile(child, file);
-  });
+async function isSameFileHandle(a: FileSystemFileHandle, b: FileSystemFileHandle): Promise<boolean> {
+  if (a === b) return true;
+  if (typeof a.isSameEntry === 'function') {
+    try {
+      return await a.isSameEntry(b);
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+async function entryMatchesOpenFile(entry: WorkspaceEntry, openFile: FileSystemFileHandle | null): Promise<boolean> {
+  if (!openFile) return false;
+  if (entry.kind === 'file') return await isSameFileHandle(entry.handle, openFile);
+  for (const child of entry.children) {
+    if (await entryMatchesOpenFile(child, openFile)) return true;
+  }
+  return false;
+}
+
+async function copyFileSafe(
+  targetDir: FileSystemDirectoryHandle,
+  filename: string,
+  data: string | ArrayBuffer,
+): Promise<void> {
+  const destination = await targetDir.getFileHandle(filename, { create: true });
+  const writable = await destination.createWritable();
+  try {
+    await writable.write(data);
+    await writable.close();
+  } catch (error) {
+    await writable.abort().catch(() => undefined);
+    await targetDir.removeEntry(filename).catch(() => undefined);
+    throw error;
+  }
 }
 
 async function copyDirectory(source: FileSystemDirectoryHandle, target: FileSystemDirectoryHandle): Promise<void> {
@@ -315,6 +343,10 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
       if (!filename) options.notify(options.t('workspace.invalidName'), 'error');
       return;
     }
+    if (await entryMatchesOpenFile(entry, options.fileContext.linkedFile())) {
+      options.notify(options.t('workspace.moveOpenBlocked'), 'error');
+      return;
+    }
     try {
       const root = rootRef.current;
       if (!root) throw new Error('workspace directory is unavailable');
@@ -328,11 +360,7 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
         return;
       }
       const file = await entry.handle.getFile();
-      const text = await file.text();
-      const target = await directory.getFileHandle(filename, { create: true });
-      const writable = await target.createWritable();
-      await writable.write(text);
-      await writable.close();
+      await copyFileSafe(directory, filename, await file.text());
       await directory.removeEntry(entry.name);
       await refresh();
       options.notify(options.t('workspace.renamed'));
@@ -345,6 +373,10 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
     const dirname = validateName(name, false);
     if (!dirname || dirname === entry.name) {
       if (!dirname) options.notify(options.t('workspace.invalidName'), 'error');
+      return;
+    }
+    if (await entryMatchesOpenFile(entry, options.fileContext.linkedFile())) {
+      options.notify(options.t('workspace.moveOpenBlocked'), 'error');
       return;
     }
     try {
@@ -378,12 +410,7 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
 
   async function moveEntry(entry: WorkspaceEntry, targetPath: string): Promise<void> {
     if (targetPath === parentPath(entry.path)) return;
-    const openFile = options.fileContext.linkedFile();
-    if (
-      openFile &&
-      ((entry.kind === 'file' && entry.handle === openFile) ||
-        (entry.kind === 'directory' && containsWorkspaceFile(entry, openFile)))
-    ) {
+    if (await entryMatchesOpenFile(entry, options.fileContext.linkedFile())) {
       options.notify(options.t('workspace.moveOpenBlocked'), 'error');
       return;
     }
@@ -421,10 +448,7 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
           return;
         }
         const file = await entry.handle.getFile();
-        const destination = await target.getFileHandle(entry.name, { create: true });
-        const writable = await destination.createWritable();
-        await writable.write(await file.arrayBuffer());
-        await writable.close();
+        await copyFileSafe(target, entry.name, await file.arrayBuffer());
         await source.removeEntry(entry.name);
       }
       await refresh();
@@ -435,6 +459,10 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
   }
 
   async function deleteEntry(entry: WorkspaceEntry): Promise<void> {
+    if (await entryMatchesOpenFile(entry, options.fileContext.linkedFile())) {
+      options.notify(options.t('workspace.moveOpenBlocked'), 'error');
+      return;
+    }
     try {
       const root = rootRef.current;
       if (!root) throw new Error('workspace directory is unavailable');

@@ -10,13 +10,16 @@ export function useImmersiveShortcuts(
   immersive: ImmersiveMode,
   onEnter: () => void,
   onExit: () => void,
+  canHandle?: (action: 'toggle' | 'exit') => boolean,
 ): void {
   useWindowEvent(
     React,
     'keydown',
     function (event: KeyboardEvent) {
+      if (event.isComposing || event.defaultPrevented) return;
       const mod = event.metaKey || event.ctrlKey;
-      if (mod && event.shiftKey && event.key.toLowerCase() === 'f') {
+      if (mod && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'f') {
+        if (canHandle && !canHandle('toggle')) return;
         event.preventDefault();
         event.stopPropagation();
         if (immersive) onExit();
@@ -24,13 +27,14 @@ export function useImmersiveShortcuts(
         return;
       }
       if (event.key === 'Escape' && immersive) {
+        if (canHandle && !canHandle('exit')) return;
         event.preventDefault();
         event.stopPropagation();
         onExit();
       }
     },
     true,
-    true,
+    false,
   );
 }
 

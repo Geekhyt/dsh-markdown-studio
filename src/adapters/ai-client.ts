@@ -160,19 +160,38 @@ async function readStreamLines(
   }
   const decoder = new TextDecoder();
   let buffer = '';
-  for (;;) {
-    const step = await reader.read();
-    if (step.done) break;
-    buffer += decoder.decode(step.value, { stream: true });
-    let nl = buffer.indexOf('\n');
-    while (nl >= 0) {
-      consumeNdjsonLine(buffer.slice(0, nl), acc, onDelta);
-      buffer = buffer.slice(nl + 1);
-      nl = buffer.indexOf('\n');
+  let failed = false;
+  try {
+    for (;;) {
+      const step = await reader.read();
+      if (step.done) break;
+      buffer += decoder.decode(step.value, { stream: true });
+      let nl = buffer.indexOf('\n');
+      while (nl >= 0) {
+        consumeNdjsonLine(buffer.slice(0, nl), acc, onDelta);
+        buffer = buffer.slice(nl + 1);
+        nl = buffer.indexOf('\n');
+      }
+    }
+    buffer += decoder.decode();
+    if (buffer.trim()) consumeNdjsonLine(buffer, acc, onDelta);
+  } catch (error) {
+    failed = true;
+    throw error;
+  } finally {
+    if (failed) {
+      try {
+        await reader.cancel();
+      } catch {
+        /* ignore cancel errors */
+      }
+    }
+    try {
+      reader.releaseLock();
+    } catch {
+      /* ignore releaseLock errors */
     }
   }
-  buffer += decoder.decode();
-  if (buffer.trim()) consumeNdjsonLine(buffer, acc, onDelta);
 }
 
 export class AiClient {
@@ -245,7 +264,13 @@ export class AiClient {
       throw httpStatusError(response.status);
     }
     const acc: StreamAccumulator = { text: '', provider: '', model: '' };
-    await readStreamLines(response, acc, request.onDelta);
+    try {
+      await readStreamLines(response, acc, request.onDelta);
+    } catch (error) {
+      if (error instanceof AiClientError) throw error;
+      if (request.signal?.aborted) throw new AiClientError('ABORTED', '已取消');
+      throw new AiClientError('STREAM_INTERRUPTED', '模型输出意外中断，请重试');
+    }
     // A stream that ends without its `done` event was cut off: never present partial text
     // as a complete rewrite of the user's selection.
     if (!acc.done) {

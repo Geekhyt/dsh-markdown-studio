@@ -63,7 +63,7 @@ function handleActionKey(
     options.redo();
     return true;
   }
-  if (key === 'enter') {
+  if (key === 'enter' && !event.shiftKey && !event.altKey) {
     event.preventDefault();
     options.copyArticle();
     return true;
@@ -181,6 +181,7 @@ function handlePlainFormattingKey(
   key: string,
   code: string,
 ): void {
+  if (event.shiftKey || event.altKey) return;
   if (key === 'u') {
     event.preventDefault();
     options.wrapSelection('++', '++', options.t('toolbar.underline'));
@@ -217,11 +218,27 @@ function handleNonModKey(options: EditorShortcutsOptions, event: ReactNamespace.
     event.preventDefault();
     return true;
   }
-  if (event.key === 'Tab') {
+  if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey) {
     event.preventDefault();
     if (!event.shiftKey && options.acceptAiReview && options.acceptAiReview() === true) return true;
     const value = options.editorValue();
     const range = options.selection();
+    if (event.shiftKey) {
+      const lineStart = range.start > 0 ? value.lastIndexOf('\n', range.start - 1) + 1 : 0;
+      const match = /^(?: {2}|\t)/.exec(value.slice(lineStart));
+      if (match) {
+        const drop = match[0].length;
+        options.replaceRange(
+          value,
+          lineStart,
+          lineStart + drop,
+          '',
+          Math.max(lineStart, range.start - drop),
+          Math.max(lineStart, range.end - drop),
+        );
+      }
+      return true;
+    }
     options.replaceRange(value, range.start, range.end, '  ', range.start + 2, range.start + 2);
     return true;
   }

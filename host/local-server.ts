@@ -106,12 +106,12 @@ export function startLocalImageServer(options: {
     return new Promise(function (resolve) {
       function onError(error: NodeJS.ErrnoException): void {
         server.removeListener('listening', onListening);
-        if (error && error.code === 'EADDRINUSE') {
+        if (error?.code === 'EADDRINUSE') {
           void attempt().then(resolve);
           return;
         }
         service.localServerInfo = null;
-        service.localServerError = String(error && error.message ? error.message : error);
+        service.localServerError = String(error?.message || error);
         resolve(null);
       }
       function onListening(): void {

@@ -32,6 +32,7 @@ export function CodeMirrorEditor(props: EditorProps) {
   useImperativeEditor<EditorApi, EditorInlineBlock, EditorDiffTransition>(React, hostRef, {
     value: props.value,
     dark,
+    placeholder: props.placeholder,
     inlineBlocks: props.inlineBlocks,
     diffTransition: props.diffTransition,
     onReady: props.onReady,

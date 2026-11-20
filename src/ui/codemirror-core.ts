@@ -267,7 +267,21 @@ class AiInlineBlockWidget extends WidgetType {
   eq(other: AiInlineBlockWidget): boolean {
     const a = this.spec;
     const b = other.spec;
-    return a.id === b.id && a.text === b.text && a.status === b.status && a.warning === b.warning;
+    return (
+      a.id === b.id &&
+      a.from === b.from &&
+      a.to === b.to &&
+      a.text === b.text &&
+      a.status === b.status &&
+      a.warning === b.warning &&
+      a.primaryLabel === b.primaryLabel &&
+      a.secondaryLabel === b.secondaryLabel &&
+      a.retryLabel === b.retryLabel &&
+      (a.addParts?.length ?? 0) === (b.addParts?.length ?? 0) &&
+      a.onPrimary === b.onPrimary &&
+      a.onSecondary === b.onSecondary &&
+      a.onRetry === b.onRetry
+    );
   }
 
   toDOM(): HTMLElement {
@@ -497,6 +511,10 @@ export function create(options: EditorOptions): EditorApi {
   let dark = !!opts.dark;
   const themeCompartment = new Compartment();
   const highlightCompartment = new Compartment();
+  const placeholderCompartment = new Compartment();
+  const contentAttrsCompartment = new Compartment();
+  const resolveAriaLabel = (label?: string, ph?: string): string =>
+    label || ph || (isCss ? 'CSS editor' : 'Markdown editor');
 
   const extensions: Extension[] = [
     ...(isCss ? [lineNumbers()] : [markdownMonoLines, inlineBlocksField, diffTransitionField]),
@@ -512,7 +530,10 @@ export function create(options: EditorOptions): EditorApi {
     highlightCompartment.of(syntaxHighlighting(dark ? darkHighlightStyle : lightHighlightStyle, { fallback: true })),
     isCss ? css() : markdown(),
     EditorView.lineWrapping,
-    EditorView.contentAttributes.of({ 'aria-label': opts.placeholder || (isCss ? 'CSS editor' : 'Markdown editor') }),
+    contentAttrsCompartment.of(
+      EditorView.contentAttributes.of({ 'aria-label': resolveAriaLabel(undefined, opts.placeholder) }),
+    ),
+    placeholderCompartment.of(opts.placeholder ? placeholder(opts.placeholder) : []),
     themeCompartment.of(editorTheme(dark, isCss)),
     keymap.of([...closeBracketsKeymap, ...defaultKeymap]),
     EditorView.updateListener.of(onUpdate),
@@ -523,10 +544,10 @@ export function create(options: EditorOptions): EditorApi {
       },
     }),
   ];
-  if (opts.placeholder) extensions.push(placeholder(opts.placeholder));
 
   const state = EditorState.create({ doc: opts.doc || '', extensions });
   const view = new EditorView({ state, parent: opts.parent });
+  let lastInlineBlockCount = 0;
   view.scrollDOM.tabIndex = 0;
   const scrollElement = view.scrollDOM;
   const scrollListeners = new Set<(info: EditorScrollInfo) => void>();
@@ -585,10 +606,23 @@ export function create(options: EditorOptions): EditorApi {
     },
     setInlineBlocks(blocks: readonly EditorInlineBlock[]) {
       if (isCss) return;
+      if (lastInlineBlockCount === 0 && blocks.length === 0) return;
+      const enteringSession = lastInlineBlockCount === 0 && blocks.length > 0;
+      lastInlineBlockCount = blocks.length;
       const sel = view.state.selection.main;
       const anchorPos = blocks.length > 0 ? Math.max(0, Math.min(view.state.doc.length, blocks[0].to)) : sel.to;
-      const collapse = blocks.length > 0 && sel.from !== sel.to ? { selection: { anchor: anchorPos } } : {};
+      const collapse = enteringSession && sel.from !== sel.to ? { selection: { anchor: anchorPos } } : {};
       view.dispatch({ ...collapse, effects: setInlineBlocksEffect.of(blocks) });
+    },
+    setPlaceholder(nextPlaceholder: string, nextAriaLabel?: string) {
+      view.dispatch({
+        effects: [
+          placeholderCompartment.reconfigure(nextPlaceholder ? placeholder(nextPlaceholder) : []),
+          contentAttrsCompartment.reconfigure(
+            EditorView.contentAttributes.of({ 'aria-label': resolveAriaLabel(nextAriaLabel, nextPlaceholder) }),
+          ),
+        ],
+      });
     },
     setDiffTransition(transition: EditorDiffTransition | null) {
       if (isCss) return;

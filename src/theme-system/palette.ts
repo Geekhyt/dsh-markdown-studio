@@ -220,7 +220,7 @@ export function derivePalette(tone: Tone, accent: string, fontSize: number, line
     strongColor: ink,
     emColor: text,
     emStyle: 'italic',
-    delColor: ensureContrast(mix(ink, paper, 0.45), paper, 4.5),
+    delColor: ensureContrast(ensureContrast(mix(ink, paper, 0.45), paper, 4.5), accentSoft, 4.5),
     linkColor: accentText,
     linkUnderline: mix(accent, paper, 0.72),
     quoteBg: soft,

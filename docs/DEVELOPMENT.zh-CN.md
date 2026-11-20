@@ -10,14 +10,14 @@
 
 `dsh-markdown-studio` 严格解耦为 **客户端冷启动壳（Shell）**、**按需工作台运行时（Studio Chunk）** 与 **本机 Host 图片及按需分包服务（Node.js / Cordis）**：
 
-1. **极简冷启动壳（`dist/client.js`，仅 `4.2 KiB`）** —— DSH 启动时仅加载极简入口，注册左侧边栏图标（`sidebar.panellist`）、基础多语言与主视图懒加载容器（`main`）。用户在日常 AI 对话期间**零编辑器脚本开销**。
+1. **极简冷启动壳（`dist/client.js`，仅 `4.8 KiB`）** —— DSH 启动时仅加载极简入口，注册左侧边栏图标（`sidebar.panellist`）、基础多语言与主视图懒加载容器（`main`）。用户在日常 AI 对话期间**零编辑器脚本开销**。
 2. **工作台与可逆排版流水线（`dist/client.studio.js`）** —— 当用户首次点击打开 **Markdown Studio** 时，通过 DSH 官方 `require.async("./client.studio.js")` 按需加载 CodeMirror 6、`DocumentStore`、`Tone × Rhythm × Atoms` 主题系统及内联样式级联编译器。
 3. **重型渲染器按需加载（`dist/math.js` & `dist/mermaid.js`）** —— 仅当当前文稿包含 TeX 公式（`$...$` / `$$...$$` 与 `\(...\)` / `\[...\]`）或 ```` ```mermaid ```` 代码块时，才从本机 Host 拉取 MathJax 3（自包含矢量 `<path>` SVG）或 Mermaid 11（`strict` 沙箱 + `DOMPurify` 光栅化）。
 4. **双通道隔离的本机图片服务与按需回环 AI 路由（`dist/index.js`）** —— 图片写入动作走受宿主鉴权的同源 `POST /api/markdown-studio/wechat`（SHA-256 去重落盘），预览走仅绑定 `127.0.0.1` 的只读回环服务；AI 写作 Skill 走同源回环 `POST /api/markdown-studio/ai`，仅在用户主动触发时调用宿主已配置的 `llm` 服务处理选中片段。
 
 ```mermaid
 flowchart TB
-  subgraph S1["阶段 1 · 客户端冷启动轻量壳 (dist/client.js · 4.2 KiB)"]
+  subgraph S1["阶段 1 · 客户端冷启动轻量壳 (dist/client.js · 4.8 KiB)"]
     ICON["侧边栏入口槽位 sidebar.panellist"]
     LAZY["主面板懒加载容器 main (LazyStudioView)"]
     LIFE["可逆样式与多语言生命周期 (style-lifecycle)"]
@@ -68,18 +68,18 @@ flowchart TB
 | **Client 槽位层** | `sidebar.panellist`、`main` | 注册左侧边栏矢量入口图标与主工作台视图。 |
 | **多语言服务** | `locale.register`、`locale.bind`、`locale/*.json` | 跟随宿主中英语言切换界面文案，并通过 `meta.detail` 提供插件详情页。 |
 | **共享 UI 原语** | `@deepseek-ai/dsh-client-ui-primitives` | 复用宿主原生 `Button`、`SegmentedTabs`、`Modal`、`Menu`、`Tooltip`、`Input` 与语义变量。 |
-| **客户端按需分包** | `window.__ModuleLoader__.load` + `require.async` | 首屏仅加载 `4.2 KiB` 轻量壳，点击面板后再按需加载编辑器与排版运行时。 |
+| **客户端按需分包** | `window.__ModuleLoader__.load` + `require.async` | 首屏仅加载 `4.8 KiB` 轻量壳，点击面板后再按需加载编辑器与排版运行时。 |
 | **Host Web 与模型服务** | Cordis `webServer.register`、可选 `llm` / `agentDefaultModel` | 注册同源鉴权图片路由、按需 AI 写作流式路由与 MathJax / Mermaid 分包路由。 |
 
 ### 五分包按需懒加载体积明细
 
 | 构建产物 | 原始体积 | Gzip 体积 | 体积预算门禁 | 职责与加载触发时机 |
 | :--- | :--- | :--- | :--- | :--- |
-| `dist/client.js` | **`4.2 KiB`** | **`2.1 KiB`** | `<= 50 KiB` | 首屏冷启动轻量壳：仅注册侧边栏图标、基础多语言与懒加载容器。 |
-| `dist/client.studio.js` | `1206.6 KiB` | `377.3 KiB` | `<= 1280 KiB` | 仅在点击打开 Markdown Studio 时加载（含 CodeMirror 6、8 套主题、行内 AI Diff 与 `mp-darkmode`）。 |
-| `dist/index.js` | `102.0 KiB` | `53.7 KiB` | `<= 150 KiB` | 自包含 Host ESM 服务（内容寻址图片管理 + 只读回环预览 + 同源 AI 路由），零运行时 npm 依赖。 |
+| `dist/client.js` | **`4.8 KiB`** | **`2.3 KiB`** | `<= 50 KiB` | 首屏冷启动轻量壳：仅注册侧边栏图标、基础多语言与懒加载容器。 |
+| `dist/client.studio.js` | `1223.2 KiB` | `382.5 KiB` | `<= 1280 KiB` | 仅在点击打开 Markdown Studio 时加载（含 CodeMirror 6、8 套主题、行内 AI Diff 与 `mp-darkmode`）。 |
+| `dist/index.js` | `103.1 KiB` | `54.0 KiB` | `<= 150 KiB` | 自包含 Host ESM 服务（内容寻址图片管理 + 只读回环预览 + 同源 AI 路由），零运行时 npm 依赖。 |
 | `dist/math.js` | `1761.7 KiB` | `593.2 KiB` | `<= 2048 KiB` | 仅当文稿出现 TeX 公式时按需加载 MathJax 3（自包含字体轮廓 `<path>` SVG）。 |
-| `dist/mermaid.js` | `3413.4 KiB` | `955.4 KiB` | `<= 4096 KiB` | 仅当文稿出现 `mermaid` 代码块时按需加载 Mermaid 11（严格沙箱 + `DOMPurify`）。 |
+| `dist/mermaid.js` | `3413.6 KiB` | `955.5 KiB` | `<= 4096 KiB` | 仅当文稿出现 `mermaid` 代码块时按需加载 Mermaid 11（严格沙箱 + `DOMPurify`）。 |
 
 ---
 
@@ -93,8 +93,8 @@ flowchart TB
 
 ### Host 与渲染安全边界
 - **原始 HTML 与危险协议拦截**：默认转义 Markdown 中的原始 HTML（如 `<script>`、`<img onerror>`），严格拦截 `javascript:`、`vbscript:`、`data:text/html` 协议（先剔除空白与控制字符再判断）；TeX 公式不加载 MathJax `html` 扩展（`\href`、`\style`）。
-- **双通道图片与同源回环 AI 校验**：图片写入接口强制校验回环源 IP（`127.0.0.1` / `::1`）、`application/json` 主类型与来源（http(s) `Origin` 必须与 `Host` 一致；缺失 Origin 与桌面端自定义 scheme 放行，`null` 仅在 `Sec-Fetch-Site: same-origin/none` 时放行）、PNG/JPEG 文件头魔数及单图 `1 MB` 上限；预览回环端口仅响应只读 `GET / HEAD / OPTIONS` 且严格匹配 `^[a-f0-9]{24}\.(png|jpg)$`；按需 AI 写作路由（`POST /api/markdown-studio/ai`）采用相同的回环、来源与 MIME 校验及 `512 KiB` 请求体上限，流式输出中断或被截断时直接报错，仅将选中片段转发至宿主 `llm` 服务。
-- **外部 CSS 资源默认剥离**：自定义 CSS 中的外部 `url(...)`、`image-set(...)` 与 `@import`（含 CSS 转义写法）默认自动剥离，防止潜在的外部追踪信标请求。
+- **双通道图片与同源回环 AI 校验**：图片写入接口强制校验回环源 IP（`127.0.0.1` / `::1`）、`application/json` 主类型与来源（http(s) `Origin` 必须与 `Host` 一致；缺失 Origin 与受信任桌面端 scheme `dsh-app:` / `dsh:` / `app:` / `file:` 放行，`null` 仅在 `Sec-Fetch-Site: same-origin/none` 时放行）、PNG/JPEG 文件头魔数及单图 `1 MB` 上限；预览回环端口仅响应只读 `GET / HEAD / OPTIONS` 且严格匹配 `^[a-f0-9]{24}\.(png|jpg)$`；按需 AI 写作路由（`POST /api/markdown-studio/ai`）采用相同的回环、来源与 MIME 校验及 `512 KiB` 请求体上限，流式输出中断或被截断时直接报错，仅将选中片段转发至宿主 `llm` 服务。
+- **外部 CSS 资源默认剥离**：自定义 CSS 中的外部 `url(...)`、`image-set(...)` 与 `@import`（含注释拆分、反斜杠续行转义及 `var()` 展开后的外部 URL）默认自动剥离，防止潜在的外部追踪信标请求。
 
 ---
 

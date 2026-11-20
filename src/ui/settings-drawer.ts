@@ -37,6 +37,7 @@ export interface SettingsDrawerProps {
   ui: UiKit;
   open: boolean;
   initialTab: 'theme' | 'help';
+  onTabChange?: (tab: 'theme' | 'help') => void;
   settings: ThemeSettings;
   shortcuts: Array<[string, string]>;
   onClose: () => void;
@@ -279,7 +280,9 @@ function SettingsDrawerContent(props: SettingsDrawerProps): ReactNode {
   const settings = props.settings;
   const themeFileRef = props.React.useRef<HTMLInputElement | null>(null);
   const bodyRef = props.React.useRef<HTMLDivElement | null>(null);
-  const [tab, setTab] = props.React.useState<'theme' | 'help'>(props.initialTab);
+  const drawerRef = props.React.useRef<HTMLElement | null>(null);
+  const [localTab, setLocalTab] = props.React.useState<'theme' | 'help'>(props.initialTab);
+  const tab = props.onTabChange ? props.initialTab : localTab;
 
   useMountDisposable(props.React, function () {
     const previous = document.activeElement as HTMLElement | null;
@@ -288,12 +291,16 @@ function SettingsDrawerContent(props: SettingsDrawerProps): ReactNode {
     }, 0);
     return function () {
       window.clearTimeout(focusTimer);
-      if (previous && document.contains(previous)) previous.focus();
+      const active = document.activeElement;
+      const focusInsideDrawer = Boolean(drawerRef.current && active && drawerRef.current.contains(active));
+      const focusLost = !active || active === document.body || active === document.documentElement;
+      if ((focusInsideDrawer || focusLost) && previous && document.contains(previous)) previous.focus();
     };
   });
 
   function selectTab(id: 'theme' | 'help', focus: boolean): void {
-    setTab(id);
+    if (props.onTabChange) props.onTabChange(id);
+    else setLocalTab(id);
     if (bodyRef.current) bodyRef.current.scrollTop = 0;
     if (focus)
       window.setTimeout(function () {
@@ -321,7 +328,7 @@ function SettingsDrawerContent(props: SettingsDrawerProps): ReactNode {
 
   return h(
     'aside',
-    { className: 'mdstudio-drawer', 'aria-label': t('drawer.title'), 'data-mdstudio-tab': tab },
+    { ref: drawerRef, className: 'mdstudio-drawer', 'aria-label': t('drawer.title'), 'data-mdstudio-tab': tab },
     h(
       'div',
       { className: 'mdstudio-drawer-head' },

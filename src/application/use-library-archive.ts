@@ -35,6 +35,17 @@ import type { DocumentStore } from './document-store';
 
 const IMPORT_RECOVERY_KEY = 'dsh.markdown-studio.library.import-recovery.v1';
 
+export function collectImportRecoveryAssets(): string[] {
+  try {
+    const raw = window.localStorage.getItem(IMPORT_RECOVERY_KEY);
+    if (!raw) return [];
+    const parsed = parseLibraryBackup(raw);
+    return parsed ? collectReferencedAssets(parsed) : [];
+  } catch {
+    return [];
+  }
+}
+
 type Notify = (text: string, tone?: 'success' | 'error' | 'info') => void;
 
 export type ImportModeChoice = 'merge' | 'replace';
@@ -98,7 +109,7 @@ async function resolveImportPlan(
   }
   let decisions: Record<string, MergeDecision> = {};
   if (merge && options.resolveConflicts) {
-    const conflicts = mergeConflicts(options.library, parsed);
+    const conflicts = mergeConflicts(options.store.getSnapshot(), parsed);
     if (conflicts.length) {
       const resolved = await options.resolveConflicts(conflicts, prefer);
       if (!resolved) return null;
@@ -136,11 +147,26 @@ function buildArchiveConfirmTitle(
   return missingCount ? base + ' · ' + missingCount + ' ' + t('library.archiveMissing') : base;
 }
 
+function remapLibraryAssetPaths(library: LibraryState, mapping: Map<string, string>): LibraryState {
+  if (!mapping.size) return library;
+  const rewrite = (md: string): string => {
+    let out = md;
+    for (const [oldPath, newPath] of mapping.entries()) {
+      if (oldPath !== newPath) out = out.split(oldPath).join(newPath);
+    }
+    return out;
+  };
+  return {
+    activeId: library.activeId,
+    docs: library.docs.map((doc) => ({ ...doc, markdown: rewrite(doc.markdown) })),
+    trash: (library.trash || []).map((doc) => ({ ...doc, markdown: rewrite(doc.markdown) })),
+  };
+}
+
 export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiveApi {
   const React = options.React;
   const t = options.t;
   const store = options.store;
-  const library = options.library;
   const hostClient = options.hostClient;
   const [recoveryAvailable, setRecoveryAvailable] = React.useState(function () {
     try {
@@ -152,7 +178,7 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
 
   async function saveImportRecovery(): Promise<boolean> {
     try {
-      const backup = createLibraryBackup(compactLibraryForStorage(library), options.writingSkills);
+      const backup = createLibraryBackup(compactLibraryForStorage(store.getSnapshot()), options.writingSkills);
       window.localStorage.setItem(IMPORT_RECOVERY_KEY, JSON.stringify(backup));
       setRecoveryAvailable(true);
       return true;
@@ -177,7 +203,7 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
   }
 
   async function exportJson(): Promise<void> {
-    const backup = createLibraryBackup(library, options.writingSkills);
+    const backup = createLibraryBackup(compactLibraryForStorage(store.getSnapshot()), options.writingSkills);
     const stamp = new Date().toISOString().slice(0, 10);
     if (
       options.download(
@@ -206,7 +232,8 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
   }
 
   async function exportArchiveChecked(): Promise<void> {
-    const files = collectReferencedAssets(library);
+    const currentLib = store.getSnapshot();
+    const files = collectReferencedAssets(currentLib);
     assertZipBudget(files.length + 2, 0);
     const base = String(options.localImageServerUrl || 'http://127.0.0.1:4010').replace(/\/+$/, '');
     const stamp = new Date().toISOString().slice(0, 10);
@@ -250,7 +277,9 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
           }
           await writer.add(
             LIBRARY_ARCHIVE_BACKUP,
-            encoder.encode(JSON.stringify(createLibraryBackup(library, options.writingSkills), null, 2)),
+            encoder.encode(
+              JSON.stringify(createLibraryBackup(compactLibraryForStorage(currentLib), options.writingSkills), null, 2),
+            ),
           );
           await writer.add(
             LIBRARY_ARCHIVE_MANIFEST,
@@ -312,7 +341,9 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
     }
     entries.push({
       name: LIBRARY_ARCHIVE_BACKUP,
-      data: encoder.encode(JSON.stringify(createLibraryBackup(library, options.writingSkills), null, 2)),
+      data: encoder.encode(
+        JSON.stringify(createLibraryBackup(compactLibraryForStorage(currentLib), options.writingSkills), null, 2),
+      ),
     });
     entries.push({
       name: LIBRARY_ARCHIVE_MANIFEST,
@@ -385,16 +416,29 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
     );
     if (!plan) return;
     if (!(await saveImportRecovery())) return;
+    const remapped = new Map<string, string>();
+    let failedAssets = 0;
     for (const entry of assets) {
       const filename = entry.name.slice(7);
       const mime = /\.png$/i.test(filename) ? 'image/png' : 'image/jpeg';
-      await hostClient.storeAsset('data:' + mime + ';base64,' + bytesToBase64(entry.data), filename);
+      try {
+        const stored = await hostClient.storeAsset('data:' + mime + ';base64,' + bytesToBase64(entry.data), filename);
+        const nextPath = stored.assetPath || (stored.filename ? 'assets/' + stored.filename : '');
+        if (nextPath && nextPath !== 'assets/' + filename) remapped.set('assets/' + filename, nextPath);
+      } catch {
+        failedAssets++;
+      }
     }
-    const nextLibrary = plan.merge ? mergeLibraryBackup(library, parsed, prefer, plan.decisions) : parsed;
+    const preparedParsed = remapLibraryAssetPaths(parsed, remapped);
+    const nextLibrary = plan.merge
+      ? mergeLibraryBackup(store.getSnapshot(), preparedParsed, prefer, plan.decisions)
+      : preparedParsed;
+    const nextActive = store.replaceAll(nextLibrary, true);
     applyImportedSkills(rawPayload, plan.merge, prefer);
-    replace(store.replaceAll(nextLibrary, true));
+    replace(nextActive);
     options.notify(t(plan.merge ? 'library.merged' : 'library.archiveImported'));
-    if (missing.length) options.notify(missing.length + ' ' + t('library.archiveMissing'), 'error');
+    const totalMissing = missing.length + failedAssets;
+    if (totalMissing) options.notify(totalMissing + ' ' + t('library.archiveMissing'), 'error');
   }
 
   async function importFile(
@@ -424,9 +468,10 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
       );
       if (!plan) return;
       if (!(await saveImportRecovery())) return;
-      const nextLibrary = plan.merge ? mergeLibraryBackup(library, parsed, prefer, plan.decisions) : parsed;
+      const nextLibrary = plan.merge ? mergeLibraryBackup(store.getSnapshot(), parsed, prefer, plan.decisions) : parsed;
+      const nextActive = store.replaceAll(nextLibrary, true);
       applyImportedSkills(rawPayload, plan.merge, prefer);
-      replace(store.replaceAll(nextLibrary, true));
+      replace(nextActive);
       options.notify(t(plan.merge ? 'library.merged' : 'library.imported'));
     } catch (error) {
       options.notify(
@@ -455,8 +500,9 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
       if (!parsed) throw new Error('invalid recovery');
       const ok = await options.confirm({ title: t('library.recoverConfirm') });
       if (!ok) return;
+      const nextActive = store.replaceAll(parsed, true);
       applyImportedSkills(rawPayload, false, 'incoming');
-      replace(store.replaceAll(parsed, true));
+      replace(nextActive);
       window.localStorage.removeItem(IMPORT_RECOVERY_KEY);
       setRecoveryAvailable(false);
       options.notify(t('library.recovered'));

@@ -654,4 +654,53 @@ check('TeX math delimiters \\(...\\) and \\[...\\] render natively while preserv
   assert.match(doc.html, /unclosed display/);
 });
 
+check('regression: apostrophe tables, currency $, intraword ++/==, nested scroll :::, and CSS $ selectors', () => {
+  const tbl = engine.renderMarkdown("| Col A | Col B |\n| --- | --- |\n| It's fine | (open |\n");
+  assert.equal((tbl.html.match(/<td/g) || []).length, 2, 'unmatched apostrophe or paren does not merge table cells');
+  assert.match(tbl.html, /It&#39;s fine/);
+
+  const cur = engine.renderMarkdown('Price is $10 and $20, while $x + 1$ is math.');
+  assert.equal(cur.html.includes('data-mdstudio-tex="10'), false, 'currency $10 and $20 stays plain text');
+  assert.match(cur.html, /\$10 and \$20/);
+  assert.match(cur.html, /data-mdstudio-tex="x \+ 1"/);
+
+  const intra = engine.renderMarkdown('Use C++17 and a==b==c with ++underline++ and ==mark==.');
+  assert.equal(intra.html.includes('C<u>'), false, 'C++17 does not become underline');
+  assert.equal(intra.html.includes('a<mark>'), false, 'a==b==c does not become mark');
+  assert.match(intra.html, /<u>underline<\/u>/);
+  assert.match(intra.html, /<mark>mark<\/mark>/);
+
+  const nestedScroll = engine.renderMarkdown(':::scroll\nOuter\n:::pull\nInner quote\n:::\nAfter\n:::\n');
+  assert.match(nestedScroll.html, /mdstudio-scroll-body/);
+  assert.match(nestedScroll.html, /mdstudio-pull/);
+  assert.match(nestedScroll.html, /After/);
+
+  const singleLineLeadInScroll = engine.renderMarkdown(
+    ':::scroll\n:::lead Intro sentence\n\nBody text\n:::\n\nOutside text\n',
+  );
+  assert.match(
+    singleLineLeadInScroll.html,
+    /<\/section><\/section><p>Outside text<\/p>/,
+    'single-line :::lead inside :::scroll does not swallow outer closing :::',
+  );
+
+  assert.equal(
+    engine.renderMarkdown('**a ***b*** c**').html,
+    '<p><strong>a <strong><em>b</em></strong> c</strong></p>',
+  );
+  assert.equal(engine.renderMarkdown('*a ***b*** c*').html, '<p><em>a <strong><em>b</em></strong> c</em></p>');
+  assert.equal(engine.renderMarkdown('**foo***').html, '<p><strong>foo</strong>*</p>');
+  assert.equal(engine.renderMarkdown('**bold and *italic***').html, '<p><strong>bold and <em>italic</em></strong></p>');
+  assert.equal(engine.renderMarkdown('*italic and **bold***').html, '<p><em>italic and <strong>bold</strong></em></p>');
+
+  const mixedCurMath = engine.renderMarkdown('原价$100，现价$50，公式$x+1$结束');
+  assert.match(mixedCurMath.html, /原价\$100，现价\$50，公式<span class="mdstudio-math"[^>]*data-mdstudio-tex="x\+1"/);
+
+  const curTable = engine.renderMarkdown('| Plan | A | B |\n| --- | --- | --- |\n| Pro | $100 | $50 |\n');
+  assert.equal((curTable.html.match(/<td/g) || []).length, 3, 'currency $ cells do not merge table columns');
+
+  const suffixed = engine.renderMarkdown('==API==s and ++UI++s and ==高亮==词');
+  assert.equal(suffixed.html, '<p><mark>API</mark>s and <u>UI</u>s and <mark>高亮</mark>词</p>');
+});
+
 console.log(`\n${checks} engine checks passed.`);

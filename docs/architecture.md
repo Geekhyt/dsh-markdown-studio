@@ -12,7 +12,7 @@
 ```text
 Harness Web / Desktop
   └─ window.__ModuleLoader__.load(dist/client.js)
-       └─ shell-entry.ts (冷启动 4.2 KiB 壳：注册侧栏、多语言与按需视图)
+       └─ shell-entry.ts (冷启动 4.8 KiB 壳：注册侧栏、多语言与按需视图)
             └─ require.async('./client.studio.js')
                  └─ plugin-entry.ts → app.ts
                       ├─ runtime/             底层 React 生命周期与命令式 DOM 内核（唯一允许 useEffect 的分层）
@@ -64,11 +64,11 @@ UI → application → domain
 
 ## 五产物按需分包设计
 
-- `dist/client.js`：客户端冷启动壳（约 `4.2 KiB` / `2.1 KiB` gzip，预算 `50.0 KiB`），宿主冷启动零重依赖解析。
-- `dist/client.studio.js`：打开工作台时通过 `require.async('./client.studio.js')` 按需加载的核心工作台与 CodeMirror 6 编辑器（约 `1206.6 KiB` / `377.3 KiB` gzip，预算 `1280.0 KiB`，React 保持 external 由宿主提供）。
-- `dist/index.js`：Host 服务端 ESM 产物（约 `102.0 KiB` / `53.7 KiB` gzip，预算 `150.0 KiB`，零外部 npm 运行时依赖）。
+- `dist/client.js`：客户端冷启动壳（约 `4.8 KiB` / `2.3 KiB` gzip，预算 `50.0 KiB`），宿主冷启动零重依赖解析。
+- `dist/client.studio.js`：打开工作台时通过 `require.async('./client.studio.js')` 按需加载的核心工作台与 CodeMirror 6 编辑器（约 `1223.2 KiB` / `382.5 KiB` gzip，预算 `1280.0 KiB`，React 保持 external 由宿主提供）。
+- `dist/index.js`：Host 服务端 ESM 产物（约 `103.1 KiB` / `54.0 KiB` gzip，预算 `150.0 KiB`，零外部 npm 运行时依赖）。
 - `dist/math.js`：遇到公式时按需加载的 MathJax 3 TeX → 内联路径 SVG 引擎（约 `1761.7 KiB` / `593.2 KiB` gzip，预算 `2048.0 KiB`）。
-- `dist/mermaid.js`：遇到图表时按需加载的 Mermaid 11 严格沙箱图表引擎（约 `3413.4 KiB`，预算 `4096.0 KiB`）。
+- `dist/mermaid.js`：遇到图表时按需加载的 Mermaid 11 严格沙箱图表引擎（约 `3413.6 KiB` / `955.5 KiB` gzip，预算 `4096.0 KiB`）。
 
 各包体积上限由 `npm run budget` 门禁强制守卫。
 
