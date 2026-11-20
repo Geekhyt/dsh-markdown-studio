@@ -446,6 +446,32 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
     );
   }
 
+  function positionFixedMenu(menuEl: HTMLElement, anchorEl: HTMLElement | null, align?: 'start' | 'end'): void {
+    if (!anchorEl || typeof window === 'undefined') return;
+    const rect = anchorEl.getBoundingClientRect();
+    if (!rect.width && !rect.height) return;
+    const vw = window.innerWidth || 1024;
+    const vh = window.innerHeight || 768;
+    const menuWidth = menuEl.offsetWidth || 244;
+    const pad = 8;
+    const rawLeft = align === 'start' ? rect.left : rect.right - menuWidth;
+    const left = Math.min(Math.max(rawLeft, pad), Math.max(pad, vw - menuWidth - pad));
+    const spaceBelow = vh - rect.bottom - 12;
+    const spaceAbove = rect.top - 12;
+    const openAbove = spaceBelow < 180 && spaceAbove > spaceBelow;
+    menuEl.style.left = Math.round(left) + 'px';
+    menuEl.style.right = 'auto';
+    if (openAbove) {
+      menuEl.style.top = 'auto';
+      menuEl.style.bottom = Math.round(vh - rect.top + 4) + 'px';
+      menuEl.style.maxHeight = Math.min(640, Math.max(120, Math.round(spaceAbove - 4))) + 'px';
+    } else {
+      menuEl.style.top = Math.round(rect.bottom + 4) + 'px';
+      menuEl.style.bottom = 'auto';
+      menuEl.style.maxHeight = Math.min(640, Math.max(120, Math.round(spaceBelow - 4))) + 'px';
+    }
+  }
+
   function FallbackMenu(props: BridgedMenuProps): ReactElement {
     const wrapRef = React.useRef<HTMLDivElement | null>(null);
     const focusedOnOpenRef = React.useRef(false);
@@ -454,6 +480,7 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
         focusedOnOpenRef.current = false;
         return;
       }
+      positionFixedMenu(el, wrapRef.current || el.parentElement, props.align);
       if (props.autoFocus !== false && !focusedOnOpenRef.current) {
         focusedOnOpenRef.current = true;
         const first = el.querySelector<HTMLElement>('[role="menuitem"]:not([disabled])');

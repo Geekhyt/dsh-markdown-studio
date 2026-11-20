@@ -652,4 +652,71 @@ const h = React.createElement;
   console.log('ok - useDialogHost confirm and prompt flows pass');
 }
 
+// --- 7. FallbackMenu fixed viewport positioning (below & flipped above) ---
+{
+  const kit = createUiKit(React, null);
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  let root: Root | null = null;
+  const origInnerHeight = win.innerHeight;
+  const origInnerWidth = win.innerWidth;
+  Object.defineProperty(win, 'innerWidth', { value: 1200, configurable: true });
+  Object.defineProperty(win, 'innerHeight', { value: 800, configurable: true });
+
+  let rectMock = { left: 40, right: 120, top: 60, bottom: 92, width: 80, height: 32 };
+  const origRect = win.HTMLElement.prototype.getBoundingClientRect;
+  win.HTMLElement.prototype.getBoundingClientRect = function () {
+    return { ...rectMock, x: rectMock.left, y: rectMock.top, toJSON: () => ({}) } as DOMRect;
+  };
+  try {
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(
+        h(kit.Menu, {
+          open: true,
+          align: 'start',
+          ariaLabel: 'Format',
+          items: [{ id: 'p', label: 'Paragraph' }],
+          anchor: h('button', { type: 'button' }, 'Format'),
+          onSelect: () => {},
+          onClose: () => {},
+        }),
+      );
+    });
+    const belowMenu = container.querySelector<HTMLElement>('[role="menu"]')!;
+    assert.equal(belowMenu.style.left, '40px', 'start-aligned fixed menu anchors to trigger left edge');
+    assert.equal(belowMenu.style.top, '96px', 'fixed menu opens 4px below trigger when viewport has space');
+    assert.equal(belowMenu.style.bottom, 'auto');
+
+    // Flip above when trigger sits near viewport bottom
+    rectMock = { left: 1080, right: 1180, top: 720, bottom: 752, width: 100, height: 32 };
+    await act(async () => {
+      root!.render(
+        h(kit.Menu, {
+          open: true,
+          align: 'end',
+          ariaLabel: 'BottomMenu',
+          items: [{ id: 'x', label: 'Action' }],
+          anchor: h('button', { type: 'button' }, 'More'),
+          onSelect: () => {},
+          onClose: () => {},
+        }),
+      );
+    });
+    const aboveMenu = container.querySelector<HTMLElement>('[role="menu"]')!;
+    assert.equal(aboveMenu.style.top, 'auto', 'fixed menu flips above when space below is tight');
+    assert.equal(aboveMenu.style.bottom, '84px', 'flipped menu anchors 4px above trigger top');
+    assert.equal(aboveMenu.style.left, '936px', 'end-aligned menu clamps inside right viewport edge');
+  } finally {
+    win.HTMLElement.prototype.getBoundingClientRect = origRect;
+    Object.defineProperty(win, 'innerWidth', { value: origInnerWidth, configurable: true });
+    Object.defineProperty(win, 'innerHeight', { value: origInnerHeight, configurable: true });
+    await act(async () => {
+      root?.unmount();
+    });
+    container.remove();
+  }
+  console.log('ok - FallbackMenu fixed viewport positioning escapes overflow containers');
+}
+
 win.close();

@@ -96,9 +96,11 @@ function isAbortError(error: unknown): boolean {
 function detectPlatformModifiers(): { modKey: string; shiftKey: string; altKey: string } {
   let isMac = false;
   try {
+    const docPlatform =
+      typeof document !== 'undefined' ? document.documentElement?.getAttribute?.('data-platform') || '' : '';
     const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
     const platformText = nav.userAgentData?.platform || navigator.platform || navigator.userAgent || '';
-    isMac = /Mac|iPhone|iPad/.test(String(platformText));
+    isMac = docPlatform === 'darwin' || /mac|iphone|ipad/i.test(String(platformText));
   } catch {
     isMac = false;
   }

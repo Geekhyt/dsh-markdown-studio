@@ -25,6 +25,13 @@ export function PreviewPane(props: PreviewPaneProps): ReactNode {
   const t = props.t;
   const dark = useHostDarkTheme(props.React);
   const previewTheme: 'light' | 'dark' = dark ? 'dark' : 'light';
+  const surfaceBg = dark
+    ? props.rendered.paper
+      ? '#0e1013'
+      : '#191919'
+    : props.rendered.paper
+      ? props.rendered.stageBg
+      : props.rendered.bg;
   const articleRef = props.React.useRef<HTMLDivElement | null>(null);
 
   usePreviewHtmlSurface(props.React, articleRef, {
@@ -105,14 +112,17 @@ export function PreviewPane(props: PreviewPaneProps): ReactNode {
         ? null
         : h(
             'div',
-            { className: 'mdstudio-device' + (props.previewMode === 'desktop' ? ' is-desktop' : '') },
+            {
+              className: 'mdstudio-device' + (props.previewMode === 'desktop' ? ' is-desktop' : ''),
+              style: { backgroundColor: surfaceBg },
+            },
             h(
               'div',
               {
                 className: 'mdstudio-device-screen',
                 ref: props.previewScrollRef,
                 onScroll: props.onPreviewScroll,
-                style: { backgroundColor: props.rendered.paper ? props.rendered.stageBg : props.rendered.bg },
+                style: { backgroundColor: surfaceBg },
               },
               h('div', {
                 className: 'mdstudio-preview-article',

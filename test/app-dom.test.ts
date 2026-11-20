@@ -2419,4 +2419,49 @@ await act(async () => {
 enContainer.remove();
 console.log('ok - English locale boots with English sample article and zero Chinese leaks');
 
+// Verify macOS shortcut label detection with lowercase Chromium userAgentData.platform ("macOS")
+{
+  const prevUad = (navigator as unknown as { userAgentData?: unknown }).userAgentData;
+  Object.defineProperty(navigator, 'userAgentData', {
+    value: { platform: 'macOS' },
+    configurable: true,
+  });
+  const macContainer = document.createElement('div');
+  document.body.appendChild(macContainer);
+  const macRoot = ReactDOM.createRoot(macContainer);
+  try {
+    await act(async () => {
+      macRoot.render(React.createElement(Main, {}));
+    });
+    await settle(40);
+    await act(async () => {
+      macContainer.querySelector<HTMLButtonElement>('button[aria-label="设置"]')?.click();
+    });
+    await settle(30);
+    await act(async () => {
+      Array.from(macContainer.querySelectorAll<HTMLElement>('.mdstudio-drawer [role="tab"]'))
+        .find((el) => el.textContent === '帮助')
+        ?.click();
+    });
+    await settle(30);
+    const macShortcuts = Array.from(macContainer.querySelectorAll('.mdstudio-shortcut kbd')).map(
+      (el) => el.textContent?.trim() || '',
+    );
+    assert.ok(
+      macShortcuts.includes('⌘Z'),
+      `lowercase "macOS" userAgentData renders ⌘Z, got: ${macShortcuts.join(', ')}`,
+    );
+    assert.ok(macShortcuts.includes('⌘⇧B'), 'lowercase "macOS" userAgentData renders ⌘⇧B');
+    const deviceEl = macContainer.querySelector<HTMLElement>('.mdstudio-device');
+    assert.ok(deviceEl && deviceEl.style.backgroundColor, '.mdstudio-device syncs outer background color');
+  } finally {
+    Object.defineProperty(navigator, 'userAgentData', { value: prevUad, configurable: true });
+    await act(async () => {
+      macRoot.unmount();
+    });
+    macContainer.remove();
+  }
+  console.log('ok - lowercase Chromium macOS userAgentData renders ⌘/⇧/⌥ shortcuts');
+}
+
 console.log('\nAll UI render checks passed.');

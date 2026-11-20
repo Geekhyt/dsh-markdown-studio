@@ -73,13 +73,17 @@ export function usePreviewHtmlSurface(
       if (!article || !screen) return undefined;
       const lightStage = spec.paper ? spec.stageBg : spec.bg;
       const darkStage = spec.paper ? '#0e1013' : '#191919';
+      const stageColor = spec.dark ? darkStage : lightStage;
       article.innerHTML = spec.html;
-      screen.style.backgroundColor = spec.dark ? darkStage : lightStage;
+      screen.style.backgroundColor = stageColor;
+      if (screen.parentElement) screen.parentElement.style.backgroundColor = stageColor;
       if (!spec.dark) return undefined;
       let cancelled = false;
       void applyDarkRef.current(article).then(function (applied) {
         if (!cancelled && applied && !spec.paper) {
-          screen.style.backgroundColor = article.style.backgroundColor || '#191919';
+          const resolvedBg = article.style.backgroundColor || '#191919';
+          screen.style.backgroundColor = resolvedBg;
+          if (screen.parentElement) screen.parentElement.style.backgroundColor = resolvedBg;
         }
       });
       return function () {
