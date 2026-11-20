@@ -1378,6 +1378,7 @@ assert.ok(
 );
 await page.locator('.mdstudio-skill-split.is-floating .mdstudio-skill-run-btn').click();
 await page.waitForSelector('.cm-editor .mdstudio-ai-inline-card', { timeout: 5000 });
+await page.waitForSelector('.mdstudio-cm-ai-del-word', { timeout: 5000 });
 assert.ok(
   (await page.locator('.mdstudio-cm-ai-del-line, .mdstudio-cm-ai-del-range').count()) >= 1,
   'CodeMirror highlights original text in red diff band',
