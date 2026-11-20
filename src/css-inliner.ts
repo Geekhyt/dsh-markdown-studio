@@ -251,6 +251,29 @@ function findTopLevelComma(value: string): number {
   return -1;
 }
 
+function findMatchingParen(input: string, from: number): number {
+  var depthParen = 1;
+  var quote: string | null = null;
+  for (var j = from; j < input.length; j++) {
+    var ch = input[j];
+    if (quote) {
+      if (ch === '\\') {
+        j++;
+        continue;
+      }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === '(') depthParen++;
+    else if (ch === ')' && --depthParen === 0) return j;
+  }
+  return -1;
+}
+
 export function resolveVars(value: unknown, vars: Record<string, string>, depth?: number): string {
   var input = String(value == null ? '' : value);
   var level = depth || 0;
@@ -264,32 +287,7 @@ export function resolveVars(value: unknown, vars: Record<string, string>, depth?
       break;
     }
     out += input.slice(i, start);
-    var depthParen = 1;
-    var quote: string | null = null;
-    var end = -1;
-    for (var j = start + 4; j < input.length; j++) {
-      var ch = input[j];
-      if (quote) {
-        if (ch === '\\') {
-          j++;
-          continue;
-        }
-        if (ch === quote) quote = null;
-        continue;
-      }
-      if (ch === '"' || ch === "'") {
-        quote = ch;
-        continue;
-      }
-      if (ch === '(') depthParen++;
-      else if (ch === ')') {
-        depthParen--;
-        if (depthParen === 0) {
-          end = j;
-          break;
-        }
-      }
-    }
+    var end = findMatchingParen(input, start + 4);
     if (end === -1) {
       out += input.slice(start);
       break;

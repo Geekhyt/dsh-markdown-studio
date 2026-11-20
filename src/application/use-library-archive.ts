@@ -91,6 +91,32 @@ interface ResolvedImportPlan {
   decisions: Record<string, MergeDecision>;
 }
 
+async function resolveImportMode(
+  options: LibraryArchiveOptions,
+  summary: ImportBackupSummary,
+  explicitMerge: boolean | undefined,
+): Promise<{ merge: boolean; confirmed: boolean } | null> {
+  if (explicitMerge === undefined && options.chooseImportMode) {
+    const choice = await options.chooseImportMode(summary);
+    if (!choice) return null;
+    return { merge: choice === 'merge', confirmed: true };
+  }
+  return { merge: Boolean(explicitMerge), confirmed: false };
+}
+
+async function resolveImportConflicts(
+  options: LibraryArchiveOptions,
+  parsed: LibraryState,
+  prefer: MergeDecision,
+): Promise<{ decisions: Record<string, MergeDecision>; confirmed: boolean } | null> {
+  if (!options.resolveConflicts) return { decisions: {}, confirmed: false };
+  const conflicts = mergeConflicts(options.store.getSnapshot(), parsed);
+  if (!conflicts.length) return { decisions: {}, confirmed: false };
+  const resolved = await options.resolveConflicts(conflicts, prefer);
+  if (!resolved) return null;
+  return { decisions: resolved, confirmed: true };
+}
+
 async function resolveImportPlan(
   options: LibraryArchiveOptions,
   parsed: LibraryState,
@@ -99,32 +125,19 @@ async function resolveImportPlan(
   explicitMerge: boolean | undefined,
   prefer: MergeDecision,
 ): Promise<ResolvedImportPlan | null> {
-  let merge = Boolean(explicitMerge);
-  let alreadyConfirmed = false;
-  if (explicitMerge === undefined && options.chooseImportMode) {
-    const choice = await options.chooseImportMode(summary);
-    if (!choice) return null;
-    merge = choice === 'merge';
-    alreadyConfirmed = true;
-  }
-  let decisions: Record<string, MergeDecision> = {};
-  if (merge && options.resolveConflicts) {
-    const conflicts = mergeConflicts(options.store.getSnapshot(), parsed);
-    if (conflicts.length) {
-      const resolved = await options.resolveConflicts(conflicts, prefer);
-      if (!resolved) return null;
-      decisions = resolved;
-      alreadyConfirmed = true;
-    }
-  }
-  if (!alreadyConfirmed) {
+  const mode = await resolveImportMode(options, summary, explicitMerge);
+  if (!mode) return null;
+  const conflictPlan = mode.merge
+    ? await resolveImportConflicts(options, parsed, prefer)
+    : { decisions: {}, confirmed: false };
+  if (!conflictPlan) return null;
+  if (!mode.confirmed && !conflictPlan.confirmed) {
     const title = isArchive
-      ? buildArchiveConfirmTitle(options.t, merge, summary.docCount, summary.assetCount, summary.missingCount)
-      : options.t(merge ? 'library.mergeConfirm' : 'library.importConfirm');
-    const ok = await options.confirm({ title });
-    if (!ok) return null;
+      ? buildArchiveConfirmTitle(options.t, mode.merge, summary.docCount, summary.assetCount, summary.missingCount)
+      : options.t(mode.merge ? 'library.mergeConfirm' : 'library.importConfirm');
+    if (!(await options.confirm({ title }))) return null;
   }
-  return { merge, decisions };
+  return { merge: mode.merge, decisions: conflictPlan.decisions };
 }
 
 function buildArchiveConfirmTitle(

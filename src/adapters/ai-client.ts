@@ -93,15 +93,20 @@ function httpStatusError(status: number): AiClientError {
   return new AiClientError('HTTP_' + status, `AI 服务响应异常（HTTP ${status}）`);
 }
 
+function parseModelOption(item: unknown): AiModelOption | null {
+  const rec = recordOf(item);
+  if (!rec) return null;
+  const provider = strOf(rec.provider);
+  const id = strOf(rec.id);
+  return provider && id ? { provider, id, name: strOf(rec.name) || id } : null;
+}
+
 function parseModelList(raw: unknown): AiModelOption[] {
   if (!Array.isArray(raw)) return [];
   const out: AiModelOption[] = [];
   for (const item of raw) {
-    const rec = recordOf(item);
-    if (!rec) continue;
-    const provider = strOf(rec.provider);
-    const id = strOf(rec.id);
-    if (provider && id) out.push({ provider, id, name: strOf(rec.name) || id });
+    const option = parseModelOption(item);
+    if (option) out.push(option);
   }
   return out;
 }

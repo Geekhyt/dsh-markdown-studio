@@ -866,15 +866,14 @@ function workspaceNode(
   );
 }
 
+function flattenWorkspaceEntries(entries: WorkspaceEntry[]): WorkspaceEntry[] {
+  return entries.flatMap((entry) =>
+    entry.kind === 'directory' ? [entry, ...flattenWorkspaceEntries(entry.children)] : [entry],
+  );
+}
+
 function findWorkspaceEntry(entries: WorkspaceEntry[], path: string): WorkspaceEntry | undefined {
-  for (const entry of entries) {
-    if (entry.path === path) return entry;
-    if (entry.kind === 'directory') {
-      const found = findWorkspaceEntry(entry.children, path);
-      if (found) return found;
-    }
-  }
-  return undefined;
+  return flattenWorkspaceEntries(entries).find((entry) => entry.path === path);
 }
 
 function filterWorkspace(entries: WorkspaceEntry[], query: string): WorkspaceEntry[] {

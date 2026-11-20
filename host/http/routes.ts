@@ -91,6 +91,71 @@ function isAllowedOrigin(origin: string, host: string, site: string): boolean {
   return parsed.host === host;
 }
 
+function isLoopbackRequest(req: IncomingMessage): boolean {
+  const remote = req.socket && req.socket.remoteAddress ? String(req.socket.remoteAddress) : '';
+  return remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
+}
+
+function validateImageRequest(req: IncomingMessage, res: ServerResponse): boolean {
+  if (req.method !== 'POST') {
+    sendJson(res, 405, { ok: false, error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed' } });
+    return false;
+  }
+  if (!isLoopbackRequest(req)) {
+    sendJson(res, 403, { ok: false, error: { code: 'LOOPBACK_ONLY', message: '图片接口仅允许本机访问' } });
+    return false;
+  }
+  const host = headerValue(req.headers.host);
+  const origin = headerValue(req.headers.origin);
+  const site = headerValue(req.headers['sec-fetch-site']).toLowerCase();
+  if (!isAllowedOrigin(origin, host, site)) {
+    sendJson(res, 403, {
+      ok: false,
+      error: {
+        code: 'ORIGIN_REJECTED',
+        message: '请求来源不被允许',
+        hint:
+          'origin=' + (origin || '(none)') + ' host=' + (host || '(none)') + ' sec-fetch-site=' + (site || '(none)'),
+      },
+    });
+    return false;
+  }
+  if (!isJsonContentType(headerValue(req.headers['content-type']))) {
+    sendJson(res, 415, {
+      ok: false,
+      error: { code: 'CONTENT_TYPE_REQUIRED', message: '需要 application/json 请求' },
+    });
+    return false;
+  }
+  return true;
+}
+
+async function dispatchImageAction(
+  service: ImageHostService,
+  body: Record<string, unknown>,
+  res: ServerResponse,
+): Promise<void> {
+  const action = typeof body.action === 'string' ? body.action : '';
+  if (action === 'health') {
+    sendJson(res, 200, { ok: true, service: 'markdown-studio-images', version: 5, ...service.info() });
+    return;
+  }
+  if (action === 'asset.store') {
+    const result = await service.storeAsset({ dataUrl: body.dataUrl, filename: body.filename });
+    sendJson(res, 200, { ok: true, ...result });
+    return;
+  }
+  if (action === 'asset.list') {
+    sendJson(res, 200, { ok: true, ...(await service.listAssets()) });
+    return;
+  }
+  if (action === 'asset.delete') {
+    sendJson(res, 200, { ok: true, ...(await service.deleteAsset(body)) });
+    return;
+  }
+  sendJson(res, 400, { ok: false, error: { code: 'UNKNOWN_ACTION', message: '未知操作: ' + action } });
+}
+
 export function createImageRoute(options: {
   service: ImageHostService;
   maxBodyBytes?: number;
@@ -101,64 +166,9 @@ export function createImageRoute(options: {
 
   return async function imageRoute(req, res) {
     try {
-      if (req.method !== 'POST') {
-        sendJson(res, 405, { ok: false, error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed' } });
-        return;
-      }
-      const remote = req.socket && req.socket.remoteAddress ? String(req.socket.remoteAddress) : '';
-      const loopback = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
-      if (!loopback) {
-        sendJson(res, 403, { ok: false, error: { code: 'LOOPBACK_ONLY', message: '图片接口仅允许本机访问' } });
-        return;
-      }
-      const host = headerValue(req.headers.host);
-      const origin = headerValue(req.headers.origin);
-      const site = headerValue(req.headers['sec-fetch-site']).toLowerCase();
-      if (!isAllowedOrigin(origin, host, site)) {
-        sendJson(res, 403, {
-          ok: false,
-          error: {
-            code: 'ORIGIN_REJECTED',
-            message: '请求来源不被允许',
-            hint:
-              'origin=' +
-              (origin || '(none)') +
-              ' host=' +
-              (host || '(none)') +
-              ' sec-fetch-site=' +
-              (site || '(none)'),
-          },
-        });
-        return;
-      }
-      const contentType = headerValue(req.headers['content-type']);
-      if (!isJsonContentType(contentType)) {
-        sendJson(res, 415, {
-          ok: false,
-          error: { code: 'CONTENT_TYPE_REQUIRED', message: '需要 application/json 请求' },
-        });
-        return;
-      }
+      if (!validateImageRequest(req, res)) return;
       const body = await readJsonBody(req, maxBodyBytes);
-      const action = typeof body.action === 'string' ? body.action : '';
-      if (action === 'health') {
-        sendJson(res, 200, { ok: true, service: 'markdown-studio-images', version: 5, ...service.info() });
-        return;
-      }
-      if (action === 'asset.store') {
-        const result = await service.storeAsset({ dataUrl: body.dataUrl, filename: body.filename });
-        sendJson(res, 200, { ok: true, ...result });
-        return;
-      }
-      if (action === 'asset.list') {
-        sendJson(res, 200, { ok: true, ...(await service.listAssets()) });
-        return;
-      }
-      if (action === 'asset.delete') {
-        sendJson(res, 200, { ok: true, ...(await service.deleteAsset(body)) });
-        return;
-      }
-      sendJson(res, 400, { ok: false, error: { code: 'UNKNOWN_ACTION', message: '未知操作: ' + action } });
+      await dispatchImageAction(service, body, res);
     } catch (error) {
       if (error instanceof ImageHostError) {
         if (error.code === 'BODY_TOO_LARGE' && !res.headersSent) {

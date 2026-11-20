@@ -289,6 +289,17 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
     }
   }
 
+  async function resolveWritableDirectory(directoryPath: string): Promise<FileSystemDirectoryHandle | null> {
+    const root = rootRef.current;
+    if (!root) throw new Error('workspace directory is unavailable');
+    const directory = await resolveDirectory(root, directoryPath);
+    if (!(await ensurePermission(directory))) {
+      options.notify(options.t('workspace.permission'), 'error');
+      return null;
+    }
+    return directory;
+  }
+
   async function createFile(directoryPath: string, name: string): Promise<void> {
     const filename = validateName(name, true);
     if (!filename) {
@@ -296,13 +307,8 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
       return;
     }
     try {
-      const root = rootRef.current;
-      if (!root) throw new Error('workspace directory is unavailable');
-      const directory = await resolveDirectory(root, directoryPath);
-      if (!(await ensurePermission(directory))) {
-        options.notify(options.t('workspace.permission'), 'error');
-        return;
-      }
+      const directory = await resolveWritableDirectory(directoryPath);
+      if (!directory) return;
       if (await fileExists(directory, filename)) {
         options.notify(options.t('workspace.exists'), 'error');
         return;
@@ -322,13 +328,8 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
       return;
     }
     try {
-      const root = rootRef.current;
-      if (!root) throw new Error('workspace directory is unavailable');
-      const directory = await resolveDirectory(root, directoryPath);
-      if (!(await ensurePermission(directory))) {
-        options.notify(options.t('workspace.permission'), 'error');
-        return;
-      }
+      const directory = await resolveWritableDirectory(directoryPath);
+      if (!directory) return;
       await directory.getDirectoryHandle(dirname, { create: true });
       await refresh();
       options.notify(options.t('workspace.created'));

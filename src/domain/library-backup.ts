@@ -128,6 +128,26 @@ function recordOf(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
+function parseBackupArticle(
+  value: unknown,
+  fallbackId: string,
+  fallbackTitle: string,
+  includeDeletedAt: boolean,
+): Article | null {
+  const record = recordOf(value);
+  if (!record || typeof record.markdown !== 'string') return null;
+  const article: Article = {
+    id: typeof record.id === 'string' && record.id ? record.id : fallbackId,
+    title: typeof record.title === 'string' && record.title ? record.title : fallbackTitle,
+    markdown: record.markdown,
+    settings: sanitizeSettings(record.settings),
+    view: parseView(record.view),
+    updatedAt: Number(record.updatedAt) || Date.now(),
+  };
+  if (includeDeletedAt) article.deletedAt = Number(record.deletedAt) || Date.now();
+  return article;
+}
+
 export function parseLibraryBackup(input: unknown, fallbackTitle = '未命名'): LibraryState | null {
   const root = recordOf(input);
   if (!root || root.format !== 'markdown-studio-library' || root.version !== 1 || !Array.isArray(root.docs))
@@ -135,32 +155,20 @@ export function parseLibraryBackup(input: unknown, fallbackTitle = '未命名'):
   if (supportedSchemaVersion(root.schemaVersion, 1, BACKUP_SCHEMA_VERSION) === null) return null;
   const docs: Article[] = [];
   for (const value of root.docs) {
-    const record = recordOf(value);
-    if (!record || typeof record.markdown !== 'string') continue;
-    docs.push({
-      id: typeof record.id === 'string' && record.id ? record.id : 'doc-' + docs.length + '-' + Date.now().toString(36),
-      title: typeof record.title === 'string' && record.title ? record.title : fallbackTitle,
-      markdown: record.markdown,
-      settings: sanitizeSettings(record.settings),
-      view: parseView(record.view),
-      updatedAt: Number(record.updatedAt) || Date.now(),
-    });
+    const parsed = parseBackupArticle(
+      value,
+      'doc-' + docs.length + '-' + Date.now().toString(36),
+      fallbackTitle,
+      false,
+    );
+    if (parsed) docs.push(parsed);
   }
   if (!docs.length) return null;
   const trash: Article[] = [];
   if (Array.isArray(root.trash)) {
     for (const value of root.trash) {
-      const record = recordOf(value);
-      if (!record || typeof record.markdown !== 'string') continue;
-      trash.push({
-        id: typeof record.id === 'string' && record.id ? record.id : 'trash-' + trash.length,
-        title: typeof record.title === 'string' && record.title ? record.title : fallbackTitle,
-        markdown: record.markdown,
-        settings: sanitizeSettings(record.settings),
-        view: parseView(record.view),
-        updatedAt: Number(record.updatedAt) || Date.now(),
-        deletedAt: Number(record.deletedAt) || Date.now(),
-      });
+      const parsed = parseBackupArticle(value, 'trash-' + trash.length, fallbackTitle, true);
+      if (parsed) trash.push(parsed);
     }
   }
   const activeId =

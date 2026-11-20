@@ -483,14 +483,43 @@ function canCloseAt(text: string, from: number, i: number, closeAt: number, ch: 
   return ch !== '_' || !isIntrawordNeighbor(text.charAt(closeAt + len), ch);
 }
 
+interface EmphasisScanState {
+  complementOpen: boolean;
+  tripleDepth: number;
+  fallbackTriple: number;
+}
+
+function stepStarOrUnderRun(
+  text: string,
+  from: number,
+  i: number,
+  ch: string,
+  len: number,
+  runLen: number,
+  state: EmphasisScanState,
+): number {
+  const complementLen = len === 2 ? 1 : 2;
+  const nextChar = text.charAt(i + runLen);
+  const canOpen = Boolean(nextChar && !/\s/.test(nextChar));
+  const canClose = i > from && !/\s/.test(text.charAt(i - 1));
+  if (runLen === complementLen) {
+    if (canOpen && !state.complementOpen) state.complementOpen = true;
+    else if (canClose && state.complementOpen) state.complementOpen = false;
+    return -1;
+  }
+  if (runLen !== 3) return -1;
+  if (state.complementOpen && canClose && canCloseAt(text, from, i, i + 3 - len, ch, len)) return i + 3 - len;
+  if (state.tripleDepth > 0 && canClose) state.tripleDepth--;
+  else if (canOpen) state.tripleDepth++;
+  else if (canClose && state.fallbackTriple === -1 && canCloseAt(text, from, i, i, ch, len)) state.fallbackTriple = i;
+  return -1;
+}
+
 function findClosingDelimiter(text: string, from: number, delimiter: string): number {
   const ch = delimiter.charAt(0);
   const len = delimiter.length;
-  const isStarOrUnder = ch === '*' || ch === '_';
-  const complementLen = len === 2 ? 1 : 2;
-  let complementOpen = false;
-  let tripleDepth = 0;
-  let fallbackTriple = -1;
+  const trackNested = (ch === '*' || ch === '_') && len < 3;
+  const state: EmphasisScanState = { complementOpen: false, tripleDepth: 0, fallbackTriple: -1 };
   for (let i = from; i <= text.length - len; i++) {
     const jumped = skipCodeOrMath(text, i);
     if (jumped > i) {
@@ -506,22 +535,13 @@ function findClosingDelimiter(text: string, from: number, delimiter: string): nu
     let runLen = 1;
     while (text.charAt(i + runLen) === ch) runLen++;
     if (runLen === len && canCloseAt(text, from, i, i, ch, len)) return i;
-    if (isStarOrUnder && len < 3) {
-      const canOpen = Boolean(text.charAt(i + runLen) && !/\s/.test(text.charAt(i + runLen)));
-      const canClose = i > from && !/\s/.test(text.charAt(i - 1));
-      if (runLen === complementLen) {
-        if (canOpen && !complementOpen) complementOpen = true;
-        else if (canClose && complementOpen) complementOpen = false;
-      } else if (runLen === 3) {
-        if (complementOpen && canClose && canCloseAt(text, from, i, i + 3 - len, ch, len)) return i + 3 - len;
-        if (tripleDepth > 0 && canClose) tripleDepth--;
-        else if (canOpen) tripleDepth++;
-        else if (canClose && fallbackTriple === -1 && canCloseAt(text, from, i, i, ch, len)) fallbackTriple = i;
-      }
+    if (trackNested) {
+      const matched = stepStarOrUnderRun(text, from, i, ch, len, runLen, state);
+      if (matched !== -1) return matched;
     }
     i += runLen - 1;
   }
-  return fallbackTriple;
+  return state.fallbackTriple;
 }
 
 interface InlineToken {
