@@ -56,6 +56,12 @@ export interface PreviewSurfaceSpec {
   applyDark: (articleEl: HTMLElement) => Promise<boolean>;
 }
 
+function paintStageBackground(screen: HTMLElement, color: string): void {
+  const bg = color || '#191919';
+  screen.style.backgroundColor = bg;
+  if (screen.parentElement) screen.parentElement.style.backgroundColor = bg;
+}
+
 /**
  * Projects sanitized inline article HTML onto the preview stage and applies
  * asynchronous `mp-darkmode` transformation with cancellation on rapid edits.
@@ -73,18 +79,13 @@ export function usePreviewHtmlSurface(
       if (!article || !screen) return undefined;
       const lightStage = spec.paper ? spec.stageBg : spec.bg;
       const darkStage = spec.paper ? '#0e1013' : '#191919';
-      const stageColor = spec.dark ? darkStage : lightStage;
       article.innerHTML = spec.html;
-      screen.style.backgroundColor = stageColor;
-      if (screen.parentElement) screen.parentElement.style.backgroundColor = stageColor;
+      paintStageBackground(screen, spec.dark ? darkStage : lightStage);
       if (!spec.dark) return undefined;
       let cancelled = false;
       void applyDarkRef.current(article).then(function (applied) {
-        if (!cancelled && applied && !spec.paper) {
-          const resolvedBg = article.style.backgroundColor || '#191919';
-          screen.style.backgroundColor = resolvedBg;
-          if (screen.parentElement) screen.parentElement.style.backgroundColor = resolvedBg;
-        }
+        if (cancelled || !applied || spec.paper) return;
+        paintStageBackground(screen, article.style.backgroundColor);
       });
       return function () {
         cancelled = true;
