@@ -206,10 +206,14 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
     if (options.pageAliveRef.current) setVersion((value) => value + 1);
   }
 
+  function loadingPromiseOf(entry: MermaidCacheEntry): Promise<void> {
+    return entry.promise || Promise.resolve();
+  }
+
   function awaitExistingEntry(cached: MermaidCacheEntry | undefined): Promise<void> | 'ready' | null {
     if (!cached) return null;
     if (cached.status === 'ready') return 'ready';
-    return cached.status === 'loading' ? cached.promise || Promise.resolve() : null;
+    return cached.status === 'loading' ? loadingPromiseOf(cached) : null;
   }
 
   async function ensureBlock(
@@ -242,12 +246,25 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
     return gen === ensureGenRef.current;
   }
 
+  function isStaleGen(gen: number, unstoppable: boolean): boolean {
+    return !unstoppable && !isCurrentGen(gen);
+  }
+
   function adjustPins(keys: string[], delta: 1 | -1): void {
     for (const k of keys) {
       const next = (pinnedKeysRef.current.get(k) || 0) + delta;
       if (next > 0) pinnedKeysRef.current.set(k, next);
       else pinnedKeysRef.current.delete(k);
     }
+  }
+
+  function beginBlockScope(keys: string[], unstoppable: boolean): void {
+    if (unstoppable) adjustPins(keys, 1);
+    else pruneInactiveCache(keys);
+  }
+
+  function endBlockScope(keys: string[], unstoppable: boolean): void {
+    if (unstoppable) adjustPins(keys, -1);
   }
 
   async function renderAllBlocks(
@@ -258,44 +275,58 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
     unstoppable: boolean,
   ): Promise<void> {
     const keys = blocks.map((code) => mermaidCacheKey(code, theme));
-    if (unstoppable) {
-      adjustPins(keys, 1);
-    } else {
-      pruneInactiveCache(keys);
-    }
+    beginBlockScope(keys, unstoppable);
     try {
       for (let index = 0; index < blocks.length; index++) {
-        if (!unstoppable && !isCurrentGen(gen)) return;
+        if (isStaleGen(gen, unstoppable)) return;
         await ensureBlock(mermaid, theme, keys[index], blocks[index], index);
       }
     } finally {
-      if (unstoppable) {
-        adjustPins(keys, -1);
-      }
+      endBlockScope(keys, unstoppable);
     }
+  }
+
+  function clearIdleCacheIfUnpinned(gen: number, unstoppable: boolean): void {
+    if (!isStaleGen(gen, unstoppable) && pinnedKeysRef.current.size === 0) cacheRef.current.clear();
+  }
+
+  function isMermaidUsable(mermaid: MermaidModule | null, gen: number, unstoppable: boolean): mermaid is MermaidModule {
+    return Boolean(mermaid && typeof mermaid.render === 'function' && !isStaleGen(gen, unstoppable));
   }
 
   async function runEnsure(markdown: string, theme: MermaidTheme, gen: number, unstoppable: boolean): Promise<void> {
     const blocks = extractMermaidBlocks(markdown);
     if (!blocks.length) {
-      if (!unstoppable && isCurrentGen(gen) && pinnedKeysRef.current.size === 0) cacheRef.current.clear();
+      clearIdleCacheIfUnpinned(gen, unstoppable);
       return;
     }
     const mermaid = await load();
-    if (!mermaid || typeof mermaid.render !== 'function' || (!unstoppable && !isCurrentGen(gen))) return;
+    if (!isMermaidUsable(mermaid, gen, unstoppable)) return;
     await renderAllBlocks(mermaid, theme, blocks, gen, unstoppable);
+  }
+
+  function ensureRunKey(markdown: string, directive: string, unstoppable: boolean): string {
+    return markdown + '\0' + directive + '\0' + (unstoppable ? '1' : '0');
+  }
+
+  function nextEnsureGen(unstoppable: boolean): number {
+    return unstoppable ? ensureGenRef.current : ++ensureGenRef.current;
+  }
+
+  function releaseInFlight(promise: Promise<void>): void {
+    if (inFlightEnsureRef.current && inFlightEnsureRef.current.promise === promise) {
+      inFlightEnsureRef.current = null;
+    }
   }
 
   async function ensureInternal(markdown: string, unstoppable: boolean): Promise<void> {
     const theme = themeRef.current;
-    const runKey = markdown + '\0' + theme.directive + '\0' + (unstoppable ? '1' : '0');
+    const runKey = ensureRunKey(markdown, theme.directive, unstoppable);
     const existing = inFlightEnsureRef.current;
     if (existing && existing.key === runKey) return existing.promise;
-    const gen = unstoppable ? ensureGenRef.current : ++ensureGenRef.current;
+    const gen = nextEnsureGen(unstoppable);
     const promise = runEnsure(markdown, theme, gen, unstoppable).finally(function () {
-      if (inFlightEnsureRef.current && inFlightEnsureRef.current.promise === promise) {
-        inFlightEnsureRef.current = null;
-      }
+      releaseInFlight(promise);
     });
     if (!unstoppable) inFlightEnsureRef.current = { key: runKey, promise };
     return promise;

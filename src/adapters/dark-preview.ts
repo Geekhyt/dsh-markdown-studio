@@ -39,40 +39,78 @@ function compositeOver(
   return [fg[0] * a + bg[0] * (1 - a), fg[1] * a + bg[1] * (1 - a), fg[2] * a + bg[2] * (1 - a)];
 }
 
-function nearestOpaqueBgHex(element: HTMLElement, stopAt: HTMLElement): { hex: string; lum: number } {
-  const layers: Array<{ rgb: [number, number, number]; alpha: number }> = [];
-  let baseRgb: [number, number, number] = parseHex(DARK_STAGE_DEFAULT);
-  let cursor: HTMLElement | null = element;
-  while (cursor) {
-    const bg = window.getComputedStyle(cursor).backgroundColor;
-    const alpha = alphaOf(bg);
-    if (alpha > 0.01) {
-      const rgb = rgbTuple(bg);
-      if (rgb) {
-        if (alpha >= 0.99) {
-          baseRgb = rgb;
-          break;
-        }
-        layers.push({ rgb, alpha });
-      }
-    }
-    if (cursor === stopAt) break;
-    cursor = cursor.parentElement;
-  }
+function readBgLayer(element: HTMLElement): { rgb: [number, number, number]; alpha: number } | null {
+  const bg = window.getComputedStyle(element).backgroundColor;
+  const alpha = alphaOf(bg);
+  if (alpha <= 0.01) return null;
+  const rgb = rgbTuple(bg);
+  return rgb ? { rgb, alpha } : null;
+}
+
+function nextAncestor(cursor: HTMLElement, stopAt: HTMLElement): HTMLElement | null {
+  return cursor === stopAt ? null : cursor.parentElement;
+}
+
+function blendColorLayers(
+  layers: Array<{ rgb: [number, number, number]; alpha: number }>,
+  baseRgb: [number, number, number],
+): [number, number, number] {
   let blended = baseRgb;
   for (let i = layers.length - 1; i >= 0; i--) {
     blended = compositeOver(layers[i].rgb, layers[i].alpha, blended);
   }
+  return blended;
+}
+
+function nearestOpaqueBgHex(element: HTMLElement, stopAt: HTMLElement): { hex: string; lum: number } {
+  const layers: Array<{ rgb: [number, number, number]; alpha: number }> = [];
+  let baseRgb: [number, number, number] = parseHex(DARK_STAGE_DEFAULT);
+  for (let cursor: HTMLElement | null = element; cursor; cursor = nextAncestor(cursor, stopAt)) {
+    const layer = readBgLayer(cursor);
+    if (!layer) continue;
+    if (layer.alpha >= 0.99) {
+      baseRgb = layer.rgb;
+      break;
+    }
+    layers.push(layer);
+  }
+  const blended = blendColorLayers(layers, baseRgb);
   const hex = rgbToHex(blended[0], blended[1], blended[2]);
   return { hex, lum: luminance(`rgb(${blended[0]}, ${blended[1]}, ${blended[2]})`) };
+}
+
+function isNonEmptyTextNode(node: ChildNode): boolean {
+  return node.nodeType === 3 && Boolean((node.nodeValue || '').trim());
 }
 
 function hasDirectTextOrMath(element: HTMLElement): boolean {
   if (element.classList.contains('mdstudio-math')) return true;
   for (let node = element.firstChild; node; node = node.nextSibling) {
-    if (node.nodeType === 3 && (node.nodeValue || '').trim()) return true;
+    if (isNonEmptyTextNode(node)) return true;
   }
   return false;
+}
+
+function resolveFgHex(element: HTMLElement): string | null {
+  const fgRgb = rgbTuple(window.getComputedStyle(element).color);
+  return fgRgb ? rgbToHex(fgRgb[0], fgRgb[1], fgRgb[2]) : null;
+}
+
+function shouldLiftElement(element: HTMLElement): boolean {
+  return !element.closest('svg') && hasDirectTextOrMath(element);
+}
+
+function needsContrastLift(fgHex: string | null, bgHex: string): fgHex is string {
+  return Boolean(fgHex) && contrast(fgHex as string, bgHex) < DARK_TEXT_MIN_CONTRAST;
+}
+
+function liftElementContrast(element: HTMLElement, root: HTMLElement): void {
+  if (!shouldLiftElement(element)) return;
+  const bg = nearestOpaqueBgHex(element, root);
+  if (bg.lum >= 0.25) return;
+  const fgHex = resolveFgHex(element);
+  if (!needsContrastLift(fgHex, bg.hex)) return;
+  element.style.setProperty('color', ensureContrast(fgHex, bg.hex, DARK_TEXT_MIN_CONTRAST), 'important');
 }
 
 /**
@@ -82,32 +120,32 @@ function hasDirectTextOrMath(element: HTMLElement): boolean {
 function liftDarkText(root: HTMLElement): void {
   if (typeof window === 'undefined') return;
   root.querySelectorAll<HTMLElement>('*').forEach(function (element) {
-    if (element.closest('svg') || !hasDirectTextOrMath(element)) return;
-    const bg = nearestOpaqueBgHex(element, root);
-    if (bg.lum >= 0.25) return;
-    const color = window.getComputedStyle(element).color;
-    const fgRgb = rgbTuple(color);
-    if (!fgRgb) return;
-    const fgHex = rgbToHex(fgRgb[0], fgRgb[1], fgRgb[2]);
-    if (contrast(fgHex, bg.hex) >= DARK_TEXT_MIN_CONTRAST) return;
-    element.style.setProperty('color', ensureContrast(fgHex, bg.hex, DARK_TEXT_MIN_CONTRAST), 'important');
+    liftElementContrast(element, root);
   });
+}
+
+function isMediaOrSvg(element: HTMLElement): boolean {
+  return Boolean(element.closest('svg')) || /^(IMG|VIDEO|IFRAME|CANVAS)$/i.test(element.tagName);
+}
+
+function clearNonUrlBgImage(element: HTMLElement, image: string): void {
+  if (image && image !== 'none' && image.indexOf('url(') === -1) {
+    element.style.setProperty('background-image', 'none', 'important');
+  }
+}
+
+function normalizeSurfaceElement(element: HTMLElement): void {
+  if (isMediaOrSvg(element)) return;
+  const style = window.getComputedStyle(element);
+  clearNonUrlBgImage(element, style.backgroundImage);
+  const background = style.backgroundColor;
+  if (alphaOf(background) < 0.08 || luminance(background) <= 0.42) return;
+  element.style.setProperty('background-color', 'color-mix(in srgb, ' + background + ' 12%, #1b1d22)', 'important');
 }
 
 function normalizeDarkSurfaces(root: HTMLElement): void {
   if (typeof window === 'undefined') return;
-  root.querySelectorAll<HTMLElement>('*').forEach(function (element) {
-    if (element.closest('svg')) return;
-    if (/^(IMG|VIDEO|IFRAME|CANVAS)$/i.test(element.tagName)) return;
-    const style = window.getComputedStyle(element);
-    const background = style.backgroundColor;
-    const image = style.backgroundImage;
-    if (image && image !== 'none' && image.indexOf('url(') === -1) {
-      element.style.setProperty('background-image', 'none', 'important');
-    }
-    if (alphaOf(background) < 0.08 || luminance(background) <= 0.42) return;
-    element.style.setProperty('background-color', 'color-mix(in srgb, ' + background + ' 12%, #1b1d22)', 'important');
-  });
+  root.querySelectorAll<HTMLElement>('*').forEach(normalizeSurfaceElement);
 }
 
 type DarkmodeApi = typeof import('mp-darkmode');
@@ -133,6 +171,42 @@ export function cleanupDarkPreview(): void {
   });
 }
 
+function isAlreadyDarkRoot(root: HTMLElement | null): boolean {
+  if (!root) return false;
+  const initial = window.getComputedStyle(root).backgroundColor;
+  return alphaOf(initial) > 0.1 && luminance(initial) < 0.2;
+}
+
+function isCancelledOrDetached(article: HTMLElement, isCancelled?: () => boolean): boolean {
+  return Boolean(isCancelled?.()) || !article.isConnected;
+}
+
+function prepareLightRoot(root: HTMLElement | null): void {
+  if (!root) return;
+  const initialBg = window.getComputedStyle(root).backgroundColor;
+  if (alphaOf(initialBg) < 0.1) root.style.setProperty('background-color', '#ffffff');
+  if (!root.style.color) root.style.setProperty('color', '#1f2328');
+}
+
+function runDarkmodeOnTarget(Darkmode: DarkmodeApi, target: HTMLElement): void {
+  if (typeof Darkmode.reset === 'function') Darkmode.reset([]);
+  const nodes = [target, ...Array.from(target.querySelectorAll<HTMLElement>('*'))];
+  Darkmode.run(nodes, { mode: 'dark' });
+  tagDarkmodeStyles();
+}
+
+function finalizeDarkRoot(root: HTMLElement | null): void {
+  if (!root) return;
+  normalizeDarkSurfaces(root);
+  liftDarkText(root);
+}
+
+function warnDarkPreviewFailure(error: unknown): void {
+  if (typeof window !== 'undefined' && window.console) {
+    window.console.warn('[markdown-studio] dark preview failed', error);
+  }
+}
+
 /**
  * Apply WeChat's official Dark Mode transform to a preview clone. The source
  * HTML and clipboard output stay in the authored light theme.
@@ -140,35 +214,19 @@ export function cleanupDarkPreview(): void {
 export async function applyDarkPreview(article: HTMLElement, isCancelled?: () => boolean): Promise<boolean> {
   try {
     const root = article.querySelector<HTMLElement>('#mdstudio');
-    if (root) {
-      const initial = window.getComputedStyle(root).backgroundColor;
-      if (alphaOf(initial) > 0.1 && luminance(initial) < 0.2) {
-        cleanupDarkPreview();
-        return true;
-      }
+    if (isAlreadyDarkRoot(root)) {
+      cleanupDarkPreview();
+      return true;
     }
     const Darkmode = await import('mp-darkmode');
-    if (isCancelled?.() || !article.isConnected) return false;
+    if (isCancelledOrDetached(article, isCancelled)) return false;
     loadedDarkmode = Darkmode;
-    if (typeof Darkmode.reset === 'function') Darkmode.reset([]);
-    if (root) {
-      const initialBg = window.getComputedStyle(root).backgroundColor;
-      if (alphaOf(initialBg) < 0.1) root.style.setProperty('background-color', '#ffffff');
-      if (!root.style.color) root.style.setProperty('color', '#1f2328');
-    }
-    const target = root || article;
-    const nodes = [target, ...Array.from(target.querySelectorAll<HTMLElement>('*'))];
-    Darkmode.run(nodes, { mode: 'dark' });
-    tagDarkmodeStyles();
-    if (root) {
-      normalizeDarkSurfaces(root);
-      liftDarkText(root);
-    }
+    prepareLightRoot(root);
+    runDarkmodeOnTarget(Darkmode, root || article);
+    finalizeDarkRoot(root);
     return true;
   } catch (error) {
-    if (typeof window !== 'undefined' && window.console) {
-      window.console.warn('[markdown-studio] dark preview failed', error);
-    }
+    warnDarkPreviewFailure(error);
     return false;
   }
 }

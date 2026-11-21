@@ -49,16 +49,24 @@ function loadMathScript(): Promise<void> {
   return sharedMathLoadPromise;
 }
 
+function isMathLoaded(): boolean {
+  return typeof window !== 'undefined' && Boolean(window.__MDSTUDIO_MATH__);
+}
+
+function buildMathTaskKey(needsMath: boolean, loadFailed: boolean, markdown: string): string {
+  if (!needsMath) return 'none';
+  return loadFailed ? `math-retry:${markdown.length}:${markdown.slice(0, 32)}` : 'math';
+}
+
 export function useMathAssets(options: MathAssetsOptions): MathAssetsApi {
   const React = options.React;
   const [css, setCss] = React.useState<string>(function () {
-    return typeof window !== 'undefined' && window.__MDSTUDIO_MATH__ ? window.__MDSTUDIO_MATH__.cssText : '';
+    return isMathLoaded() ? window.__MDSTUDIO_MATH__!.cssText : '';
   });
   const [version, setVersion] = React.useState(0);
   const [loadFailed, setLoadFailed] = React.useState(false);
   const mountedRef = React.useRef(true);
-  const alreadyLoaded = typeof window !== 'undefined' && Boolean(window.__MDSTUDIO_MATH__);
-  const needsMath = !alreadyLoaded && hasMath(options.markdown);
+  const needsMath = !isMathLoaded() && hasMath(options.markdown);
 
   useMountDisposable(React, function () {
     mountedRef.current = true;
@@ -67,17 +75,13 @@ export function useMathAssets(options: MathAssetsOptions): MathAssetsApi {
     };
   });
 
-  async function ensure(markdown?: string): Promise<void> {
-    if (markdown !== undefined && !hasMath(markdown)) return;
-    if (window.__MDSTUDIO_MATH__) {
-      if (mountedRef.current && css !== window.__MDSTUDIO_MATH__.cssText) {
-        setCss(window.__MDSTUDIO_MATH__.cssText);
-        setVersion((value) => value + 1);
-      }
-      return;
-    }
-    await loadMathScript();
-    const loaded = (window as { __MDSTUDIO_MATH__?: { cssText: string } }).__MDSTUDIO_MATH__;
+  function syncLoadedCss(cssText: string): void {
+    if (!mountedRef.current || css === cssText) return;
+    setCss(cssText);
+    setVersion((value) => value + 1);
+  }
+
+  function applyLoadOutcome(loaded: { cssText: string } | undefined): void {
     if (!mountedRef.current) return;
     if (loaded) {
       setLoadFailed(false);
@@ -88,11 +92,17 @@ export function useMathAssets(options: MathAssetsOptions): MathAssetsApi {
     }
   }
 
-  const taskKey = !needsMath
-    ? 'none'
-    : loadFailed
-      ? `math-retry:${options.markdown.length}:${options.markdown.slice(0, 32)}`
-      : 'math';
+  async function ensure(markdown?: string): Promise<void> {
+    if (markdown !== undefined && !hasMath(markdown)) return;
+    if (window.__MDSTUDIO_MATH__) {
+      syncLoadedCss(window.__MDSTUDIO_MATH__.cssText);
+      return;
+    }
+    await loadMathScript();
+    applyLoadOutcome((window as { __MDSTUDIO_MATH__?: { cssText: string } }).__MDSTUDIO_MATH__);
+  }
+
+  const taskKey = buildMathTaskKey(needsMath, loadFailed, options.markdown);
   useDebouncedKeyTask(React, taskKey, loadFailed ? 300 : 0, needsMath, function () {
     void ensure(options.markdown);
   });

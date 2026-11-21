@@ -46,27 +46,38 @@ const ALLOWED_CHILD_STYLE_PROPS = new Set([
   'font-style',
 ]);
 
+function isSafeStyleDecl(prop: string, value: string, allowed: Set<string>): boolean {
+  return allowed.has(prop) && !hasCssUrlRef(value) && !/expression\s*\(/i.test(value);
+}
+
 function sanitizeInlineStyle(raw: string, allowed: Set<string>): string {
   const kept: string[] = [];
   for (const decl of parseCssDeclarations(raw)) {
-    if (!allowed.has(decl.prop)) continue;
-    if (hasCssUrlRef(decl.value) || /expression\s*\(/i.test(decl.value)) continue;
-    kept.push(decl.prop + ': ' + decl.value);
+    if (isSafeStyleDecl(decl.prop, decl.value, allowed)) {
+      kept.push(decl.prop + ': ' + decl.value);
+    }
   }
   return kept.join('; ');
 }
 
-function sanitizeSvgNode(node: Element, isRoot: boolean): void {
+function sanitizeSvgStyle(node: Element, isRoot: boolean): void {
   const inlineStyle = node.getAttribute('style');
-  if (inlineStyle) {
-    const cleanStyle = sanitizeInlineStyle(inlineStyle, isRoot ? ALLOWED_ROOT_STYLE_PROPS : ALLOWED_CHILD_STYLE_PROPS);
-    if (cleanStyle) node.setAttribute('style', cleanStyle);
-    else node.removeAttribute('style');
-  }
+  if (!inlineStyle) return;
+  const cleanStyle = sanitizeInlineStyle(inlineStyle, isRoot ? ALLOWED_ROOT_STYLE_PROPS : ALLOWED_CHILD_STYLE_PROPS);
+  if (cleanStyle) node.setAttribute('style', cleanStyle);
+  else node.removeAttribute('style');
+}
+
+function sanitizeSvgPaintAttrs(node: Element): void {
   for (const attr of SVG_PAINT_ATTRS) {
     const value = node.getAttribute(attr);
     if (value && hasCssUrlRef(value)) node.removeAttribute(attr);
   }
+}
+
+function sanitizeSvgNode(node: Element, isRoot: boolean): void {
+  sanitizeSvgStyle(node, isRoot);
+  sanitizeSvgPaintAttrs(node);
 }
 
 /** Defense in depth: unwrap SVG links, drop `<foreignObject>`, and enforce CSS-escape-aware paint & style allowlists. */
