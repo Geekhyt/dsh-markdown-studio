@@ -2,7 +2,7 @@
  * L1 — inline & mid-weight atoms (v2): strong, mark, alerts, lists and lead.
  */
 import { ensureContrast, isDark } from '../color';
-import { rule } from '../core';
+import { invertedInlineRules, rule } from '../core';
 import { type Palette, v } from '../palette';
 
 /* ----------------------------------------------------- strong / highlight -- */
@@ -245,10 +245,8 @@ export var LEAD = {
           v('onAccent2') +
           '; font-weight: 700;',
       ),
-      rule(
-        '.mdstudio-lead a, .mdstudio-lead .mdstudio-link, .mdstudio-lead sup, .mdstudio-lead .mdstudio-ref, .mdstudio-lead .mdstudio-footnote-ref, .mdstudio-lead del, .mdstudio-lead strong, .mdstudio-lead b',
-        'color: ' + v('onAccent2') + '; border-bottom-color: ' + v('onAccent2') + ';',
-      ),
+      invertedInlineRules('.mdstudio-lead', v('onAccent2')),
+      rule('.mdstudio-lead mark', 'background-color: ' + v('ink') + '; color: ' + v('accent2') + ';'),
     ];
   },
 };

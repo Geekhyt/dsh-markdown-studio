@@ -24,7 +24,18 @@ export function rootRule(body: string): string {
 
 /** Force high-contrast foreground for all inline elements inside an inverted/colored surface. */
 export function invertedInlineRules(container: string, fgToken: string): string {
-  var children = ['strong', 'em', 'a', '.mdstudio-link', 'del', 'sup', '.mdstudio-ref', '.mdstudio-footnote-ref'];
+  var children = [
+    'strong',
+    'b',
+    'em',
+    'u',
+    'a',
+    '.mdstudio-link',
+    'del',
+    'sup',
+    '.mdstudio-ref',
+    '.mdstudio-footnote-ref',
+  ];
   var selector = children
     .map(function (child) {
       return container + ' ' + child;

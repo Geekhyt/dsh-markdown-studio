@@ -3,7 +3,7 @@ import { renderArticle } from '../adapters/render-article';
 import type { Article } from '../domain/article';
 import { markdownToPlain } from '../domain/article';
 import { inspectWechatHtml } from '../domain/wechat-html-lint';
-import type { ThemeSettings } from '../themes';
+import { mermaidThemeFor, type ThemeSettings } from '../themes';
 import type { MathAssetsApi } from './use-math-assets';
 import type { MermaidAssetsApi } from './use-mermaid-assets';
 
@@ -100,7 +100,10 @@ export function useCopyActions(options: CopyActionsOptions): CopyActionsApi {
     copyingRef.current = true;
     setCopying(true);
     try {
-      await Promise.all([options.mermaidAssets.ensure(doc.markdown), options.mathAssets.ensure(doc.markdown)]);
+      await Promise.all([
+        options.mermaidAssets.ensure(doc.markdown, mermaidThemeFor(settings)),
+        options.mathAssets.ensure(doc.markdown),
+      ]);
       const article = renderArticle(doc.markdown, settings, {
         locale: options.locale,
         imageBaseUrl: options.localImageServerUrl || 'http://127.0.0.1:4010',

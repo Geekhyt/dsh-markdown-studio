@@ -6,7 +6,7 @@ import { slugify } from '../domain/article';
 import { findCustomTheme, mergeCustomThemes } from '../domain/custom-themes';
 import { assetFilesInMarkdown } from '../domain/images';
 import { parseThemePatch } from '../domain/settings';
-import type { ThemeSettings } from '../themes';
+import { mermaidThemeFor, type ThemeSettings } from '../themes';
 import type { MathAssetsApi } from './use-math-assets';
 import type { MermaidAssetsApi } from './use-mermaid-assets';
 
@@ -137,7 +137,10 @@ export function createArticleExporter(options: ArticleExportOptions): ArticleExp
 
   async function exportHtml(): Promise<void> {
     try {
-      await Promise.all([options.mermaidAssets.ensure(doc.markdown), options.mathAssets.ensure(doc.markdown)]);
+      await Promise.all([
+        options.mermaidAssets.ensure(doc.markdown, mermaidThemeFor(settings)),
+        options.mathAssets.ensure(doc.markdown),
+      ]);
       const article = renderArticle(doc.markdown, settings, {
         locale: options.locale,
         imageBaseUrl: base || 'http://127.0.0.1:4010',

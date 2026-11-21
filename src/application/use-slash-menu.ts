@@ -37,6 +37,7 @@ interface SlashState {
   end: number;
   query: string;
   selected: number;
+  pos: { top: number; left: number } | null;
 }
 
 export interface SlashMenuOptions {
@@ -45,6 +46,7 @@ export interface SlashMenuOptions {
   rootRef: ReactNamespace.RefObject<HTMLDivElement | null>;
   editorValue: () => string;
   selection: () => SelectionRange;
+  coordsAtPos?: (pos: number) => { top: number; bottom: number; left: number } | null;
   setMarkdown: (next: string, options?: { boundary?: boolean; prevSelection?: SelectionRange }) => void;
   focusRange: (start: number, end: number) => void;
   closeOutline: () => void;
@@ -54,6 +56,7 @@ export interface SlashMenuApi {
   open: boolean;
   items: SlashCommandEntry[];
   selected: number;
+  pos: { top: number; left: number } | null;
   close: () => void;
   selectIndex: (index: number) => void;
   syncAtCaret: (value: string, caret: number) => void;
@@ -299,6 +302,34 @@ function matchSlashItems(items: SlashCommandEntry[], rawQuery: string): SlashCom
   });
 }
 
+function resolveSlashTop(coords: { top: number; bottom: number }, wrapTop: number, wrapHeight: number): number {
+  const maxTop = Math.max(8, Math.round(wrapHeight - 120));
+  const rawBelow = Math.round(coords.bottom - wrapTop + 6);
+  const spaceBelow = wrapHeight - rawBelow;
+  const spaceAbove = coords.top - wrapTop - 6;
+  const preferBelow = spaceBelow >= Math.min(220, wrapHeight - 16) || spaceBelow >= spaceAbove;
+  if (preferBelow) return clamp(rawBelow, 8, maxTop);
+  return clamp(Math.round(coords.top - wrapTop - Math.min(348, spaceAbove) - 6), 8, maxTop);
+}
+
+function computeSlashPos(
+  rootEl: HTMLElement | null,
+  coordsAtPos: SlashMenuOptions['coordsAtPos'],
+  pos: number,
+): { top: number; left: number } | null {
+  const wrap = rootEl?.querySelector<HTMLElement>('.mdstudio-editor-wrap');
+  const coords = coordsAtPos?.(pos);
+  if (!wrap || !coords) return null;
+  const rect = wrap.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return null;
+  const menuW = Math.min(320, Math.max(180, rect.width - 20));
+  const maxLeft = Math.max(10, Math.round(rect.width - menuW - 10));
+  return {
+    top: resolveSlashTop(coords, rect.top, rect.height),
+    left: clamp(Math.round(coords.left - rect.left), 10, maxLeft),
+  };
+}
+
 function scrollActiveSlashItem(rootEl: HTMLElement | null): void {
   if (typeof window === 'undefined' || !rootEl) return;
   window.requestAnimationFrame(function () {
@@ -352,7 +383,8 @@ export function useSlashMenu(options: SlashMenuOptions): SlashMenuApi {
     }
     const slashStart = lineStart + line.indexOf('/');
     options.closeOutline();
-    setSlash({ start: slashStart, end: caret, query: match[1], selected: 0 });
+    const pos = computeSlashPos(rootRef.current, options.coordsAtPos, slashStart);
+    setSlash({ start: slashStart, end: caret, query: match[1], selected: 0, pos });
     scrollActiveSlashItem(rootRef.current);
   }
 
@@ -417,6 +449,7 @@ export function useSlashMenu(options: SlashMenuOptions): SlashMenuApi {
     open: Boolean(slash),
     items: matches,
     selected,
+    pos: slash ? slash.pos : null,
     close,
     selectIndex,
     syncAtCaret,

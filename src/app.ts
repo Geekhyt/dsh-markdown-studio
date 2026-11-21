@@ -63,7 +63,13 @@ import { sanitizeSettings } from './domain/settings';
 import type { WritingSkill } from './domain/writing-skills';
 import { createStudioLocaleController } from './locales/ui-strings';
 import { useElementBinding } from './runtime/dom-surfaces';
-import { useExternalStore, useLatest, useMountDisposable, useWindowEvent } from './runtime/react-lifecycle';
+import {
+  useDocumentEvent,
+  useExternalStore,
+  useLatest,
+  useMountDisposable,
+  useWindowEvent,
+} from './runtime/react-lifecycle';
 import * as themes from './themes';
 import type { ClientContext, ClientPlugin, LocaleService } from './types/dsh';
 import type { DshPrimitivesModule } from './types/dsh-primitives';
@@ -212,6 +218,11 @@ function computePaneVisibility(
  * dialog is active: avoids dual modal focus-trap and Escape-key collisions in DSH Modal.
  * Consequently, any state that must survive a child confirmation lives outside the modal view.
  */
+function isUnhandledEscapeKey(event: KeyboardEvent): boolean {
+  if (event.isComposing || event.keyCode === 229) return false;
+  return event.key === 'Escape' && !event.defaultPrevented;
+}
+
 function parentModalOpen(open: boolean, childOpen: boolean, promptA?: unknown, promptB?: unknown): boolean {
   if (!open || childOpen) return false;
   return !promptA && !promptB;
@@ -220,6 +231,7 @@ function parentModalOpen(open: boolean, childOpen: boolean, promptA?: unknown, p
 function buildEditorAiModel(
   skillsApi: WritingSkillsApi,
   bubblePos: { top: number; left: number } | null,
+  onOpenManager: () => void,
 ): EditorAiModel {
   return {
     skills: skillsApi.skills,
@@ -231,9 +243,7 @@ function buildEditorAiModel(
     onRunSkill: (skill?: WritingSkill) => {
       void skillsApi.runSkill(skill);
     },
-    onOpenManager: () => {
-      skillsApi.openManager(null);
-    },
+    onOpenManager,
     onCancel: skillsApi.cancelSession,
   };
 }
@@ -316,6 +326,7 @@ export function createClientPlugin(
     const localImageServerUrlRef = useLatest(React, localImageServerUrl);
     const [searchPanel, setSearchPanel] = React.useState<SearchState>({ open: false, query: '', replacement: '' });
     const [outlineOpen, setOutlineOpen] = React.useState(false);
+    const [overlayEpoch, setOverlayEpoch] = React.useState(0);
     const [editorFailed, setEditorFailed] = React.useState(false);
 
     function notify(text: string, tone: ToastTone = 'success'): void {
@@ -352,6 +363,8 @@ export function createClientPlugin(
 
     function revealRange(start: number, end: number): void {
       lastSelectionRef.current = { start, end };
+      selectionBubble.clear();
+      selectionBubble.clearPointer();
       window.requestAnimationFrame(() => {
         if (codeMirrorApiRef.current?.revealRange) {
           codeMirrorApiRef.current.revealRange(start, end);
@@ -368,6 +381,8 @@ export function createClientPlugin(
     }
 
     function focusRange(start: number, end: number): void {
+      selectionBubble.clear();
+      selectionBubble.clearPointer();
       window.requestAnimationFrame(() => {
         if (codeMirrorApiRef.current) {
           codeMirrorApiRef.current.focusRange(start, end);
@@ -430,10 +445,27 @@ export function createClientPlugin(
       rootRef,
       editorValue,
       selection,
+      coordsAtPos: (pos) => codeMirrorApiRef.current?.coordsAtPos?.(pos) ?? null,
       setMarkdown,
       focusRange,
       closeOutline: () => setOutlineOpen(false),
     });
+
+    function clearCssWorkbenchDraft(): void {
+      setCssWorkbench((prev) => (prev.open ? { open: false, targetId: null, seq: prev.seq } : prev));
+      setLiveCssDraft('');
+    }
+
+    function dismissTransientOverlays(opts?: { keepSearch?: boolean; keepDrawer?: boolean; keepMenu?: boolean }): void {
+      if (!opts?.keepDrawer) setDrawerOpen(false);
+      if (!opts?.keepMenu) setMenuOpen(false);
+      slashMenu.close();
+      setOutlineOpen(false);
+      selectionBubble.clear();
+      selectionBubble.clearPointer();
+      if (!opts?.keepSearch) setSearchPanel((prev) => (prev.open ? { ...prev, open: false } : prev));
+      setOverlayEpoch((value) => value + 1);
+    }
 
     const fileContext = useFileContext({
       React,
@@ -505,8 +537,8 @@ export function createClientPlugin(
     function resetEditorTo(entry: DocumentSeed, alreadyActive = false): void {
       const markdown = String(entry.markdown || '');
       writingSkills.resetSession();
-      selectionBubble.clear();
-      selectionBubble.clearPointer();
+      dismissTransientOverlays({ keepDrawer: true });
+      clearCssWorkbenchDraft();
       docHistory.reset(markdown);
       if (!alreadyActive) {
         store.updateActive({
@@ -516,11 +548,6 @@ export function createClientPlugin(
           view: entry.view === 'edit' || entry.view === 'preview' ? entry.view : 'split',
         });
       }
-      slashMenu.close();
-      setOutlineOpen(false);
-      setCssWorkbench((prev) => ({ open: false, targetId: null, seq: prev.seq }));
-      setLiveCssDraft('');
-      setSearchPanel((prev) => ({ ...prev, open: false }));
       detachFileContext();
       window.setTimeout(() => focusRange(0, 0), 30);
     }
@@ -743,20 +770,18 @@ export function createClientPlugin(
     }
 
     function pickTheme(id: string): void {
+      clearCssWorkbenchDraft();
       const custom = findCustomTheme(settings.customThemes, id);
       if (custom) {
         const preview = extractCustomThemePreview(custom.css, settings.accent);
         updateSettings({ theme: id, accent: preview.accent });
         return;
       }
-      if (cssWorkbench.open) {
-        setCssWorkbench((prev) => ({ open: false, targetId: null, seq: prev.seq }));
-        setLiveCssDraft('');
-      }
       updateSettings({ theme: id, accent: themes.getTheme(id).defaultAccent });
     }
 
     function resetStyles(): void {
+      clearCssWorkbenchDraft();
       store.updateActive({ settings: { ...themes.DEFAULT_SETTINGS, customThemes: settings.customThemes || [] } });
     }
 
@@ -869,7 +894,11 @@ export function createClientPlugin(
       insertHr: formatting.insertHr,
       openImagePicker: formatting.openImagePicker,
       toggleLinkFootnotes: formatting.toggleLinkFootnotes,
-      openSearch: searchCmds.openSearch,
+      openSearch: () => {
+        selectionBubble.clear();
+        selectionBubble.clearPointer();
+        searchCmds.openSearch();
+      },
       runWritingSkill: () => void writingSkills.runSkill(),
       acceptAiReview: () => {
         const session = writingSkills.session;
@@ -1080,48 +1109,34 @@ export function createClientPlugin(
     });
 
     function openCssWorkbench(targetId: string | null): void {
-      setDrawerOpen(false);
-      setMenuOpen(false);
-      slashMenu.close();
-      setOutlineOpen(false);
-      selectionBubble.clear();
-      selectionBubble.clearPointer();
+      dismissTransientOverlays();
       if (view !== 'split') store.updateActive({ view: 'split' });
       setCssWorkbench((prev) => ({ open: true, targetId, seq: prev.seq + 1 }));
     }
 
     function closeCssWorkbench(): void {
-      setCssWorkbench((prev) => ({ open: false, targetId: null, seq: prev.seq }));
-      setLiveCssDraft('');
+      clearCssWorkbenchDraft();
       focusEditorSoon();
     }
 
     function enterImmersive(): void {
-      setDrawerOpen(false);
-      setMenuOpen(false);
-      slashMenu.close();
-      setOutlineOpen(false);
-      selectionBubble.clear();
-      selectionBubble.clearPointer();
-      setCssWorkbench((prev) => ({ open: false, targetId: null, seq: prev.seq }));
-      setLiveCssDraft('');
-      setSearchPanel((prev) => (prev.open ? { ...prev, open: false } : prev));
+      dismissTransientOverlays();
+      clearCssWorkbenchDraft();
       const next: 'write' | 'preview' = view === 'preview' ? 'preview' : 'write';
       setImmersive(next);
       if (next === 'write') focusEditorSoon();
     }
 
     function exitImmersive(): void {
-      selectionBubble.clear();
-      selectionBubble.clearPointer();
+      dismissTransientOverlays({ keepSearch: true });
       setImmersive(null);
       window.setTimeout(() => {
         rootRef.current?.querySelector<HTMLElement>('.mdstudio-focus-btn')?.focus();
       }, 0);
     }
 
-    function canHandleImmersiveShortcut(action: 'toggle' | 'exit'): boolean {
-      const modalOpen = [
+    function hasActiveModal(): boolean {
+      return [
         dialogHost.open,
         importModePrompt,
         mergeReview,
@@ -1129,14 +1144,32 @@ export function createClientPlugin(
         workspace.open,
         writingSkills.managerOpen,
       ].some(Boolean);
-      if (modalOpen) return false;
+    }
+
+    function hasEditorBlockingOverlay(): boolean {
+      if (!computePaneVisibility(immersive, view, cssWorkbench.open).showMarkdownEditor) return false;
+      return [searchPanel.open, slashMenu.open, outlineOpen, writingSkills.session].some(Boolean);
+    }
+
+    function canHandleImmersiveShortcut(action: 'toggle' | 'exit'): boolean {
+      if (hasActiveModal()) return false;
       if (action === 'toggle') return true;
-      return ![searchPanel.open, slashMenu.open, outlineOpen, menuOpen, drawerOpen, writingSkills.session].some(
-        Boolean,
-      );
+      return ![hasEditorBlockingOverlay(), menuOpen, drawerOpen].some(Boolean);
     }
 
     useImmersiveShortcuts(React, immersive, enterImmersive, exitImmersive, canHandleImmersiveShortcut);
+
+    useDocumentEvent(
+      React,
+      'keydown',
+      (event: KeyboardEvent) => {
+        if (!isUnhandledEscapeKey(event)) return;
+        if ([hasActiveModal(), menuOpen, outlineOpen, slashMenu.open].some(Boolean)) return;
+        event.preventDefault();
+        writingSkills.cancelSession();
+      },
+      Boolean(writingSkills.session),
+    );
 
     function handleEditorKeyDown(event: React.KeyboardEvent<HTMLElement>): void {
       const native = event.nativeEvent as KeyboardEvent | undefined;
@@ -1277,39 +1310,35 @@ export function createClientPlugin(
           onTitle: (value) => store.updateActive({ title: value }),
           onView: (next) => {
             store.updateActive({ view: next });
-            const keepWorkbench =
-              cssWorkbench.open && typeof window !== 'undefined' && window.innerWidth <= 720 && next !== 'split';
-            if (!keepWorkbench) {
-              setCssWorkbench((prev) => ({ open: false, targetId: null, seq: prev.seq }));
-              setLiveCssDraft('');
-            }
-            selectionBubble.clear();
-            selectionBubble.clearPointer();
-            slashMenu.close();
-            setOutlineOpen(false);
-            setMenuOpen(false);
+            const containerW =
+              rootRef.current?.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 1024);
+            const keepWorkbench = cssWorkbench.open && containerW <= 720 && next !== 'split';
+            if (!keepWorkbench) clearCssWorkbenchDraft();
+            dismissTransientOverlays({ keepSearch: next !== 'preview', keepDrawer: true });
           },
           onImmersive: enterImmersive,
           onOpenLibrary: () => {
             captureDialogTriggerFocus();
+            dismissTransientOverlays({ keepSearch: true, keepDrawer: true });
             docLibrary.openLibrary();
-            setMenuOpen(false);
           },
           onToggleDrawer: () => {
             if (!drawerOpen) setDrawerTab('theme');
-            selectionBubble.clear();
-            selectionBubble.clearPointer();
+            dismissTransientOverlays({ keepSearch: true, keepDrawer: true });
             setDrawerOpen(!drawerOpen);
-            setMenuOpen(false);
           },
-          onToggleMenu: () => setMenuOpen(!menuOpen),
+          onToggleMenu: () => {
+            if (!menuOpen) dismissTransientOverlays({ keepSearch: true, keepDrawer: true, keepMenu: true });
+            setMenuOpen(!menuOpen);
+          },
           onCloseMenu: () => setMenuOpen(false),
           onNew: () => {
-            setMenuOpen(false);
+            dismissTransientOverlays({ keepDrawer: true });
             docLibrary.newDocument();
           },
           onOpenFolder: () => {
             captureDialogTriggerFocus();
+            dismissTransientOverlays({ keepSearch: true, keepDrawer: true });
             void workspaceTools.openFolder();
           },
           onOpenFile: fileActions.openLocalFile,
@@ -1321,7 +1350,7 @@ export function createClientPlugin(
           onImport: docCommands.handleImportClick,
           onManageSkills: () => {
             captureDialogTriggerFocus();
-            setMenuOpen(false);
+            dismissTransientOverlays({ keepSearch: true, keepDrawer: true });
             writingSkills.openManager(null);
           },
           onCopyText: copyActions.copyPlainText,
@@ -1364,6 +1393,7 @@ export function createClientPlugin(
             canRedo: docHistory.canRedo(),
             fileConflict: fileContext.conflict,
             permission: fileContext.permission,
+            overlayEpoch,
             onAuthorize: () => {
               void fileContext.requestPermission().then((granted) => {
                 if (granted) notify(t('file.authorized'));
@@ -1412,6 +1442,7 @@ export function createClientPlugin(
             open: slashMenu.open,
             items: slashMenu.items,
             selected: slashMenu.selected,
+            pos: slashMenu.pos,
             onSelect: slashMenu.selectIndex,
             onApply: slashMenu.applyCommand,
           },
@@ -1465,7 +1496,8 @@ export function createClientPlugin(
             },
             onSelection: (nextSelection: EditorSelection) => {
               lastSelectionRef.current = nextSelection;
-              selectionBubble.sync(editorValue(), nextSelection);
+              if (nextSelection.programmatic) selectionBubble.clear();
+              else selectionBubble.sync(editorValue(), nextSelection);
               if (nextSelection.start !== nextSelection.end || writingSkills.session || writingSkills.diffTransition) {
                 slashMenu.close();
               } else {
@@ -1494,7 +1526,13 @@ export function createClientPlugin(
             },
             onRefreshSlash: slashMenu.refreshFromCaret,
           },
-          ai: buildEditorAiModel(writingSkills, selectionBubble.pos),
+          ai: buildEditorAiModel(writingSkills, hasActiveModal() ? null : selectionBubble.pos, () => {
+            captureDialogTriggerFocus();
+            setMenuOpen(false);
+            slashMenu.close();
+            setOutlineOpen(false);
+            writingSkills.openManager(null);
+          }),
         }),
 
         h(CssWorkbenchPane, {
@@ -1548,7 +1586,10 @@ export function createClientPlugin(
             onEditCustomTheme: (custom) => openCssWorkbench(custom.id),
             onResetStyles: resetStyles,
             onExportTheme: articleExport.exportTheme,
-            onImportTheme: (file) => void articleExport.importThemeFile(file),
+            onImportTheme: (file) => {
+              clearCssWorkbenchDraft();
+              void articleExport.importThemeFile(file);
+            },
           },
         }),
 
@@ -1692,6 +1733,7 @@ export function createClientPlugin(
             ui: uiKit,
             mode: immersive,
             onSwitch: (next) => {
+              dismissTransientOverlays();
               setImmersive(next);
               if (next === 'write') focusEditorSoon();
             },

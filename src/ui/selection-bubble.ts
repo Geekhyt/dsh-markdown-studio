@@ -10,9 +10,13 @@ interface PointerPoint {
   at: number;
 }
 
-function isInlineCardEventTarget(target: EventTarget | null): boolean {
+function isOverlayEventTarget(target: EventTarget | null): boolean {
   const el = target as Element | null;
-  return Boolean(el && typeof el.closest === 'function' && el.closest('.mdstudio-ai-inline-card'));
+  return Boolean(
+    el &&
+      typeof el.closest === 'function' &&
+      el.closest('.mdstudio-ai-inline-card, .mdstudio-skill-split, .mdstudio-slash, .mdstudio-outline'),
+  );
 }
 
 function resolveBubbleViewportPoint(
@@ -27,27 +31,56 @@ function resolveBubbleViewportPoint(
   return { x: coords.left + 24, yBottom: coords.bottom, yTop: coords.top };
 }
 
+function isBlockedActiveFocus(): boolean {
+  if (typeof document === 'undefined') return false;
+  const active = document.activeElement as Element | null;
+  if (!active || typeof active.closest !== 'function') return false;
+  return Boolean(active.closest('.mdstudio-searchbar, .mdstudio-title-input, [aria-modal="true"]'));
+}
+
+function resolveBubbleContainer(rootEl: HTMLElement | null): HTMLElement | null {
+  if (!rootEl) return null;
+  return (
+    rootEl.querySelector<HTMLElement>('.mdstudio-editor-wrap') ||
+    rootEl.querySelector<HTMLElement>('.mdstudio-editor-pane')
+  );
+}
+
+function hasSelectedProse(
+  markdown: string,
+  range: SelectionRange & { head?: number; programmatic?: boolean },
+): boolean {
+  if (range.programmatic || range.end <= range.start) return false;
+  return Boolean(markdown.slice(range.start, range.end).trim());
+}
+
+function clampBubbleCoords(
+  surfaceRect: DOMRect,
+  anchor: { x: number; yBottom: number; yTop: number } | null,
+): { top: number; left: number } {
+  const minTop = 6;
+  const maxLeft = Math.max(12, surfaceRect.width - 144);
+  if (!anchor) return { top: 10, left: clamp(24, 12, maxLeft) };
+  const rawBelow = anchor.yBottom - surfaceRect.top + 6;
+  const rawTop = rawBelow + 38 <= surfaceRect.height ? rawBelow : anchor.yTop - surfaceRect.top - 38;
+  return {
+    top: clamp(Math.round(rawTop), minTop, Math.max(minTop, surfaceRect.height - 40)),
+    left: clamp(Math.round(anchor.x - surfaceRect.left - 24), 12, maxLeft),
+  };
+}
+
 function computeSelectionBubblePos(
   rootEl: HTMLElement | null,
   api: EditorApi | null,
   markdown: string,
-  range: SelectionRange & { head?: number },
+  range: SelectionRange & { head?: number; programmatic?: boolean },
   pointer: PointerPoint | null,
 ): { top: number; left: number } | null {
-  if (range.end <= range.start || !markdown.slice(range.start, range.end).trim()) return null;
-  const pane = rootEl ? rootEl.querySelector<HTMLElement>('.mdstudio-editor-pane') : null;
-  if (!pane) return null;
-  const paneRect = pane.getBoundingClientRect();
+  if (isBlockedActiveFocus() || !hasSelectedProse(markdown, range)) return null;
+  const surface = resolveBubbleContainer(rootEl);
+  if (!surface) return null;
   const anchor = resolveBubbleViewportPoint(api, range, pointer);
-  const minTop = pane.classList.contains('has-search') ? 88 : 44;
-  if (!anchor) {
-    return { top: Math.max(52, minTop), left: clamp(24, 12, Math.max(12, paneRect.width - 144)) };
-  }
-  const rawBelow = anchor.yBottom - paneRect.top + 6;
-  const rawTop = rawBelow + 38 <= paneRect.height ? rawBelow : anchor.yTop - paneRect.top - 38;
-  const top = clamp(Math.round(rawTop), minTop, Math.max(minTop, paneRect.height - 40));
-  const left = clamp(Math.round(anchor.x - paneRect.left - 24), 12, Math.max(12, paneRect.width - 144));
-  return { top, left };
+  return clampBubbleCoords(surface.getBoundingClientRect(), anchor);
 }
 
 export interface SelectionBubbleOptions {
@@ -63,7 +96,7 @@ export interface SelectionBubbleApi {
   pos: { top: number; left: number } | null;
   clear: () => void;
   clearPointer: () => void;
-  sync: (markdown: string, nextSelection: SelectionRange & { head?: number }) => void;
+  sync: (markdown: string, nextSelection: SelectionRange & { head?: number; programmatic?: boolean }) => void;
   onPointerDown: (event: ReactNamespace.MouseEvent<HTMLDivElement>) => void;
 }
 
@@ -101,8 +134,8 @@ export function useSelectionBubble(options: SelectionBubbleOptions): SelectionBu
     pointerPointRef.current = null;
   }
 
-  function sync(markdown: string, nextSelection: SelectionRange & { head?: number }): void {
-    if (pointerSelectingRef.current) {
+  function sync(markdown: string, nextSelection: SelectionRange & { head?: number; programmatic?: boolean }): void {
+    if (pointerSelectingRef.current || nextSelection.programmatic) {
       setPos(null);
       return;
     }
@@ -113,7 +146,7 @@ export function useSelectionBubble(options: SelectionBubbleOptions): SelectionBu
   }
 
   function onPointerDown(event: ReactNamespace.MouseEvent<HTMLDivElement>): void {
-    if (event.button !== 0 || isInlineCardEventTarget(event.target)) return;
+    if (event.button !== 0 || isOverlayEventTarget(event.target)) return;
     cancelPendingRaf();
     if (pointerCleanupRef.current) pointerCleanupRef.current();
     pointerSelectingRef.current = true;

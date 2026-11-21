@@ -508,10 +508,27 @@ check('prepareClipboardDom unwraps section blocks nested inside paragraphs with 
     );
     lightHost.remove();
 
+    // Tinted light paper (warm #f7f5ef / gallery #f4f2ee) must normalize #mdstudio root surface too
+    const tintedHost = document.createElement('div');
+    tintedHost.innerHTML =
+      '<section id="mdstudio" style="background-color: rgb(247, 245, 239); color: rgb(47, 43, 39);">' +
+      '<p style="color: rgb(39, 105, 76);">Tinted paper paragraph</p>' +
+      '</section>';
+    document.body.appendChild(tintedHost);
+    assert.equal(await applyDarkPreview(tintedHost), true, 'tinted paper transforms in dark preview');
+    const tintedRoot = tintedHost.querySelector<HTMLElement>('#mdstudio')!;
+    assert.ok(
+      tintedRoot.style.backgroundColor.includes('color-mix') ||
+        tintedRoot.style.backgroundColor !== 'rgb(247, 245, 239)',
+      'tinted #mdstudio root background is darkened instead of remaining light gray',
+    );
+    tintedHost.remove();
+
     const cmParent = document.createElement('div');
     document.body.appendChild(cmParent);
     let lastChange = '';
     let selCalls = 0;
+    let lastSelectionProgrammatic: boolean | undefined;
     const mdEditor = createCodeMirror({
       parent: cmParent,
       doc: '# Hello\n\nworld',
@@ -520,14 +537,19 @@ check('prepareClipboardDom unwraps section blocks nested inside paragraphs with 
       onChange: (val) => {
         lastChange = val;
       },
-      onSelection: () => {
+      onSelection: (sel) => {
         selCalls++;
+        lastSelectionProgrammatic = sel.programmatic;
       },
     });
     mdEditor.setDark(true);
     mdEditor.setValue('# Updated');
     assert.equal(lastChange, '# Updated');
     assert.ok(selCalls >= 1);
+    mdEditor.revealRange?.(0, 5);
+    assert.equal(lastSelectionProgrammatic, true, 'revealRange emits programmatic selection');
+    mdEditor.focusRange(2, 6);
+    assert.equal(lastSelectionProgrammatic, true, 'focusRange emits programmatic selection');
     mdEditor.destroy();
 
     const cssParent = document.createElement('div');

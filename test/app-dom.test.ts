@@ -2553,4 +2553,213 @@ console.log('ok - English locale boots with English sample article and zero Chin
   console.log('ok - multi-tab storage sync updates editor without undo pollution or stale active doc');
 }
 
+// Component composition regressions: format menu dismissal, immersive search Escape, LIFO outline Escape, custom theme pick vs CSS workbench
+{
+  const comboContainer = document.createElement('div');
+  document.body.appendChild(comboContainer);
+  const comboRoot = ReactDOM.createRoot(comboContainer);
+  try {
+    window.localStorage.clear();
+    await act(async () => {
+      comboRoot.render(React.createElement(Main, {}));
+    });
+    await settle(40);
+
+    // 1. Format menu closes cleanly when entering immersive mode via shortcut (S03)
+    const fmtTrigger = comboContainer.querySelector<HTMLButtonElement>('.mdstudio-format-trigger')!;
+    await act(async () => {
+      fmtTrigger.click();
+    });
+    await settle(20);
+    assert.ok(comboContainer.querySelector('.mdstudio-format-menu'), 'format menu opens');
+    await act(async () => {
+      window.dispatchEvent(
+        new window.KeyboardEvent('keydown', { key: 'f', metaKey: true, shiftKey: true, bubbles: true }),
+      );
+    });
+    await settle(20);
+    assert.equal(
+      comboContainer.querySelector('.mdstudio-root')?.getAttribute('data-mdstudio-immersive'),
+      'write',
+      'enters immersive write via shortcut',
+    );
+    assert.equal(
+      comboContainer.querySelector('.mdstudio-format-menu'),
+      null,
+      'format menu closes deterministically on entering immersive write',
+    );
+
+    // 2. Opening search in immersive write then switching to immersive preview dismisses search so Escape exits cleanly (S04)
+    const ta = comboContainer.querySelector<HTMLTextAreaElement>('textarea.mdstudio-editor')!;
+    await act(async () => {
+      ta.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'f', metaKey: true, bubbles: true }));
+    });
+    await settle(20);
+    assert.ok(comboContainer.querySelector('.mdstudio-searchbar'), 'search bar opens in immersive write');
+    const previewDockBtn = Array.from(
+      comboContainer.querySelectorAll<HTMLButtonElement>('.mdstudio-immersive-mode'),
+    ).find((b) => (b.textContent || '').includes('预览'))!;
+    await act(async () => {
+      previewDockBtn.click();
+    });
+    await settle(20);
+    assert.equal(
+      comboContainer.querySelector('.mdstudio-searchbar'),
+      null,
+      'switching to immersive preview closes search bar',
+    );
+    await act(async () => {
+      window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    await settle(20);
+    assert.equal(
+      comboContainer.querySelector('.mdstudio-root')?.getAttribute('data-mdstudio-immersive'),
+      null,
+      'Escape exits immersive preview cleanly without being trapped by hidden search state',
+    );
+
+    // 3. LIFO Escape: when both search bar and outline popover are open, Escape closes outline first while keeping search bar open (S05)
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-toolbar .mdstudio-tool[aria-label^="搜索"]')?.click();
+    });
+    await settle(20);
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-outline-anchor button')?.click();
+    });
+    await settle(20);
+    assert.ok(comboContainer.querySelector('.mdstudio-searchbar'), 'search bar is open');
+    assert.ok(comboContainer.querySelector('.mdstudio-outline'), 'outline popover is open');
+    const searchInput = comboContainer.querySelector<HTMLInputElement>('.mdstudio-search-input')!;
+    await act(async () => {
+      searchInput.focus();
+      searchInput.dispatchEvent(
+        new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+    });
+    await settle(20);
+    assert.equal(
+      comboContainer.querySelector('.mdstudio-outline'),
+      null,
+      'first Escape closes topmost outline popover',
+    );
+    assert.ok(comboContainer.querySelector('.mdstudio-searchbar'), 'search bar remains open after outline closes');
+    await act(async () => {
+      searchInput.dispatchEvent(
+        new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+    });
+    await settle(20);
+    assert.equal(comboContainer.querySelector('.mdstudio-searchbar'), null, 'second Escape closes search bar');
+
+    // 4. Picking another custom theme or resetting styles exits open CSS workbench draft cleanly (S02)
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-style-btn')?.click();
+    });
+    await settle(20);
+    const newThemeBtn = Array.from(comboContainer.querySelectorAll<HTMLButtonElement>('.mdstudio-drawer button')).find(
+      (b) => (b.textContent || '').includes('新建主题'),
+    )!;
+    await act(async () => {
+      newThemeBtn.click();
+    });
+    await settle(30);
+    const cssNameInput = comboContainer.querySelector<HTMLInputElement>('.mdstudio-css-name')!;
+    const cssEditorTa = comboContainer.querySelector<HTMLTextAreaElement>('.mdstudio-css')!;
+    const setVal = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+    const setTaVal = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
+    await act(async () => {
+      setVal?.call(cssNameInput, '翡翠主题');
+      cssNameInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+      cssNameInput.dispatchEvent(new window.Event('change', { bubbles: true }));
+      setTaVal?.call(cssEditorTa, '.mdstudio-content { background-color: #eefcf3; color: #14532d; }');
+      cssEditorTa.dispatchEvent(new window.Event('input', { bubbles: true }));
+      cssEditorTa.dispatchEvent(new window.Event('change', { bubbles: true }));
+    });
+    await settle(20);
+    const saveThemeBtn = Array.from(
+      comboContainer.querySelectorAll<HTMLButtonElement>('.mdstudio-css-workbench button'),
+    ).find((b) => (b.textContent || '').includes('保存并启用'))!;
+    await act(async () => {
+      saveThemeBtn.click();
+    });
+    await settle(30);
+    // Start a second unsaved purple draft, open drawer, then click saved custom theme "翡翠主题"
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-custom-add-btn')?.click();
+    });
+    await settle(20);
+    await act(async () => {
+      setTaVal?.call(cssEditorTa, '.mdstudio-content { background-color: #f5ecff; color: #4c1d95; }');
+      cssEditorTa.dispatchEvent(new window.Event('input', { bubbles: true }));
+      cssEditorTa.dispatchEvent(new window.Event('change', { bubbles: true }));
+    });
+    await settle(20);
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-style-btn')?.click();
+    });
+    await settle(20);
+    const greenCard = Array.from(comboContainer.querySelectorAll<HTMLButtonElement>('.mdstudio-theme-card')).find((b) =>
+      (b.textContent || '').includes('翡翠主题'),
+    )!;
+    await act(async () => {
+      greenCard.click();
+    });
+    await settle(30);
+    assert.equal(
+      comboContainer.querySelector('.mdstudio-css-workbench'),
+      null,
+      'picking custom theme exits open CSS workbench draft',
+    );
+    const articleBg = comboContainer.querySelector<HTMLElement>('.mdstudio-preview-article #mdstudio')?.style
+      .backgroundColor;
+    assert.equal(articleBg, 'rgb(238, 252, 243)', 'preview renders picked custom theme instead of unsaved draft');
+
+    // 5. Floating AI pill stays hidden while a modal is open and clears on Cmd+F (S06 & S08)
+    const ta2 = comboContainer.querySelector<HTMLTextAreaElement>('textarea.mdstudio-editor')!;
+    await act(async () => {
+      ta2.focus();
+      ta2.setSelectionRange(0, 12);
+      ta2.dispatchEvent(new window.Event('select', { bubbles: true }));
+    });
+    await settle(20);
+    assert.ok(
+      comboContainer.querySelector('.mdstudio-skill-split.is-floating'),
+      'floating pill appears on user selection',
+    );
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('button[aria-label="文章库"]')?.click();
+    });
+    await settle(20);
+    assert.equal(
+      comboContainer.querySelector('.mdstudio-skill-split.is-floating'),
+      null,
+      'floating pill hides behind open modal',
+    );
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('.mdstudio-modal-close')?.click();
+    });
+    await settle(20);
+    await act(async () => {
+      ta2.focus();
+      ta2.setSelectionRange(0, 12);
+      ta2.dispatchEvent(new window.Event('select', { bubbles: true }));
+      ta2.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'f', metaKey: true, bubbles: true }));
+    });
+    await settle(20);
+    assert.equal(
+      comboContainer.querySelector('.mdstudio-skill-split.is-floating'),
+      null,
+      'Cmd+F clears floating AI pill',
+    );
+  } finally {
+    await act(async () => {
+      comboRoot.unmount();
+    });
+    comboContainer.remove();
+  }
+  console.log(
+    'ok - component composition regressions (overlay lifecycle, LIFO Escape, CSS workbench custom pick, modal/search AI pill)',
+  );
+}
+
 console.log('\nAll UI render checks passed.');

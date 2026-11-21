@@ -119,6 +119,7 @@ function liftElementContrast(element: HTMLElement, root: HTMLElement): void {
  */
 function liftDarkText(root: HTMLElement): void {
   if (typeof window === 'undefined') return;
+  liftElementContrast(root, root);
   root.querySelectorAll<HTMLElement>('*').forEach(function (element) {
     liftElementContrast(element, root);
   });
@@ -145,6 +146,7 @@ function normalizeSurfaceElement(element: HTMLElement): void {
 
 function normalizeDarkSurfaces(root: HTMLElement): void {
   if (typeof window === 'undefined') return;
+  normalizeSurfaceElement(root);
   root.querySelectorAll<HTMLElement>('*').forEach(normalizeSurfaceElement);
 }
 

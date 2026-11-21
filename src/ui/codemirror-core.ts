@@ -541,6 +541,7 @@ const diffTransitionField = StateField.define<DecorationSet>({
 });
 
 const ProgrammaticUpdate = Annotation.define<boolean>();
+const ProgrammaticSelection = Annotation.define<boolean>();
 
 export function create(options: EditorOptions): EditorApi {
   const opts = options;
@@ -548,13 +549,23 @@ export function create(options: EditorOptions): EditorApi {
   const onUpdate = (update: ViewUpdate): void => {
     const isSilentSync =
       update.transactions.length > 0 && update.transactions.every((tr) => tr.annotation(ProgrammaticUpdate) === true);
+    const isProgrammaticSelection =
+      update.transactions.length > 0 &&
+      update.transactions.every(
+        (tr) => tr.annotation(ProgrammaticSelection) === true || tr.annotation(ProgrammaticUpdate) === true,
+      );
     if (update.docChanged && !isSilentSync && opts.onChange) {
       const selection = update.state.selection.main;
       opts.onChange(update.state.doc.toString(), { start: selection.from, end: selection.to, head: selection.head });
     }
     if ((update.selectionSet || (update.docChanged && !isSilentSync)) && opts.onSelection) {
       const selection = update.state.selection.main;
-      opts.onSelection({ start: selection.from, end: selection.to, head: selection.head });
+      opts.onSelection({
+        start: selection.from,
+        end: selection.to,
+        head: selection.head,
+        programmatic: isProgrammaticSelection,
+      });
     }
   };
 
@@ -649,13 +660,21 @@ export function create(options: EditorOptions): EditorApi {
       const length = view.state.doc.length;
       const from = Math.max(0, Math.min(length, start));
       const to = Math.max(from, Math.min(length, end));
-      view.dispatch({ selection: { anchor: from, head: to }, scrollIntoView: true });
+      view.dispatch({
+        selection: { anchor: from, head: to },
+        scrollIntoView: true,
+        annotations: ProgrammaticSelection.of(true),
+      });
     },
     focusRange(start: number, end: number) {
       const length = view.state.doc.length;
       const from = Math.max(0, Math.min(length, start));
       const to = Math.max(from, Math.min(length, end));
-      view.dispatch({ selection: { anchor: from, head: to }, scrollIntoView: true });
+      view.dispatch({
+        selection: { anchor: from, head: to },
+        scrollIntoView: true,
+        annotations: ProgrammaticSelection.of(true),
+      });
       view.focus();
     },
     focus() {
@@ -674,7 +693,11 @@ export function create(options: EditorOptions): EditorApi {
       const sel = view.state.selection.main;
       const anchorPos = blocks.length > 0 ? Math.max(0, Math.min(view.state.doc.length, blocks[0].to)) : sel.to;
       const collapse = enteringSession && sel.from !== sel.to ? { selection: { anchor: anchorPos } } : {};
-      view.dispatch({ ...collapse, effects: setInlineBlocksEffect.of(blocks) });
+      view.dispatch({
+        ...collapse,
+        effects: setInlineBlocksEffect.of(blocks),
+        annotations: ProgrammaticSelection.of(true),
+      });
     },
     setPlaceholder(nextPlaceholder: string, nextAriaLabel?: string) {
       const label = resolveAriaLabel(nextAriaLabel, nextPlaceholder);
@@ -692,7 +715,11 @@ export function create(options: EditorOptions): EditorApi {
         transition && transition.kind === 'accept'
           ? { selection: { anchor: Math.max(0, Math.min(view.state.doc.length, transition.to)) } }
           : {};
-      view.dispatch({ ...moveCaret, effects: setDiffTransitionEffect.of(transition) });
+      view.dispatch({
+        ...moveCaret,
+        effects: setDiffTransitionEffect.of(transition),
+        annotations: ProgrammaticSelection.of(true),
+      });
     },
     setDark(value: boolean) {
       dark = !!value;

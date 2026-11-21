@@ -10,14 +10,14 @@
 
 `dsh-markdown-studio` 严格解耦为 **客户端冷启动壳（Shell）**、**按需工作台运行时（Studio Chunk）** 与 **本机 Host 图片及按需分包服务（Node.js / Cordis）**：
 
-1. **极简冷启动壳（`dist/client.js`，仅 `4.9 KiB`）** —— DSH 启动时仅加载极简入口，注册左侧边栏图标（`sidebar.panellist`）、基础多语言与主视图懒加载容器（`main`）。用户在日常 AI 对话期间**零编辑器脚本开销**。
+1. **极简冷启动壳（`dist/client.js`，仅 `5.1 KiB`）** —— DSH 启动时仅加载极简入口，注册左侧边栏图标（`sidebar.panellist`）、基础多语言与主视图懒加载容器（`main`）。用户在日常 AI 对话期间**零编辑器脚本开销**。
 2. **工作台与可逆排版流水线（`dist/client.studio.js`）** —— 当用户首次点击打开 **Markdown Studio** 时，通过 DSH 官方 `require.async("./client.studio.js")` 按需加载 CodeMirror 6、`DocumentStore`、`Tone × Rhythm × Atoms` 主题系统及内联样式级联编译器。
 3. **重型渲染器按需加载（`dist/math.js` & `dist/mermaid.js`）** —— 仅当当前文稿包含 TeX 公式（`$...$` / `$$...$$` 与 `\(...\)` / `\[...\]`）或 ```` ```mermaid ```` 代码块时，才从本机 Host 拉取 MathJax 3（自包含矢量 `<path>` SVG）或 Mermaid 11（`strict` 沙箱 + `DOMPurify` 光栅化）。
 4. **双通道隔离的本机图片服务与按需回环 AI 路由（`dist/index.js`）** —— 图片写入动作走受宿主鉴权的同源 `POST /api/markdown-studio/wechat`（SHA-256 去重落盘），预览走仅绑定 `127.0.0.1` 的只读回环服务；AI 写作 Skill 走同源回环 `POST /api/markdown-studio/ai`，仅在用户主动触发时调用宿主已配置的 `llm` 服务处理选中片段。
 
 ```mermaid
 flowchart TB
-  subgraph S1["阶段 1 · 客户端冷启动轻量壳 (dist/client.js · 4.9 KiB)"]
+  subgraph S1["阶段 1 · 客户端冷启动轻量壳 (dist/client.js · 5.1 KiB)"]
     ICON["侧边栏入口槽位 sidebar.panellist"]
     LAZY["主面板懒加载容器 main (LazyStudioView)"]
     LIFE["可逆样式与多语言生命周期 (style-lifecycle)"]
@@ -68,18 +68,18 @@ flowchart TB
 | **Client 槽位层** | `sidebar.panellist`、`main` | 注册左侧边栏矢量入口图标与主工作台视图。 |
 | **多语言服务** | `locale.register`、`locale.bind`、`locale/*.json` | 跟随宿主中英语言切换界面文案，并通过 `meta.detail` 提供插件详情页。 |
 | **共享 UI 原语** | `@deepseek-ai/dsh-client-ui-primitives` | 复用宿主原生 `Button`、`SegmentedTabs`、`Modal`、`Menu`、`Tooltip`、`Input` 与语义变量。 |
-| **客户端按需分包** | `window.__ModuleLoader__.load` + `require.async` | 首屏仅加载 `4.8 KiB` 轻量壳，点击面板后再按需加载编辑器与排版运行时。 |
+| **客户端按需分包** | `window.__ModuleLoader__.load` + `require.async` | 首屏仅加载 `5.1 KiB` 轻量壳，点击面板后再按需加载编辑器与排版运行时。 |
 | **Host Web 与模型服务** | Cordis `webServer.register`、可选 `llm` / `agentDefaultModel` | 注册同源鉴权图片路由、按需 AI 写作流式路由与 MathJax / Mermaid 分包路由。 |
 
 ### 五分包按需懒加载体积明细
 
 | 构建产物 | 原始体积 | Gzip 体积 | 体积预算门禁 | 职责与加载触发时机 |
 | :--- | :--- | :--- | :--- | :--- |
-| `dist/client.js` | **`4.9 KiB`** | **`2.3 KiB`** | `<= 50 KiB` | 首屏冷启动轻量壳：仅注册侧边栏图标、基础多语言与懒加载容器。 |
-| `dist/client.studio.js` | `1257.8 KiB` | `393.1 KiB` | `<= 1280 KiB` | 仅在点击打开 Markdown Studio 时加载（含 CodeMirror 6、8 套主题、行内 AI Diff 与 `mp-darkmode`）。 |
-| `dist/index.js` | `111.1 KiB` | `55.3 KiB` | `<= 150 KiB` | 自包含 Host ESM 服务（内容寻址图片管理 + 只读回环预览 + 同源 AI 路由），零运行时 npm 依赖。 |
-| `dist/math.js` | `1762.1 KiB` | `593.3 KiB` | `<= 2048 KiB` | 仅当文稿出现 TeX 公式时按需加载 MathJax 3（自包含字体轮廓 `<path>` SVG）。 |
-| `dist/mermaid.js` | `3413.6 KiB` | `955.5 KiB` | `<= 4096 KiB` | 仅当文稿出现 `mermaid` 代码块时按需加载 Mermaid 11（严格沙箱 + `DOMPurify`）。 |
+| `dist/client.js` | **`5.1 KiB`** | **`2.3 KiB`** | `<= 50 KiB` | 首屏冷启动轻量壳：仅注册侧边栏图标、基础多语言与懒加载容器。 |
+| `dist/client.studio.js` | `1270.4 KiB` | `397.2 KiB` | `<= 1280 KiB` | 仅在点击打开 Markdown Studio 时加载（含 CodeMirror 6、8 套主题、行内 AI Diff 与 `mp-darkmode`）。 |
+| `dist/index.js` | `111.8 KiB` | `55.6 KiB` | `<= 150 KiB` | 自包含 Host ESM 服务（内容寻址图片管理 + 只读回环预览 + 同源 AI 路由），零运行时 npm 依赖。 |
+| `dist/math.js` | `1764.9 KiB` | `594.5 KiB` | `<= 2048 KiB` | 仅当文稿出现 TeX 公式时按需加载 MathJax 3（自包含字体轮廓 `<path>` SVG）。 |
+| `dist/mermaid.js` | `3418.2 KiB` | `957.2 KiB` | `<= 4096 KiB` | 仅当文稿出现 `mermaid` 代码块时按需加载 Mermaid 11（严格沙箱 + `DOMPurify`）。 |
 
 ---
 

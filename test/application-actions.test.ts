@@ -14,7 +14,7 @@ import { type CopyActionsApi, useCopyActions } from '../src/application/use-copy
 import { createTrashCommands } from '../src/application/use-document-library';
 import { type LibraryArchiveApi, useLibraryArchive } from '../src/application/use-library-archive';
 import { createLibraryBackup } from '../src/domain/library-backup';
-import { DEFAULT_SETTINGS, SAMPLE_MARKDOWN } from '../src/themes';
+import { DEFAULT_SETTINGS, type MermaidTheme, mermaidThemeFor, SAMPLE_MARKDOWN } from '../src/themes';
 
 const dom = new JSDOM('<div id="app"></div><div id="copy" contenteditable></div><input id="file"><input id="search">', {
   url: 'http://localhost',
@@ -57,6 +57,7 @@ const host = new HostClient(
 );
 const outputs = new Map<string, Blob | string>();
 let plain = '';
+const ensuredMermaidThemes: Array<MermaidTheme | undefined> = [];
 let copies!: CopyActionsApi;
 let archive!: LibraryArchiveApi;
 function Probe() {
@@ -68,7 +69,12 @@ function Probe() {
     doc,
     settings: doc.settings,
     localImageServerUrl: '',
-    mermaidAssets: { ensure: async () => {}, cache: new Map() },
+    mermaidAssets: {
+      ensure: async (_md, theme) => {
+        ensuredMermaidThemes.push(theme);
+      },
+      cache: new Map(),
+    },
     mathAssets: { ensure: async () => {} },
     copyRef: { current: document.getElementById('copy') as HTMLDivElement },
     setMenuOpen: () => {},
@@ -430,6 +436,37 @@ fmtMd = '- 已有项';
 fmtSel = { start: 2, end: 2 };
 fmtLine.insertTaskList();
 assert.equal(fmtMd, '- [ ] 已有项', 'insertTaskList upgrades bullet line to task checkbox');
+
+// Verify copyArticle and exportHtml explicitly request Mermaid assets for saved settings theme (S11)
+assert.ok(
+  ensuredMermaidThemes.some((theme) => theme?.directive === mermaidThemeFor(DEFAULT_SETTINGS).directive),
+  'copyArticle ensures Mermaid assets with explicit saved settings theme',
+);
+const exportEnsureThemes: Array<MermaidTheme | undefined> = [];
+const exporterForTheme = createArticleExporter({
+  React,
+  t,
+  notify,
+  doc,
+  settings: { ...DEFAULT_SETTINGS, theme: 'poster', accent: '#c2410c' },
+  localImageServerUrl: '',
+  mermaidAssets: {
+    ensure: async (_md, theme) => {
+      exportEnsureThemes.push(theme);
+    },
+    cache: new Map(),
+  },
+  mathAssets: { ensure: async () => {} },
+  download: () => true,
+  closeMenu: () => {},
+  updateSettings: () => {},
+});
+await exporterForTheme.exportHtml();
+assert.equal(
+  exportEnsureThemes[0]?.directive,
+  mermaidThemeFor({ ...DEFAULT_SETTINGS, theme: 'poster', accent: '#c2410c' }).directive,
+  'exportHtml ensures Mermaid assets with explicit export settings theme',
+);
 
 inserted = '';
 images.handlePaste(paste([png]));

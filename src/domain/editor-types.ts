@@ -6,6 +6,7 @@ export interface EditorSelection {
   start: number;
   end: number;
   head?: number;
+  programmatic?: boolean;
 }
 
 export interface EditorScrollInfo {

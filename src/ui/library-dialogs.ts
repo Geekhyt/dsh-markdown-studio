@@ -530,7 +530,7 @@ export function ImportModeDialog(props: ImportModeDialogProps): ReactNode {
   const t = props.t;
   return h(props.ui.Modal, {
     open: true,
-    onClose: props.onCancel,
+    onClose: props.onClose,
     title: t('library.importTitle'),
     closeLabel: t('close'),
     description: buildImportModeDescription(props.summary, t),
@@ -607,7 +607,7 @@ export function MergeConflictDialog(props: MergeConflictDialogProps): ReactNode 
     props.ui.Modal,
     {
       open: true,
-      onClose: props.onCancel,
+      onClose: props.onClose,
       title: t('library.mergeConflictsTitle'),
       closeLabel: t('close'),
       description: t('library.mergeConflictsDesc'),
@@ -1006,7 +1006,7 @@ export function WorkspaceDialog(props: WorkspaceDialogProps): ReactNode {
     });
   };
   const onSelectMenu = function (id: string): void {
-    updateMenuOpen(false);
+    updateMenuOpen(false, true);
     if (id === 'newFolder') onNewFolder();
     else if (id === 'refresh') props.actions.onRefresh();
     else if (id === 'pick') props.actions.onPickFolder();

@@ -5,7 +5,7 @@ import type { AiReviewSession } from '../application/use-writing-skills';
 import type { Heading } from '../domain/article';
 import type { EditorApi, EditorDiffTransition, EditorInlineBlock, EditorSelection } from '../domain/editor-types';
 import type { WritingSkill } from '../domain/writing-skills';
-import { useDocumentEvent } from '../runtime/react-lifecycle';
+import { useDocumentEvent, useWindowEvent } from '../runtime/react-lifecycle';
 import type { DshMenuEntry } from '../types/dsh-primitives';
 import { CodeMirrorEditor } from './codemirror-editor';
 import type { IconName } from './icons';
@@ -22,6 +22,7 @@ export interface EditorToolbarModel {
   canRedo: boolean;
   fileConflict: boolean;
   permission: 'granted' | 'prompt' | 'denied';
+  overlayEpoch?: number;
   onAuthorize: () => void;
   onUndo: () => void;
   onRedo: () => void;
@@ -69,6 +70,7 @@ export interface EditorSlashModel {
   open: boolean;
   items: SlashItem[];
   selected: number;
+  pos?: { top: number; left: number } | null;
   onSelect: (index: number) => void;
   onApply: (index: number) => void;
 }
@@ -500,50 +502,148 @@ function renderToolbarEnd(props: EditorPaneProps): ReactNode {
   );
 }
 
-function renderAiOverlays(props: EditorPaneProps): ReactNode {
+function renderAiReviewOverlay(props: EditorPaneProps): ReactNode {
   const h = props.React.createElement;
-  const { t, ui: icons, toolbar, content, ai } = props;
+  const { t, ui: icons, content, ai } = props;
   if (!ai) return null;
-  const showFloat = Boolean(ai.selectionBubblePos && !ai.session);
+  return h(AiReviewOverlay, {
+    React: props.React,
+    t,
+    ui: icons,
+    session: ai.session,
+    useCodeMirror: content.useCodeMirror,
+    inlineBlocks: ai.inlineBlocks,
+    onCancel: ai.onCancel,
+    onRetry: function () {
+      ai.onRunSkill(ai.session?.skill);
+    },
+  });
+}
+
+function renderFloatingSkillTrigger(props: EditorPaneProps): ReactNode {
+  const h = props.React.createElement;
+  const { t, ui: icons, toolbar, ai } = props;
+  if (!ai || !ai.selectionBubblePos || ai.session) return null;
+  return h(SkillSplitTrigger, {
+    React: props.React,
+    t,
+    ui: icons,
+    modKey: toolbar.modKey,
+    skills: ai.skills,
+    activeSkill: ai.activeSkill,
+    busy: false,
+    style: { top: ai.selectionBubblePos.top, left: ai.selectionBubblePos.left },
+    onRun: ai.onRunSkill,
+    onOpenManager: ai.onOpenManager,
+  });
+}
+
+function renderSlashMenu(props: EditorPaneProps): ReactNode {
+  const h = props.React.createElement;
+  const { t, ui: icons, slash } = props;
+  if (!slash.open) return null;
   return h(
-    props.React.Fragment,
-    null,
-    h(AiReviewOverlay, {
-      React: props.React,
-      t,
-      ui: icons,
-      session: ai.session,
-      useCodeMirror: content.useCodeMirror,
-      inlineBlocks: ai.inlineBlocks,
-      onCancel: ai.onCancel,
-      onRetry: function () {
-        ai.onRunSkill(ai.session?.skill);
+    'div',
+    {
+      className: 'mdstudio-slash',
+      style: slash.pos ? { top: slash.pos.top, left: slash.pos.left } : undefined,
+      onMouseDown: function (event: ReactNamespace.MouseEvent<HTMLDivElement>) {
+        event.preventDefault();
       },
-    }),
-    showFloat && ai.selectionBubblePos
-      ? h(SkillSplitTrigger, {
-          React: props.React,
-          t,
-          ui: icons,
-          modKey: toolbar.modKey,
-          skills: ai.skills,
-          activeSkill: ai.activeSkill,
-          busy: false,
-          style: { top: ai.selectionBubblePos.top, left: ai.selectionBubblePos.left },
-          onRun: ai.onRunSkill,
-          onOpenManager: ai.onOpenManager,
+    },
+    h('div', { className: 'mdstudio-slash-head', id: 'mdstudio-slash-title' }, t('slash.title')),
+    slash.items.length
+      ? h(
+          'div',
+          {
+            className: 'mdstudio-slash-list',
+            role: 'listbox',
+            'aria-labelledby': 'mdstudio-slash-title',
+          },
+          slash.items.map(function (item, index) {
+            return h(
+              'button',
+              {
+                type: 'button',
+                key: item.id,
+                id: 'mdstudio-slash-opt-' + item.id,
+                role: 'option',
+                'aria-selected': index === slash.selected,
+                className: 'mdstudio-slash-item mdstudio-drop-item' + (index === slash.selected ? ' is-active' : ''),
+                onMouseEnter: function () {
+                  slash.onSelect(index);
+                },
+                onClick: function () {
+                  slash.onApply(index);
+                },
+              },
+              h(
+                'span',
+                { className: 'mdstudio-slash-icon', 'aria-hidden': 'true' },
+                item.iconName ? h(icons.Icon, { name: item.iconName, size: 16 }) : item.icon,
+              ),
+              h(
+                'span',
+                { className: 'mdstudio-slash-copy' },
+                h('span', { className: 'mdstudio-slash-label' }, item.label),
+                h('span', { className: 'mdstudio-slash-hint' }, item.hint),
+              ),
+            );
+          }),
+        )
+      : h('div', { className: 'mdstudio-slash-empty', role: 'status' }, t('slash.empty')),
+    h('div', { className: 'mdstudio-slash-foot' }, t('slash.foot')),
+  );
+}
+
+function renderOutlinePopover(
+  props: EditorPaneProps,
+  outlineRef: ReactNamespace.RefObject<HTMLDivElement | null>,
+  outlineLeft: number,
+): ReactNode {
+  const h = props.React.createElement;
+  const { t, outline } = props;
+  if (!outline.open) return null;
+  return h(
+    'div',
+    {
+      className: 'mdstudio-outline',
+      ref: outlineRef,
+      style: { left: outlineLeft },
+      role: 'navigation',
+      'aria-label': t('outline.title'),
+    },
+    h('div', { className: 'mdstudio-outline-head' }, t('outline.title')),
+    outline.headings.length
+      ? outline.headings.map(function (heading, index) {
+          return h(
+            'button',
+            {
+              type: 'button',
+              key: 'outline-' + heading.start + '-' + index,
+              className: 'mdstudio-outline-item mdstudio-drop-item',
+              style: { paddingLeft: 8 + (heading.level - 1) * 10, fontWeight: heading.level <= 2 ? 600 : 400 },
+              onClick: function () {
+                outline.onFocus(heading);
+              },
+              title: heading.text,
+            },
+            h('span', { className: 'mdstudio-outline-lvl', 'aria-hidden': 'true' }, 'H' + heading.level),
+            h('span', { className: 'mdstudio-outline-text' }, heading.text),
+          );
         })
-      : null,
+      : h('p', { className: 'mdstudio-outline-empty' }, t('outline.empty')),
   );
 }
 
 function computeOutlineLeft(anchor: HTMLElement | null): number {
   const pane = anchor?.closest<HTMLElement>('.mdstudio-editor-pane');
-  if (!anchor || !pane) return 10;
+  const surface = pane?.querySelector<HTMLElement>('.mdstudio-editor-wrap') || pane;
+  if (!anchor || !surface) return 10;
   const aRect = anchor.getBoundingClientRect();
-  const pRect = pane.getBoundingClientRect();
-  const maxLeft = Math.max(10, pRect.width - 290);
-  return Math.max(10, Math.min(Math.round(aRect.left - pRect.left), maxLeft));
+  const sRect = surface.getBoundingClientRect();
+  const maxLeft = Math.max(10, sRect.width - 290);
+  return Math.max(10, Math.min(Math.round(aRect.left - sRect.left), maxLeft));
 }
 
 function hasOpenModal(): boolean {
@@ -569,7 +669,6 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
   const t = props.t;
   const content = props.content;
   const toolbar = props.toolbar;
-  const slash = props.slash;
   const search = props.search;
   const outline = props.outline;
   const icons = props.ui;
@@ -599,7 +698,16 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
       outline.onClose();
       focusAnchorButton(outlineAnchorRef.current);
     },
-    outline.open,
+    outline.open && props.visible,
+  );
+
+  useWindowEvent(
+    props.React,
+    'resize',
+    function () {
+      setOutlineLeft(computeOutlineLeft(outlineAnchorRef.current));
+    },
+    outline.open && props.visible,
   );
 
   return h(
@@ -630,7 +738,13 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
         h(icons.Icon, { name: 'redo' }),
       ),
       h('span', { className: 'mdstudio-tool-sep' }),
-      h(FormatMenu, { React: props.React, t: t, icons: icons, toolbar: toolbar }),
+      h(FormatMenu, {
+        key: 'fmt-' + String(props.visible) + '-' + String(toolbar.overlayEpoch || 0),
+        React: props.React,
+        t: t,
+        icons: icons,
+        toolbar: toolbar,
+      }),
       h(
         icons.ToolButton,
         { title: t('toolbar.bold') + ' · ' + toolbar.modKey + toolbar.shiftKey + 'B', onClick: toolbar.onBold },
@@ -687,68 +801,14 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
       ),
       renderToolbarEnd(props),
     ),
-    renderAiOverlays(props),
-    slash.open
-      ? h(
-          'div',
-          {
-            className: 'mdstudio-slash',
-            onMouseDown: function (event: ReactNamespace.MouseEvent<HTMLDivElement>) {
-              event.preventDefault();
-            },
-          },
-          h('div', { className: 'mdstudio-slash-head', id: 'mdstudio-slash-title' }, t('slash.title')),
-          slash.items.length
-            ? h(
-                'div',
-                {
-                  className: 'mdstudio-slash-list',
-                  role: 'listbox',
-                  'aria-labelledby': 'mdstudio-slash-title',
-                },
-                slash.items.map(function (item, index) {
-                  return h(
-                    'button',
-                    {
-                      type: 'button',
-                      key: item.id,
-                      id: 'mdstudio-slash-opt-' + item.id,
-                      role: 'option',
-                      'aria-selected': index === slash.selected,
-                      className:
-                        'mdstudio-slash-item mdstudio-drop-item' + (index === slash.selected ? ' is-active' : ''),
-                      onMouseEnter: function () {
-                        slash.onSelect(index);
-                      },
-                      onClick: function () {
-                        slash.onApply(index);
-                      },
-                    },
-                    h(
-                      'span',
-                      { className: 'mdstudio-slash-icon', 'aria-hidden': 'true' },
-                      item.iconName ? h(icons.Icon, { name: item.iconName, size: 16 }) : item.icon,
-                    ),
-                    h(
-                      'span',
-                      { className: 'mdstudio-slash-copy' },
-                      h('span', { className: 'mdstudio-slash-label' }, item.label),
-                      h('span', { className: 'mdstudio-slash-hint' }, item.hint),
-                    ),
-                  );
-                }),
-              )
-            : h('div', { className: 'mdstudio-slash-empty', role: 'status' }, t('slash.empty')),
-          h('div', { className: 'mdstudio-slash-foot' }, t('slash.foot')),
-        )
-      : null,
+    renderAiReviewOverlay(props),
     search.open
       ? h(
           'div',
           {
             className: 'mdstudio-searchbar',
             onKeyDown: function (event: ReactNamespace.KeyboardEvent<HTMLDivElement>) {
-              if (isImeEvent(event)) return;
+              if (isImeEvent(event) || outline.open) return;
               if (event.key === 'Escape') {
                 event.preventDefault();
                 event.stopPropagation();
@@ -775,7 +835,7 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
                 event.preventDefault();
                 search.onFind();
               }
-              if (event.key === 'Escape') {
+              if (event.key === 'Escape' && !outline.open) {
                 event.preventDefault();
                 search.onClose();
               }
@@ -796,7 +856,7 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
                 event.preventDefault();
                 search.onReplaceOne();
               }
-              if (event.key === 'Escape') {
+              if (event.key === 'Escape' && !outline.open) {
                 event.preventDefault();
                 search.onClose();
               }
@@ -833,38 +893,6 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
           }),
         )
       : null,
-    outline.open
-      ? h(
-          'div',
-          {
-            className: 'mdstudio-outline',
-            ref: outlineRef,
-            style: { left: outlineLeft },
-            role: 'navigation',
-            'aria-label': t('outline.title'),
-          },
-          h('div', { className: 'mdstudio-outline-head' }, t('outline.title')),
-          outline.headings.length
-            ? outline.headings.map(function (heading, index) {
-                return h(
-                  'button',
-                  {
-                    type: 'button',
-                    key: 'outline-' + heading.start + '-' + index,
-                    className: 'mdstudio-outline-item mdstudio-drop-item',
-                    style: { paddingLeft: 8 + (heading.level - 1) * 10, fontWeight: heading.level <= 2 ? 600 : 400 },
-                    onClick: function () {
-                      outline.onFocus(heading);
-                    },
-                    title: heading.text,
-                  },
-                  h('span', { className: 'mdstudio-outline-lvl', 'aria-hidden': 'true' }, 'H' + heading.level),
-                  h('span', { className: 'mdstudio-outline-text' }, heading.text),
-                );
-              })
-            : h('p', { className: 'mdstudio-outline-empty' }, t('outline.empty')),
-        )
-      : null,
     h(
       'div',
       {
@@ -877,6 +905,9 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
           disarmEscapeTab();
         },
       },
+      renderFloatingSkillTrigger(props),
+      renderSlashMenu(props),
+      renderOutlinePopover(props, outlineRef, outlineLeft),
       content.useCodeMirror
         ? h(CodeMirrorEditor, {
             React: props.React,

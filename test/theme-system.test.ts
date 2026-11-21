@@ -328,29 +328,29 @@ check('unknown theme ids fall back to classic while preserving valid user accent
 check('every theme × accent × container keeps >= 4.5:1 contrast for inline strong, em, and links', () => {
   const sample = [
     ':::lead',
-    'Lead with **bold**, *italic*, and [link](https://example.com)',
+    'Lead with **bold**, *italic*, ++underline++, ==highlight==, and [link](https://example.com)',
     ':::',
     '',
     ':::tldr',
-    'Summary with **bold**, *italic*, and [link](https://example.com)',
+    'Summary with **bold**, *italic*, ++underline++, ==highlight==, and [link](https://example.com)',
     ':::',
     '',
     ':::pull',
-    'Pull quote with **bold**, *italic*, and [link](https://example.com)',
+    'Pull quote with **bold**, *italic*, ++underline++, ==highlight==, and [link](https://example.com)',
     ':::',
     '',
-    '> Blockquote with **bold**, *italic*, and [link](https://example.com)',
+    '> Blockquote with **bold**, *italic*, ++underline++, ==highlight==, and [link](https://example.com)',
     '',
     '> [!NOTE]',
-    '> Alert with **bold**, *italic*, and [link](https://example.com)',
+    '> Alert with **bold**, *italic*, ++underline++, ==highlight==, and [link](https://example.com)',
     '',
-    '| **Bold H** | *Italic H* | [Link H](https://example.com) |',
-    '| --- | --- | --- |',
-    '| 1 | 2 | 3 |',
+    '| **Bold H** | ++Under H++ | ==Mark H== | [Link H](https://example.com) |',
+    '| --- | --- | --- | --- |',
+    '| 1 | 2 | 3 | 4 |',
     '',
   ].join('\n');
   const containers = ['th', 'blockquote', '.mdstudio-pull', '.mdstudio-lead', '.mdstudio-tldr', '.mdstudio-alert'];
-  const inlines = ['strong', 'em', 'a'];
+  const inlines = ['strong', 'em', 'u', 'mark', 'a'];
   const resolveEffectiveBg = (el: HTMLElement, rootBg: string): string => {
     let cur: HTMLElement | null = el;
     while (cur) {
@@ -391,6 +391,14 @@ check('every theme × accent × container keeps >= 4.5:1 contrast for inline str
                 ratio >= 4.5,
                 `${theme.id} @ ${accent} ${containerSel} ${inlineSel} contrast ${ratio.toFixed(2)}:1 (${fg} on ${bg}) < 4.5:1`,
               );
+              if (inlineSel === 'mark' && containerSel === '.mdstudio-lead') {
+                const containerBg = resolveEffectiveBg(containerEl, rootBg);
+                assert.notEqual(
+                  bg,
+                  containerBg,
+                  `${theme.id} @ ${accent} .mdstudio-lead mark must stay visually distinct from lead bg (${bg})`,
+                );
+              }
             }
           }
         }

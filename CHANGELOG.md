@@ -2,6 +2,28 @@
 
 All notable changes to `dsh-markdown-studio` are documented in this file.
 
+## [0.1.10] - 2026-11-22
+
+### Fixed
+- **Container-Driven Responsive Layout (`@container mdstudio`)**:
+  - Declared `container-type: inline-size; container-name: mdstudio` on `.mdstudio-root` and migrated panel-internal responsive breakpoints (`1080px` drawer overlay, `960px` compact header/toolbar, `720px` single-pane collapse) from viewport `@media` to `@container mdstudio` while keeping body-portaled modals on `@media (max-width: 720px)` (`src/ui/styles.ts`). Expanded DeepSeek Harness sidebars (e.g. 1040px window with 280px sidebar -> 760px studio container) no longer crush split panes or overflow the formatting toolbar.
+  - Switched `SettingsDrawer` focus-trap width detection and narrow `CssWorkbench` view retention from `window.innerWidth` to `.mdstudio-root` `clientWidth` (`src/ui/settings-drawer.ts`, `src/app.ts`).
+- **Unified Transient Overlay Coordination, LIFO Escape & CSS Workbench Sync**:
+  - Consolidated transient overlay dismissal (`dismissTransientOverlays`) and draft cleanup (`clearCssWorkbenchDraft`) in `src/app.ts`; reset portaled `FormatMenu` declaratively via React `key` (`visible + overlayEpoch`) without `useEffect` so entering immersive mode or switching views never leaves orphaned floating menus (`src/ui/editor-pane.ts`).
+  - Exited any open `CssWorkbench` live draft when picking a saved custom theme, resetting styles, or importing a theme JSON so unsaved CSS drafts never hijack preview rendering (`src/app.ts`).
+  - Dismissed editor overlays on `ImmersiveDock` `write ↔ preview` switches and scoped `canHandleImmersiveShortcut('exit')` to visible editor panes so hidden search bars can no longer trap `Escape` in immersive preview; added LIFO `Escape` handling between `.mdstudio-outline` and `.mdstudio-searchbar` plus a document-level `Escape` fallback for active AI review sessions (`src/app.ts`, `src/ui/editor-pane.ts`).
+  - Hid the floating AI selection pill whenever a modal dialog is open (`hasActiveModal()`) while preserving the underlying selection on modal close, switched `FallbackToast` to `position: fixed`, prevented `SettingsDrawer` unmount from stealing focus from `CssWorkbench` or open modals, cleared `FallbackTooltip` on window blur/resize, and aligned `ImportModeDialog`/`MergeConflictDialog`/`WorkspaceDialog` close guards (`src/app.ts`, `src/ui/styles.ts`, `src/ui/settings-drawer.ts`, `src/ui/library-dialogs.ts`, `src/ui/dsh-primitives.ts`).
+- **Structural Editor-Wrap Overlay Anchoring & Caret-Aware Slash Menu**:
+  - Made `.mdstudio-editor-wrap` `position: relative` and moved `.mdstudio-slash`, `.mdstudio-outline`, and the floating AI `SkillSplitTrigger` inside it, eliminating hardcoded `top: 46px` / `top: 88px` offsets so wrapped multi-row search bars and 50px mobile toolbars never overlap popovers (`src/ui/editor-pane.ts`, `src/ui/selection-bubble.ts`, `src/ui/styles.ts`).
+  - Anchored `.mdstudio-slash` dynamically near the active caret via CodeMirror `coordsAtPos()` (with automatic above-caret flip when near the bottom edge) so `/` in centered immersive writing no longer collides with the top-left macOS titlebar zone (`src/application/use-slash-menu.ts`).
+- **Programmatic vs User Selection Classification for Floating AI Pill**:
+  - Tagged CodeMirror `revealRange`, `focusRange`, `setInlineBlocks`, and `setDiffTransition` dispatches with a `ProgrammaticSelection` annotation (`src/domain/editor-types.ts`, `src/ui/codemirror-core.ts`) and guarded `useSelectionBubble` against programmatic ranges and non-editor focus (searchbar/title/modal), eliminating false AI pill popups on Find Next, Outline jump, toolbar formatting, and `⌘/Ctrl+F` (`src/ui/selection-bubble.ts`, `src/app.ts`).
+- **Export Mermaid Theme Cache Consistency**:
+  - Extended `useMermaidAssets.ensure(markdown, targetTheme?)` and passed `mermaidThemeFor(settings)` explicitly in `useCopyActions` and `createArticleExporter.exportHtml` so copying or exporting HTML while `CssWorkbench` previews a different palette never falls back to raw Mermaid source (`src/application/use-mermaid-assets.ts`, `src/application/use-copy-actions.ts`, `src/application/article-exporter.ts`).
+- **Tinted-Paper Dark Mode & Inverted Surface Inline Contrast**:
+  - Included the `#mdstudio` root element in `normalizeDarkSurfaces` and `liftDarkText` (`src/adapters/dark-preview.ts`), fixing muddy light-gray paper backgrounds and 15 WCAG AA contrast violations across `warm`, `gallery`, and `ink` themes in Dark Mode.
+  - Added `u` and `b` to `invertedInlineRules` (`src/theme-system/core.ts`) and reused it in `poster` `LEAD.sticker` alongside an inverted ink-on-yellow `.mdstudio-lead mark` badge so highlighted text inside poster lead banners remains legible (`src/theme-system/atoms/inline.ts`).
+
 ## [0.1.9] - 2026-11-21
 
 ### Security

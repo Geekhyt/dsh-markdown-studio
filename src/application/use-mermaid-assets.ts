@@ -56,7 +56,7 @@ export interface MermaidAssetsOptions {
 export interface MermaidAssetsApi {
   cache: Map<string, MermaidCacheEntry>;
   version: number;
-  ensure: (markdown: string) => Promise<void>;
+  ensure: (markdown: string, targetTheme?: MermaidTheme) => Promise<void>;
   filenames: () => Set<string>;
 }
 
@@ -319,8 +319,8 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
     }
   }
 
-  async function ensureInternal(markdown: string, unstoppable: boolean): Promise<void> {
-    const theme = themeRef.current;
+  async function ensureInternal(markdown: string, unstoppable: boolean, targetTheme?: MermaidTheme): Promise<void> {
+    const theme = targetTheme || themeRef.current;
     const runKey = ensureRunKey(markdown, theme.directive, unstoppable);
     const existing = inFlightEnsureRef.current;
     if (existing && existing.key === runKey) return existing.promise;
@@ -332,8 +332,8 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
     return promise;
   }
 
-  function ensure(markdown: string): Promise<void> {
-    return ensureInternal(markdown, true);
+  function ensure(markdown: string, targetTheme?: MermaidTheme): Promise<void> {
+    return ensureInternal(markdown, true, targetTheme);
   }
 
   useDebouncedKeyTask(React, options.markdown + '\0' + options.theme.directive, 250, true, function () {

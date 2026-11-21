@@ -293,6 +293,8 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
       },
       Boolean(tip),
     );
+    useWindowEvent(React, 'blur', hide, Boolean(tip));
+    useWindowEvent(React, 'resize', hide, Boolean(tip));
     const resolved = tip ? (typeof props.label === 'function' ? props.label() : props.label) : '';
     const visible = Boolean(!props.disabled && tip && resolved);
     return h(

@@ -276,6 +276,23 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactNode {
   return props.React.createElement(SettingsDrawerContent, props);
 }
 
+function hasTakeoverSurface(drawer: HTMLElement | null): boolean {
+  const root = drawer ? drawer.closest<HTMLElement>('.mdstudio-root') : null;
+  if (root && root.querySelector('.mdstudio-css-workbench')) return true;
+  return Boolean(document.querySelector('[aria-modal="true"]'));
+}
+
+function isFocusLost(active: Element | null): boolean {
+  return !active || active === document.body || active === document.documentElement;
+}
+
+function shouldRestoreDrawerFocus(drawer: HTMLElement | null): boolean {
+  if (hasTakeoverSurface(drawer)) return false;
+  const active = document.activeElement;
+  if (isFocusLost(active)) return true;
+  return Boolean(drawer && drawer.contains(active));
+}
+
 function SettingsDrawerContent(props: SettingsDrawerProps): ReactNode {
   const h = props.React.createElement;
   const t = props.t;
@@ -293,10 +310,7 @@ function SettingsDrawerContent(props: SettingsDrawerProps): ReactNode {
     }, 0);
     return function () {
       window.clearTimeout(focusTimer);
-      const active = document.activeElement;
-      const focusInsideDrawer = Boolean(drawerRef.current && active && drawerRef.current.contains(active));
-      const focusLost = !active || active === document.body || active === document.documentElement;
-      if ((focusInsideDrawer || focusLost) && previous && document.contains(previous)) previous.focus();
+      if (shouldRestoreDrawerFocus(drawerRef.current) && previous && document.contains(previous)) previous.focus();
     };
   });
 
@@ -336,7 +350,10 @@ function SettingsDrawerContent(props: SettingsDrawerProps): ReactNode {
       'aria-label': t('drawer.title'),
       'data-mdstudio-tab': tab,
       onKeyDown: function (event: ReactNamespace.KeyboardEvent<HTMLElement>) {
-        if (typeof window !== 'undefined' && window.innerWidth <= 720) trapModalTab(event);
+        const containerW =
+          drawerRef.current?.closest<HTMLElement>('.mdstudio-root')?.clientWidth ||
+          (typeof window !== 'undefined' ? window.innerWidth : 1024);
+        if (containerW <= 720) trapModalTab(event);
       },
     },
     h(
