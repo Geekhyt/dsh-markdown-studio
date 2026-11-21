@@ -376,7 +376,11 @@ function SkillManagerDialogContent(props: SkillManagerDialogProps): ReactNode {
         form.selectedId === null
           ? h(
               'div',
-              { className: 'mdstudio-skill-item is-active is-draft' },
+              {
+                role: 'option',
+                'aria-selected': true,
+                className: 'mdstudio-skill-item is-active is-draft',
+              },
               h('span', { className: 'mdstudio-skill-item-name' }, form.name.trim() || t('ai.newSkillDraft')),
               h('span', { className: 'mdstudio-skill-item-chip is-draft' }, t('ai.newDraftChip')),
             )

@@ -72,17 +72,20 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
     return linkedFolder() || linkedFile();
   }
 
-  async function refreshPermission(): Promise<void> {
+  async function refreshPermission(): Promise<'granted' | 'prompt' | 'denied'> {
     const handle = permissionHandle();
     if (!handle || typeof handle.queryPermission !== 'function') {
       setPermission('granted');
-      return;
+      return 'granted';
     }
     try {
       const result = await handle.queryPermission({ mode: 'readwrite' });
-      setPermission(result === 'granted' ? 'granted' : result === 'denied' ? 'denied' : 'prompt');
+      const next = result === 'granted' ? 'granted' : result === 'denied' ? 'denied' : 'prompt';
+      setPermission(next);
+      return next;
     } catch (error) {
       setPermission('prompt');
+      return 'prompt';
     }
   }
 
@@ -280,7 +283,10 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
     documentRef.current = ref;
     const handle = ref.kind === 'file' ? ref.handle : ref.file;
     if (ref.kind === 'folder') workspacePickRef.current = ref.directory;
+    if (ref.version) stampRef.current = { handle, ...ref.version };
     setFileName(handle.name || '');
+    const perm = await refreshPermission();
+    if (!currentRequest(generation, article.id) || perm !== 'granted') return;
     try {
       const file = await handle.getFile();
       const fingerprint = await fileFingerprint(await file.text());
@@ -291,7 +297,6 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
     } catch (error) {
       if (currentRequest(generation, article.id)) markConflict('file.missing');
     }
-    if (currentRequest(generation, article.id)) await refreshPermission();
   }
 
   useMountDisposable(React, function () {
@@ -304,7 +309,9 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
 
   function checkExternalOnFocus(): void {
     if (!linkedFile() || conflictRef.current) return;
-    void restoringRef.current.then(function () {
+    void restoringRef.current.then(async function () {
+      const perm = await refreshPermission();
+      if (perm !== 'granted') return false;
       return isExternallyChanged();
     });
   }

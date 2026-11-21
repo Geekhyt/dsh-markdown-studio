@@ -335,6 +335,8 @@ export function createClientPlugin(
       dialogReturnFocusRef.current = null;
       if (target && target.isConnected) {
         window.requestAnimationFrame(() => target.focus());
+      } else {
+        window.requestAnimationFrame(() => focusEditor());
       }
     }
 
@@ -485,11 +487,14 @@ export function createClientPlugin(
       fileContext,
       onMenuClose: () => setMenuOpen(false),
       onOpenFile: async (directory, entry, text) => {
+        const isStaleOpen = (): boolean => !pageAliveRef.current || fileContext.linkedFile() !== entry.handle;
         resetEditorTo({ title: deriveTitleWithFallback(text), markdown: text, settings, view });
         fileContext.applyDocumentRef({ kind: 'folder', directory, file: entry.handle });
         await fileContext.stampFile(entry.handle, await entry.handle.getFile());
+        if (isStaleOpen()) return;
         fileContext.setFileName(entry.name);
         const imported = await importFolderAssets(directory, text, hostClient);
+        if (isStaleOpen() || store.getActive().markdown !== text) return;
         if (imported.text !== text) {
           setMarkdown(imported.text, {
             boundary: true,
@@ -1132,6 +1137,7 @@ export function createClientPlugin(
           onExportBundle: () => void articleExport.exportBundle(),
           onImport: docCommands.handleImportClick,
           onManageSkills: () => {
+            if (document.activeElement instanceof HTMLElement) dialogReturnFocusRef.current = document.activeElement;
             setMenuOpen(false);
             writingSkills.openManager(null);
           },
@@ -1459,7 +1465,10 @@ export function createClientPlugin(
           activeSkillId: writingSkills.skillState.activeSkillId,
           actions: {
             onClose: () => {
-              if (!dialogHost.open) writingSkills.closeManager();
+              if (!dialogHost.open) {
+                writingSkills.closeManager();
+                restoreDialogTriggerFocus();
+              }
             },
             onSelectDefault: writingSkills.selectSkill,
             onSave: writingSkills.saveCustom,

@@ -213,35 +213,69 @@ function handlePlainFormattingKey(
   }
 }
 
-function handleNonModKey(options: EditorShortcutsOptions, event: ReactNamespace.KeyboardEvent<HTMLElement>): boolean {
-  if (event.key === 'Escape' && options.cancelAiReview && options.cancelAiReview() === true) {
-    event.preventDefault();
-    return true;
+function isEmbeddedInteractiveTarget(target: EventTarget | null): boolean {
+  if (!target || typeof (target as HTMLElement).closest !== 'function') return false;
+  const el = target as HTMLElement;
+  if (el.closest('.mdstudio-ai-inline-card')) return true;
+  if (el.tagName === 'TEXTAREA') return false;
+  if (el.closest('button, a, input, select')) return true;
+  return Boolean(el.closest('.cm-scroller') && !el.closest('.cm-content'));
+}
+
+function indentOrOutdentSelection(options: EditorShortcutsOptions, shiftKey: boolean): void {
+  const value = options.editorValue();
+  const range = options.selection();
+  if (shiftKey) {
+    const lineStart = range.start > 0 ? value.lastIndexOf('\n', range.start - 1) + 1 : 0;
+    const match = /^(?: {2}|\t)/.exec(value.slice(lineStart));
+    if (match) {
+      const drop = match[0].length;
+      options.replaceRange(
+        value,
+        lineStart,
+        lineStart + drop,
+        '',
+        Math.max(lineStart, range.start - drop),
+        Math.max(lineStart, range.end - drop),
+      );
+    }
+    return;
   }
-  if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey) {
-    event.preventDefault();
-    if (!event.shiftKey && options.acceptAiReview && options.acceptAiReview() === true) return true;
-    const value = options.editorValue();
-    const range = options.selection();
-    if (event.shiftKey) {
-      const lineStart = range.start > 0 ? value.lastIndexOf('\n', range.start - 1) + 1 : 0;
-      const match = /^(?: {2}|\t)/.exec(value.slice(lineStart));
-      if (match) {
-        const drop = match[0].length;
-        options.replaceRange(
-          value,
-          lineStart,
-          lineStart + drop,
-          '',
-          Math.max(lineStart, range.start - drop),
-          Math.max(lineStart, range.end - drop),
-        );
-      }
+  options.replaceRange(value, range.start, range.end, '  ', range.start + 2, range.start + 2);
+}
+
+const ESCAPE_TAB_ARMED = new WeakMap<object, boolean>();
+const FALLBACK_SCOPE = {};
+
+function escapeScopeOf(event: ReactNamespace.KeyboardEvent<HTMLElement>): object {
+  return (event.currentTarget as object | null) || (event.target as object | null) || FALLBACK_SCOPE;
+}
+
+const MODIFIER_ONLY_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta']);
+
+function handleNonModKey(options: EditorShortcutsOptions, event: ReactNamespace.KeyboardEvent<HTMLElement>): boolean {
+  const scope = escapeScopeOf(event);
+  if (event.key === 'Escape') {
+    if (options.cancelAiReview && options.cancelAiReview() === true) {
+      ESCAPE_TAB_ARMED.delete(scope);
+      event.preventDefault();
       return true;
     }
-    options.replaceRange(value, range.start, range.end, '  ', range.start + 2, range.start + 2);
+    // WCAG 2.1.2 keyboard escape hatch: Escape followed by Tab/Shift+Tab releases focus from the editor.
+    ESCAPE_TAB_ARMED.set(scope, true);
+    return false;
+  }
+  if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    if (ESCAPE_TAB_ARMED.get(scope) || isEmbeddedInteractiveTarget(event.target)) {
+      ESCAPE_TAB_ARMED.delete(scope);
+      return true;
+    }
+    event.preventDefault();
+    if (!event.shiftKey && options.acceptAiReview && options.acceptAiReview() === true) return true;
+    indentOrOutdentSelection(options, event.shiftKey);
     return true;
   }
+  if (!MODIFIER_ONLY_KEYS.has(event.key)) ESCAPE_TAB_ARMED.delete(scope);
   return false;
 }
 

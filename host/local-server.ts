@@ -140,6 +140,8 @@ export function startLocalImageServer(options: {
             result.server.close(function () {
               resolve();
             });
+            result.server.closeIdleConnections?.();
+            result.server.closeAllConnections?.();
           } catch (error) {
             resolve();
           }

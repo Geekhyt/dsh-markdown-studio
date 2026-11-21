@@ -7,7 +7,7 @@
 
 import { codeThemeCss } from './code-themes';
 import { stripExternalCssUrls } from './domain/custom-css';
-import { type CustomTheme, extractCustomThemePreview, findCustomTheme } from './domain/custom-themes';
+import { type CustomTheme, extractCustomThemePreview, findCustomTheme, isCustomThemeId } from './domain/custom-themes';
 import { mix, rgba } from './theme-system/color';
 import { composeRecipe, type Recipe, recipePalette } from './theme-system/compose';
 import { RECIPES } from './theme-system/recipes';
@@ -656,15 +656,55 @@ function resolveUserCss(settings: ThemeSettings): string {
   return custom ? custom.css : '';
 }
 
+function extractCssSelectors(css: string): string {
+  const noComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  let out = '';
+  let depth = 0;
+  let quote = '';
+  for (let i = 0; i < noComments.length; i++) {
+    const ch = noComments[i];
+    if (quote) {
+      if (ch === '\\') i++;
+      else if (ch === quote) quote = '';
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      if (depth > 0) depth--;
+      if (depth === 0) out += '\n';
+    } else if (depth === 0) {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+function isStandaloneCustomCss(css: string): boolean {
+  const selectors = extractCssSelectors(css);
+  const hasRoot = /(?:#mdstudio|\.mdstudio-content)\b/i.test(selectors);
+  const hasProse = /(?:^|[,\s>+~])p(?=$|[\s,:{.#[])/im.test(selectors);
+  const hasHeadings = /\bh1\b/i.test(selectors) && /\bh2\b/i.test(selectors);
+  const hasBlocks = /\bblockquote\b/i.test(selectors) && /\bpre\b/i.test(selectors);
+  return hasRoot && hasProse && hasHeadings && hasBlocks;
+}
+
 export function buildCss(settings: ThemeSettings): string {
-  var theme = getTheme(settings.theme);
-  var css = theme.build(settings);
-  // Flush the first heading against the top of the article.
-  css +=
-    '\n.mdstudio-content > h1:first-child, .mdstudio-content > h2:first-child, .mdstudio-content > h3:first-child, .mdstudio-content > h4:first-child, .mdstudio-content > h5:first-child, .mdstudio-content > h6:first-child { margin: 0 0 0.8em; }';
-  var paper = paperCardRules(theme.id);
-  if (paper) css += '\n' + paper;
   var userCss = resolveUserCss(settings);
+  var standalone = isCustomThemeId(settings.theme) && Boolean(userCss.trim()) && isStandaloneCustomCss(userCss);
+  var theme = getTheme(settings.theme);
+  var css = standalone ? '' : theme.build(settings);
+  var flushSel =
+    '.mdstudio-content > h1:first-child, .mdstudio-content > h2:first-child, .mdstudio-content > h3:first-child, .mdstudio-content > h4:first-child, .mdstudio-content > h5:first-child, .mdstudio-content > h6:first-child';
+  // Built-in themes flush leading headings cleanly; standalone custom themes use :where() so user heading margins always win.
+  css += '\n' + (standalone ? ':where(' + flushSel + ')' : flushSel) + ' { margin: 0 0 0.8em; }';
+  if (!standalone) {
+    var paper = paperCardRules(theme.id);
+    if (paper) css += '\n' + paper;
+  }
   if (userCss.trim()) {
     css += '\n/* user styles */\n' + (settings.allowExternalCssResources ? userCss : stripExternalCssUrls(userCss));
   }

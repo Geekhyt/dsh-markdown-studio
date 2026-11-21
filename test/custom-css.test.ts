@@ -134,4 +134,40 @@ const lineContUrl = stripExternalCssUrls(
 );
 assert.equal(lineContUrl.includes('evil.example'), false, 'newline-escaped url() is stripped');
 
-console.log('24 custom-css and custom-themes checks passed.');
+const dataThenRemoteImageSet = stripExternalCssUrls(
+  '#mdstudio p { background-image: image-set("data:image/png;base64,iVBORw0KGgo=" 1x, "https://attacker.example/beacon.png" 2x); color: #111; }',
+);
+assert.equal(
+  dataThenRemoteImageSet.includes('attacker.example'),
+  false,
+  'image-set() with data:;base64 before remote URL is stripped',
+);
+assert.ok(dataThenRemoteImageSet.includes('color: #111'), 'sibling declarations survive image-set strip');
+
+const inlineSvgDataUrl =
+  '#mdstudio p { background-image: url("data:image/svg+xml,<svg xmlns=\\"http://www.w3.org/2000/svg\\"></svg>"); }';
+assert.equal(
+  stripExternalCssUrls(inlineSvgDataUrl),
+  inlineSvgDataUrl,
+  'unencoded inline SVG data: URL with XML namespace is preserved',
+);
+
+for (const hardened of [
+  '#mdstudio p { background-image: src("https://attacker.example/a.png" type("image/png")); }',
+  '#mdstudio p { background-image: u\\72l("https://attacker.example/track.png" anonymous); }',
+  '#mdstudio p { background: url("\\68ttps://attacker.example/a\\"b"); }',
+  '#mdstudio p { background: image-set("data:image/svg+xml,\\"" 1x, "https://attacker.example/beacon.png" 2x); }',
+  '#mdstudio p { background: url("https://attacker.example/a)b"); color: #111; }',
+  '@import url("https://attacker.example/a;b.css"); #mdstudio p { color: #222; }',
+]) {
+  const out = stripExternalCssUrls(hardened);
+  assert.equal(/attacker\.example/.test(out), false, `hardened CSS URL vector stripped: ${hardened}`);
+}
+assert.ok(
+  stripExternalCssUrls('@import url("https://attacker.example/a;b.css"); #mdstudio p { color: #222; }').includes(
+    'color: #222',
+  ),
+  'sibling rule survives quoted-semicolon @import removal',
+);
+
+console.log('34 custom-css and custom-themes checks passed.');

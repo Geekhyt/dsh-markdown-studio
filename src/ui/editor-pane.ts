@@ -670,6 +670,7 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
           {
             title: t('toolbar.outline'),
             active: outline.open,
+            ariaExpanded: outline.open,
             onClick: function () {
               if (!outline.open) setOutlineLeft(computeOutlineLeft(outlineAnchorRef.current));
               toolbar.onOutline();

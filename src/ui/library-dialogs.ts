@@ -215,6 +215,22 @@ function buildLibraryMenuItems(props: LibraryDialogProps): DshMenuEntry[] {
   return items;
 }
 
+function toggleLibraryTab(current: 'docs' | 'trash'): 'docs' | 'trash' {
+  return current === 'docs' ? 'trash' : 'docs';
+}
+
+const LIBRARY_TAB_KEYS: Record<string, (current: 'docs' | 'trash') => 'docs' | 'trash'> = {
+  Home: () => 'docs',
+  End: () => 'trash',
+  ArrowLeft: toggleLibraryTab,
+  ArrowRight: toggleLibraryTab,
+};
+
+function nextLibraryTab(key: string, current: 'docs' | 'trash'): 'docs' | 'trash' | null {
+  const resolver = LIBRARY_TAB_KEYS[key];
+  return resolver ? resolver(current) : null;
+}
+
 function emptyLibraryMessage(tab: 'docs' | 'trash', hasQuery: boolean, t: (key: string) => string): string {
   if (hasQuery) return t('library.noResults');
   return tab === 'trash' ? t('library.trashEmpty') : t('library.empty');
@@ -311,13 +327,26 @@ export function LibraryDialog(props: LibraryDialogProps): ReactNode {
       }),
       h(
         'div',
-        { className: 'mdstudio-library-seg', role: 'tablist', 'aria-label': t('library.title') },
+        {
+          className: 'mdstudio-library-seg',
+          role: 'tablist',
+          'aria-label': t('library.title'),
+          onKeyDown: function (event: ReactNamespace.KeyboardEvent<HTMLDivElement>) {
+            const next = nextLibraryTab(event.key, tab);
+            if (!next) return;
+            event.preventDefault();
+            setTab(next);
+            event.currentTarget.querySelector<HTMLButtonElement>('[data-mdstudio-tab="' + next + '"]')?.focus();
+          },
+        },
         h(
           'button',
           {
             type: 'button',
             role: 'tab',
+            'data-mdstudio-tab': 'docs',
             'aria-selected': tab === 'docs',
+            tabIndex: tab === 'docs' ? 0 : -1,
             className: 'mdstudio-library-tab' + (tab === 'docs' ? ' is-active' : ''),
             onClick: function () {
               setTab('docs');
@@ -330,7 +359,9 @@ export function LibraryDialog(props: LibraryDialogProps): ReactNode {
           {
             type: 'button',
             role: 'tab',
+            'data-mdstudio-tab': 'trash',
             'aria-selected': tab === 'trash',
+            tabIndex: tab === 'trash' ? 0 : -1,
             className: 'mdstudio-library-tab' + (tab === 'trash' ? ' is-active' : ''),
             onClick: function () {
               setTab('trash');

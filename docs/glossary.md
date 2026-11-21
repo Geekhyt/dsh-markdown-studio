@@ -4,7 +4,7 @@
 - **Library**：本地有序的文章集合，持久化在一个 v2 key 下。
 - **DocumentStore**：活动文章、文章库、设置和视图的唯一写入方。
 - **DocumentRef**：活动文章的来源，可能是文章库条目、单个文件句柄或文件夹工作区中的文件。联合类型让文章库 / 文件 / 文件夹状态不会混用。
-- **Workspace**：目录句柄和直接位于其中的 Markdown 文件。只处理根目录及其 `assets/` 目录。
+- **Workspace**：本地文件夹句柄及其 Markdown 文件目录树（递归遍历子目录，最多 8 层深度，支持新建/重命名/删除文件与目录，并自动管理旁路 `assets/` 资源目录）。
 - **Asset**：本地图片服务保存的图片，按内容哈希寻址。标准引用是 `assets/<hash>.<ext>`。
 - **StoredAsset / AssetItem**：Host 保存或列出图片后返回的 domain 值（`src/domain/images.ts`），包含可移植路径、本地 URL、MIME 类型和字节数。
 - **Portable asset path**：Markdown 中唯一持久化的图片引用形式 `assets/<hash>.<ext>`。base64 和本地回环 URL 只是传输或渲染形态，加载时会被 `portableizeAssetUrls` 迁移回可移植路径。

@@ -2,6 +2,31 @@
 
 All notable changes to `dsh-markdown-studio` are documented in this file.
 
+## [0.1.7] - 2026-11-21
+
+### Security
+- **Quote- & Paren-Aware Custom CSS Sanitizer**: Replaced regex-only external resource stripping (`src/domain/custom-css.ts`) with a quote- and parenthesis-aware scanner that strips comments and line continuations first, blocking escaped quotes (`\"` / `\22 `), `image-set()`/`src()`/`url()` modifiers, unclosed quotes, and URLs containing `)` or `;` while preserving inline `data:image/svg+xml` assets.
+- **Host Loopback Allowlist**: Tightened `Host` validation on the local asset and AI routes (`host/http/routes.ts`, `host/http/ai-route.ts`) to an explicit loopback host allowlist (`127.0.0.1`, `localhost`, `[::1]`, `::1`) to prevent DNS-rebinding bypasses.
+
+### Fixed
+- **Standalone Custom CSS Theme Isolation**: Fixed `isStandaloneCustomCss` (`src/themes.ts`) to strip comments and declaration bodies before matching selectors; standalone `custom:*` themes no longer forcibly prepend `classic` base rules (allowing users to remove default `01` heading counters) and use zero-specificity `:where(...)` for first-child heading flush while keeping all 8 built-in themes pixel-identical.
+- **Markdown Parser & CSS Inliner Accuracy**:
+  - Fixed link reference definitions immediately following a footnote (`[^1]: ...` + `[ref]: url`), nested `***bold** and italic* and **more**`, GFM table interruption before headings/blockquotes/lists containing `|`, single-column GFM tables, and `:::scroll-x` directive depth tracking across nested `---` / multi-paragraph callouts (`src/markdown-parser.ts`).
+  - Fixed balanced `:is()`/`:not()`/`:where()` specificity calculation, uppercase CSS property lowercasing, and element-scoped counter variable resolution (`src/css-inliner.ts`).
+- **WeChat Clipboard Nested List Order**: Fixed `moveNestedLists` (`src/adapters/wechat-clipboard-dom.ts`) to preserve original sibling order when a single `<li>` contains multiple consecutive nested `<ul>`/`<ol>` lists, while maintaining full WeChat Official Account `plugin_spec` compliance.
+- **Asset GC, Mermaid & Local File Concurrency**:
+  - Parsed serialized import-recovery JSON properly in `collectImportRecoveryAssets` (`src/application/use-library-archive.ts`) so pre-import recovery assets are protected from orphan GC.
+  - Deduplicated in-flight `useMermaidAssets` renders per `(markdown, theme)` and guarded uploads by generation token (`src/application/use-mermaid-assets.ts`).
+  - Verified permission and seeded file timestamps in `useFileContext` (`src/application/use-file-context.ts`), guarded `onOpenFile` against stale handle switches (`src/app.ts`), closed keep-alive HTTP connections cleanly on `LocalAssetServer.stop()` (`host/local-server.ts`), and wrapped `getDefaultModel()?.currentSelection()` in `try/catch` (`host/application/ai-service.ts`).
+- **Dark Preview & Selection Bubble Lifecycle**: Guarded `applyDarkPreview` against unmount/cancellation across async `mp-darkmode` import, cleaned up stale `js_darkmode_style` tags when switching from light themes into built-in dark themes (`night`), removed duplicate `dangerouslySetInnerHTML` on `PreviewPane`, tracked `darkApplied` state for StrictMode / fast theme switches (`src/adapters/dark-preview.ts`, `src/runtime/dom-surfaces.ts`, `src/ui/preview-pane.ts`), and canceled pending `requestAnimationFrame` work in `useSelectionBubble` while lifting `minTop` to `88px` when `.has-search` is open (`src/ui/selection-bubble.ts`).
+
+### Accessibility & UX
+- **WCAG 2 AA Contrast Across Code & Editorial Themes**: Lifted token contrast across 6 built-in code themes (`github`, `one-dark`, `dracula`, `nord`, `solarized-light`, `monokai` in `src/code-themes.ts`) and clamped theme accent/link/muted/del colors against callout and quote surfaces (`src/theme-system/compose.ts`) to meet WCAG 2 AA (`>= 4.5:1`).
+- **Keyboard Navigation, ARIA & Mobile Touch Targets**:
+  - Scoped editor `Tab` interception to `.cm-content`/`<textarea>` (leaving `.cm-scroller` and inline AI diff buttons unaffected) and added WCAG 2.1.2 `Escape → Tab` / `Escape → Shift+Tab` focus escape (`src/application/editor-shortcuts.ts`, `src/ui/codemirror-core.ts`).
+  - Added `role="option"` + `aria-selected` on draft skills and focus restoration when closing `SkillManagerDialog`, roving `tabIndex` + Arrow/Home/End navigation in `LibraryDialog`, `:not([tabindex="-1"])` container wrap in `trapModalTab`, and `aria-expanded` on Settings Drawer / Outline triggers (`src/ui/skill-manager-dialog.ts`, `src/ui/library-dialogs.ts`, `src/ui/dsh-primitives.ts`, `src/ui/header-bar.ts`, `src/ui/editor-pane.ts`).
+  - Raised mobile (`<= 720px`) CSS Workbench action buttons to `>= 44px` touch targets (`src/ui/styles.ts`) and updated `docs/glossary.md` & `docs/wechat-html.md`.
+
 ## [0.1.6] - 2026-11-21
 
 ### Security
@@ -69,6 +94,7 @@ Initial public release.
   - Host-side content-addressed PNG/JPEG store (`$DSH_HOME/storages/dsh-markdown-studio/assets/`) with magic-byte validation, authenticated write routes, automatic reference-counted garbage collection on permanent article deletion, and a read-only loopback server (`127.0.0.1:4010-4019`) so Markdown stays portable as `assets/<hash>.png`.
   - Multi-article `localStorage` library with no artificial article/trash limits, future-schema overwrite protection, unreadable-payload preservation, keyword-highlighted search, conflict-aware merge dialog, `PK` magic-header `.zip` archive import/export (`4096` entries / `256 MiB` bounded decompression), and SHA-256 baseline conflict detection for local File System Access API `.md` / folder workspaces.
 
+[0.1.7]: https://github.com/Geekhyt/dsh-markdown-studio/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/Geekhyt/dsh-markdown-studio/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/Geekhyt/dsh-markdown-studio/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/Geekhyt/dsh-markdown-studio/compare/v0.1.3...v0.1.4

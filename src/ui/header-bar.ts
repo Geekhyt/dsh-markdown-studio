@@ -259,6 +259,7 @@ export function HeaderBar(props: HeaderBarProps): ReactNode {
             type: 'button',
             className: 'mdstudio-icon-btn mdstudio-style-btn' + (state.drawerOpen ? ' is-active' : ''),
             'aria-label': t('drawer.title'),
+            'aria-expanded': state.drawerOpen,
             onClick: actions.onToggleDrawer,
           },
           icon('sliders', 16),

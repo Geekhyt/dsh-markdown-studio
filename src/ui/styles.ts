@@ -773,6 +773,7 @@ export const CHROME_CSS: string = [
   '  html:not([data-platform]) .mdstudio-editor-pane:not(.mdstudio-css-workbench)::after { height: 49px; }',
   '  .mdstudio-root[data-mdstudio-immersive="write"] .mdstudio-editor-pane::after { display: none; }',
   '  html:not([data-platform]) .mdstudio-toolbar button { min-width: 44px; min-height: 44px; }',
+  '  html:not([data-platform]) .mdstudio-css-workbench .mdstudio-css-back-btn, html:not([data-platform]) .mdstudio-css-workbench .mdstudio-css-btn, html:not([data-platform]) .mdstudio-css-workbench .mdstudio-custom-chip, html:not([data-platform]) .mdstudio-css-workbench .mdstudio-custom-add-btn { min-height: 44px; }',
   '  .mdstudio-library-head { flex-wrap: wrap; padding: 10px 12px; gap: 8px; }',
   '  .mdstudio-library-seg, .mdstudio-workspace-loc { margin-right: auto; }',
   '  .mdstudio-library-search, .mdstudio-library-search-wrap, .mdstudio-workspace-search, .mdstudio-workspace-search-wrap { flex: 1 1 100%; width: 100%; order: 2; }',

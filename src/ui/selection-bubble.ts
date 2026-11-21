@@ -2,7 +2,7 @@ import type * as ReactNamespace from 'react';
 import type { SelectionRange } from '../domain/article';
 import type { EditorApi } from '../domain/editor-types';
 import { clamp } from '../domain/settings';
-import { useMountDisposable } from '../runtime/react-lifecycle';
+import { useLatest, useMountDisposable } from '../runtime/react-lifecycle';
 
 interface PointerPoint {
   x: number;
@@ -39,12 +39,13 @@ function computeSelectionBubblePos(
   if (!pane) return null;
   const paneRect = pane.getBoundingClientRect();
   const anchor = resolveBubbleViewportPoint(api, range, pointer);
+  const minTop = pane.classList.contains('has-search') ? 88 : 44;
   if (!anchor) {
-    return { top: 52, left: clamp(24, 12, Math.max(12, paneRect.width - 144)) };
+    return { top: Math.max(52, minTop), left: clamp(24, 12, Math.max(12, paneRect.width - 144)) };
   }
   const rawBelow = anchor.yBottom - paneRect.top + 6;
   const rawTop = rawBelow + 38 <= paneRect.height ? rawBelow : anchor.yTop - paneRect.top - 38;
-  const top = clamp(Math.round(rawTop), 44, Math.max(44, paneRect.height - 40));
+  const top = clamp(Math.round(rawTop), minTop, Math.max(minTop, paneRect.height - 40));
   const left = clamp(Math.round(anchor.x - paneRect.left - 24), 12, Math.max(12, paneRect.width - 144));
   return { top, left };
 }
@@ -68,22 +69,34 @@ export interface SelectionBubbleApi {
 
 export function useSelectionBubble(options: SelectionBubbleOptions): SelectionBubbleApi {
   const { React, rootRef, codeMirrorApiRef, lastSelectionRef } = options;
+  const optionsRef = useLatest(React, options);
   const [pos, setPos] = React.useState<{ top: number; left: number } | null>(null);
   const pointerSelectingRef = React.useRef(false);
   const pointerPointRef = React.useRef<PointerPoint | null>(null);
   const pointerCleanupRef = React.useRef<(() => void) | null>(null);
+  const rafIdRef = React.useRef<number | null>(null);
+
+  function cancelPendingRaf(): void {
+    if (rafIdRef.current !== null && typeof window !== 'undefined') {
+      window.cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
+  }
 
   useMountDisposable(React, function () {
     return function () {
+      cancelPendingRaf();
       if (pointerCleanupRef.current) pointerCleanupRef.current();
     };
   });
 
   function clear(): void {
+    cancelPendingRaf();
     setPos(null);
   }
 
   function clearPointer(): void {
+    cancelPendingRaf();
     pointerSelectingRef.current = false;
     pointerPointRef.current = null;
   }
@@ -101,6 +114,7 @@ export function useSelectionBubble(options: SelectionBubbleOptions): SelectionBu
 
   function onPointerDown(event: ReactNamespace.MouseEvent<HTMLDivElement>): void {
     if (event.button !== 0 || isInlineCardEventTarget(event.target)) return;
+    cancelPendingRaf();
     if (pointerCleanupRef.current) pointerCleanupRef.current();
     pointerSelectingRef.current = true;
     pointerPointRef.current = null;
@@ -111,13 +125,16 @@ export function useSelectionBubble(options: SelectionBubbleOptions): SelectionBu
       pointerSelectingRef.current = false;
       pointerPointRef.current =
         upEvent.clientX > 0 || upEvent.clientY > 0 ? { x: upEvent.clientX, y: upEvent.clientY, at: Date.now() } : null;
-      window.requestAnimationFrame(function () {
-        const curRange = codeMirrorApiRef.current ? codeMirrorApiRef.current.getSelection() : options.selection();
+      rafIdRef.current = window.requestAnimationFrame(function () {
+        rafIdRef.current = null;
+        const latest = optionsRef.current;
+        const curRange = codeMirrorApiRef.current ? codeMirrorApiRef.current.getSelection() : latest.selection();
         lastSelectionRef.current = curRange;
-        sync(options.editorValue(), curRange);
+        sync(latest.editorValue(), curRange);
       });
     };
     pointerCleanupRef.current = function () {
+      cancelPendingRaf();
       window.removeEventListener('mouseup', onUp, true);
       pointerCleanupRef.current = null;
     };

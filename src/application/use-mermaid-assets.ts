@@ -120,6 +120,7 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
   const [version, setVersion] = React.useState(0);
   const loadPromiseRef = React.useRef<Promise<MermaidModule | null> | null>(null);
   const ensureGenRef = React.useRef(0);
+  const inFlightEnsureRef = React.useRef<{ key: string; promise: Promise<void> } | null>(null);
   const themeRef = useLatest(React, options.theme);
 
   function load(): Promise<MermaidModule | null> {
@@ -193,36 +194,79 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
     if (options.pageAliveRef.current) setVersion((value) => value + 1);
   }
 
-  async function ensure(markdown: string): Promise<void> {
-    const gen = ++ensureGenRef.current;
-    const blocks = extractMermaidBlocks(markdown);
-    if (!blocks.length) {
-      cacheRef.current.clear();
+  function awaitExistingEntry(cached: MermaidCacheEntry | undefined): Promise<void> | 'ready' | null {
+    if (!cached) return null;
+    if (cached.status === 'ready') return 'ready';
+    return cached.status === 'loading' ? cached.promise || Promise.resolve() : null;
+  }
+
+  async function ensureBlock(
+    mermaid: MermaidModule,
+    theme: MermaidTheme,
+    key: string,
+    code: string,
+    index: number,
+  ): Promise<void> {
+    const existing = awaitExistingEntry(cacheRef.current.get(key));
+    if (existing === 'ready') return;
+    if (existing) {
+      await existing;
       return;
     }
-    const mermaid = await load();
-    if (!mermaid || typeof mermaid.render !== 'function' || gen !== ensureGenRef.current) return;
-    const theme = themeRef.current;
-    const keys = blocks.map(function (code) {
-      return mermaidCacheKey(code, theme);
-    });
+    const task = renderAndStore(mermaid, theme, key, code, index);
+    cacheRef.current.set(key, { status: 'loading', promise: task });
+    await task;
+  }
+
+  function pruneInactiveCache(keys: string[]): void {
     const active = new Set(keys);
     cacheRef.current.forEach(function (_entry, key) {
       if (!active.has(key)) cacheRef.current.delete(key);
     });
+  }
+
+  function isCurrentGen(gen: number): boolean {
+    return gen === ensureGenRef.current;
+  }
+
+  async function renderAllBlocks(
+    mermaid: MermaidModule,
+    theme: MermaidTheme,
+    blocks: string[],
+    gen: number,
+  ): Promise<void> {
+    const keys = blocks.map((code) => mermaidCacheKey(code, theme));
+    pruneInactiveCache(keys);
     for (let index = 0; index < blocks.length; index++) {
-      if (gen !== ensureGenRef.current) return;
-      const key = keys[index];
-      const cached = cacheRef.current.get(key);
-      if (cached && cached.status === 'ready') continue;
-      if (cached && cached.status === 'loading') {
-        if (cached.promise) await cached.promise;
-        continue;
-      }
-      const task = renderAndStore(mermaid, theme, key, blocks[index], index);
-      cacheRef.current.set(key, { status: 'loading', promise: task });
-      await task;
+      if (!isCurrentGen(gen)) return;
+      await ensureBlock(mermaid, theme, keys[index], blocks[index], index);
     }
+  }
+
+  async function runEnsure(markdown: string, theme: MermaidTheme, gen: number): Promise<void> {
+    const blocks = extractMermaidBlocks(markdown);
+    if (!blocks.length) {
+      if (isCurrentGen(gen)) cacheRef.current.clear();
+      return;
+    }
+    const mermaid = await load();
+    if (!mermaid || typeof mermaid.render !== 'function' || !isCurrentGen(gen)) return;
+    await renderAllBlocks(mermaid, theme, blocks, gen);
+  }
+
+  async function ensure(markdown: string): Promise<void> {
+    const theme = themeRef.current;
+    const runKey = markdown + '\0' + theme.directive;
+    const existing = inFlightEnsureRef.current;
+    if (existing && existing.key === runKey) return existing.promise;
+    const gen = ++ensureGenRef.current;
+    const promise = runEnsure(markdown, theme, gen).finally(function () {
+      if (inFlightEnsureRef.current && inFlightEnsureRef.current.promise === promise) {
+        inFlightEnsureRef.current = null;
+      }
+    });
+    inFlightEnsureRef.current = { key: runKey, promise };
+    return promise;
   }
 
   useDebouncedKeyTask(React, options.markdown + '\0' + options.theme.directive, 250, true, function () {

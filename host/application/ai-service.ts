@@ -168,7 +168,12 @@ export class AiHostService {
     } catch (error) {
       models = [];
     }
-    const def = this.getDefaultModel()?.currentSelection();
+    let def: HostDefaultModelSelection | undefined;
+    try {
+      def = this.getDefaultModel()?.currentSelection();
+    } catch (error) {
+      def = undefined;
+    }
     const defProvider = trimString(def?.provider);
     const defModel = trimString(def?.model);
     const matched =

@@ -456,20 +456,19 @@ function isIntrawordGuarded(ch: string): boolean {
   return ch === '_' || ch === '+' || ch === '=';
 }
 
+function canSplitTripleOpen(text: string, index: number, delimiter: string, ch: string): boolean {
+  if (delimiter !== '**' && delimiter !== '*' && delimiter !== '__' && delimiter !== '_') return false;
+  if (text.charAt(index + 1) !== ch || text.charAt(index + 2) !== ch) return false;
+  const fourth = text.charAt(index + 3);
+  return Boolean(fourth && fourth !== ch && !/\s/.test(fourth));
+}
+
 function canOpenEmphasis(text: string, index: number, delimiter: string): boolean {
   const ch = delimiter.charAt(0);
   const after = text.charAt(index + delimiter.length);
   if (!after || /\s/.test(after)) return false;
-  // Allow `**` to open at `***italic* and bold**` while rejecting `****`.
-  if (
-    after === ch &&
-    !(
-      delimiter === '**' &&
-      text.charAt(index + 3) &&
-      text.charAt(index + 3) !== ch &&
-      !/\s/.test(text.charAt(index + 3))
-    )
-  ) {
+  // Allow `**` / `*` (or `__` / `_`) to split a leading triple run (`***italic* and bold**` or `***bold** and italic*`).
+  if (after === ch && !canSplitTripleOpen(text, index, delimiter, ch)) {
     return false;
   }
   const before = index > 0 ? text.charAt(index - 1) : '';
@@ -519,6 +518,7 @@ function findClosingDelimiter(text: string, from: number, delimiter: string): nu
   const ch = delimiter.charAt(0);
   const len = delimiter.length;
   const trackNested = (ch === '*' || ch === '_') && len < 3;
+  const openedInsideTriple = trackNested && text.charAt(from) === ch;
   const state: EmphasisScanState = { complementOpen: false, tripleDepth: 0, fallbackTriple: -1 };
   for (let i = from; i <= text.length - len; i++) {
     const jumped = skipCodeOrMath(text, i);
@@ -534,7 +534,10 @@ function findClosingDelimiter(text: string, from: number, delimiter: string): nu
     if (cur !== ch) continue;
     let runLen = 1;
     while (text.charAt(i + runLen) === ch) runLen++;
-    if (runLen === len && canCloseAt(text, from, i, i, ch, len)) return i;
+    if (runLen === len && canCloseAt(text, from, i, i, ch, len)) {
+      if (openedInsideTriple && state.complementOpen) return -1;
+      return i;
+    }
     if (trackNested) {
       const matched = stepStarOrUnderRun(text, from, i, ch, len, runLen, state);
       if (matched !== -1) return matched;
@@ -900,12 +903,16 @@ function isHeading(line: string): boolean {
   return /^ {0,3}#{1,6}(?:\s|$)/.test(line);
 }
 
+function isTableSeparatorLine(line: string): boolean {
+  return /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)+\|?\s*$/.test(line) || /^\s*\|\s*:?-{1,}:?\s*\|\s*$/.test(line);
+}
+
 function isTableStart(lines: string[], index: number): boolean {
   if (index + 1 >= lines.length) return false;
   var head = lines[index];
   var sep = lines[index + 1];
   if (head.indexOf('|') === -1 || sep.indexOf('|') === -1) return false;
-  if (!/^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)+\|?\s*$/.test(sep)) return false;
+  if (!isTableSeparatorLine(sep)) return false;
   return splitTableRow(head).length === splitTableRow(sep).length;
 }
 
@@ -968,6 +975,19 @@ function splitTableRow(line: string): string[] {
   return splitTableCells(row);
 }
 
+function isTableInterrupt(line: string): boolean {
+  return (
+    isHeading(line) ||
+    isFence(line) ||
+    isMathBlockStart(line) ||
+    isScrollContainerStart(line) ||
+    isEditorialContainerStart(line) ||
+    isHr(line) ||
+    /^ {0,3}>/.test(line) ||
+    isListLine(line)
+  );
+}
+
 function renderTable(lines: string[], start: number, ctx: RenderContext): BlockResult {
   var header = splitTableRow(lines[start]);
   var divider = splitTableRow(lines[start + 1]);
@@ -980,7 +1000,7 @@ function renderTable(lines: string[], start: number, ctx: RenderContext): BlockR
   });
   var rows: string[][] = [];
   var i = start + 2;
-  while (i < lines.length && lines[i].trim() !== '' && lines[i].indexOf('|') !== -1) {
+  while (i < lines.length && lines[i].trim() !== '' && lines[i].indexOf('|') !== -1 && !isTableInterrupt(lines[i])) {
     rows.push(splitTableRow(lines[i]));
     i++;
   }
@@ -1293,14 +1313,21 @@ function parseStandaloneImageLine(line: string, ctx?: RenderContext): { html: st
   return { html: token.html, caption: parsed.label.trim() };
 }
 
+function stepDirectiveDepth(depth: number, line: string): number {
+  if (/^ {0,3}:::\s*$/.test(line)) return Math.max(0, depth - 1);
+  if (isBlockDirectiveStart(line)) return depth + 1;
+  return depth;
+}
+
 function splitSlideGroups(body: string[], splitOnBlank: boolean): string[][] {
   var groups: string[][] = [];
   var current: string[] = [];
   var fenceState: FenceOpening | null = null;
+  var directiveDepth = 0;
   for (var i = 0; i < body.length; i++) {
     var line = body[i];
     fenceState = stepFenceState(fenceState, line);
-    var isSep = !fenceState && (splitOnBlank ? /^\s*$/.test(line) : isHr(line));
+    var isSep = !fenceState && directiveDepth === 0 && (splitOnBlank ? /^\s*$/.test(line) : isHr(line));
     if (isSep) {
       if (
         current.some(function (item) {
@@ -1311,6 +1338,7 @@ function splitSlideGroups(body: string[], splitOnBlank: boolean): string[][] {
       current = [];
       continue;
     }
+    if (!fenceState) directiveDepth = stepDirectiveDepth(directiveDepth, line);
     current.push(line);
   }
   if (
@@ -1324,10 +1352,14 @@ function splitSlideGroups(body: string[], splitOnBlank: boolean): string[][] {
 
 function hasTopLevelHr(body: string[]): boolean {
   var fenceState: FenceOpening | null = null;
+  var directiveDepth = 0;
   for (var i = 0; i < body.length; i++) {
     var prevFence = fenceState;
     fenceState = stepFenceState(fenceState, body[i]);
-    if (!prevFence && !fenceState && isHr(body[i])) return true;
+    if (!prevFence && !fenceState) {
+      if (directiveDepth === 0 && isHr(body[i])) return true;
+      directiveDepth = stepDirectiveDepth(directiveDepth, body[i]);
+    }
   }
   return false;
 }
@@ -1719,7 +1751,10 @@ function extractDefinitions(text: string): {
       current.text += '\n' + line.replace(/^(?: {2,}|\t)+/, '');
       continue;
     }
-    if (!current && parseLinkRefLine(line, linkDefs)) continue;
+    if (parseLinkRefLine(line, linkDefs)) {
+      current = null;
+      continue;
+    }
     current = null;
     kept.push(line);
   }

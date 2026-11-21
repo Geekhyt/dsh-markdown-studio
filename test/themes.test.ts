@@ -180,4 +180,42 @@ assert.ok(
   'explicit codeTheme overrides custom theme pre colors',
 );
 
-console.log('24 theme checks passed.');
+const standaloneWithoutPrefix = buildCss({
+  ...DEFAULT_SETTINGS,
+  theme: 'custom:clean',
+  customThemes: [
+    {
+      id: 'custom:clean',
+      name: '纯净版',
+      css: exampleCss().replace(/\.mdstudio-content h2 \.mdstudio-heading-prefix::before\s*\{[^}]*\}/, ''),
+    },
+  ],
+});
+assert.equal(
+  standaloneWithoutPrefix.includes('mdstudio-heading-prefix::before'),
+  false,
+  'standalone custom theme deleting Classic heading prefix does not re-inherit it from THEMES[0]',
+);
+assert.ok(
+  standaloneWithoutPrefix.includes(':where(.mdstudio-content > h1:first-child'),
+  'first-child heading flush uses zero-specificity :where() so custom CSS wins',
+);
+
+// Partial custom CSS mentioning tag names in comments or white-space: pre still inherits base theme
+const partialWithComment = buildCss({
+  ...DEFAULT_SETTINGS,
+  theme: 'custom:partial',
+  customThemes: [
+    {
+      id: 'custom:partial',
+      name: '局部微调',
+      css: '/* Override #mdstudio p, h1, h2, blockquote, pre */\n.mdstudio-content h2 { color: #b91c1c; }',
+    },
+  ],
+});
+assert.ok(
+  partialWithComment.includes('--mdstudio-font-size'),
+  'comment mentioning tag names does not misclassify partial custom CSS as standalone',
+);
+
+console.log('27 theme checks passed.');

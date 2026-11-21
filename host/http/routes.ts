@@ -74,6 +74,7 @@ function isJsonContentType(value: string): boolean {
 }
 
 const ALLOWED_DESKTOP_PROTOCOLS = new Set(['dsh-app:', 'dsh:', 'app:', 'file:']);
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
 
 function isAllowedOrigin(origin: string, host: string, site: string): boolean {
   if (!origin) return true;
@@ -88,7 +89,7 @@ function isAllowedOrigin(origin: string, host: string, site: string): boolean {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     return ALLOWED_DESKTOP_PROTOCOLS.has(parsed.protocol);
   }
-  return parsed.host === host;
+  return parsed.host === host && LOOPBACK_HOSTS.has(parsed.hostname.toLowerCase());
 }
 
 function isLoopbackRequest(req: IncomingMessage): boolean {

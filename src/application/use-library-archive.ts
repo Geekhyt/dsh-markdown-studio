@@ -39,7 +39,7 @@ export function collectImportRecoveryAssets(): string[] {
   try {
     const raw = window.localStorage.getItem(IMPORT_RECOVERY_KEY);
     if (!raw) return [];
-    const parsed = parseLibraryBackup(raw);
+    const parsed = parseLibraryBackup(JSON.parse(raw));
     return parsed ? collectReferencedAssets(parsed) : [];
   } catch {
     return [];

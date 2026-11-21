@@ -701,6 +701,42 @@ check('regression: apostrophe tables, currency $, intraword ++/==, nested scroll
 
   const suffixed = engine.renderMarkdown('==API==s and ++UI++s and ==高亮==词');
   assert.equal(suffixed.html, '<p><mark>API</mark>s and <u>UI</u>s and <mark>高亮</mark>词</p>');
+
+  // Footnote definition immediately followed by link reference definition (F-04)
+  const fnThenRef = engine.renderMarkdown('See [a][ref] and note[^1].\n\n[^1]: Footnote\n[ref]: https://example.com\n');
+  assert.equal(fnThenRef.html.includes('[ref]:'), false, 'link ref after footnote is extracted, not leaked as prose');
+  assert.ok(fnThenRef.html.includes('https://example.com'), 'link ref after footnote resolves');
+
+  // Nested ***bold** and italic* (F-05)
+  assert.equal(engine.renderMarkdown('***bold** and italic*').html, '<p><em><strong>bold</strong> and italic</em></p>');
+
+  // Table interrupted by heading containing | (F-06) and single-column GFM table (F-22)
+  const tableInterrupt = engine.renderMarkdown('| A | B |\n| --- | --- |\n| 1 | 2 |\n# Heading A | B\n');
+  assert.match(tableInterrupt.html, /<\/table><h1>/);
+  assert.equal(tableInterrupt.html.includes('# Heading A'), false);
+
+  const oneColTable = engine.renderMarkdown('| Only |\n| --- |\n| Cell |\n');
+  assert.match(
+    oneColTable.html,
+    /<table><thead><tr><th>Only<\/th><\/tr><\/thead><tbody><tr><td>Cell<\/td><\/tr><\/tbody><\/table>/,
+  );
+
+  // :::scroll-x keeps multi-paragraph nested :::tldr inside a single slide (F-12)
+  const scrollXDirective = engine.renderMarkdown(':::scroll-x\n:::tldr\nPara 1\n\nPara 2\n:::\n\nSlide 2\n:::\n');
+  assert.equal(
+    (scrollXDirective.html.match(/mdstudio-scroll-slide/g) || []).length,
+    2,
+    'multi-paragraph :::tldr inside :::scroll-x stays in one slide',
+  );
+  assert.equal(scrollXDirective.html.includes(':::'), false, 'no raw ::: leaks inside :::scroll-x slides');
+
+  // :::scroll-x nested directive containing --- does not merge slides
+  const scrollXNestedHr = engine.renderMarkdown(':::scroll-x\n:::tldr\nLine 1\n\n---\n\nLine 2\n:::\n\nSlide 2\n:::\n');
+  assert.equal(
+    (scrollXNestedHr.html.match(/mdstudio-scroll-slide/g) || []).length,
+    2,
+    'nested --- inside :::tldr does not collapse :::scroll-x slides',
+  );
 });
 
 console.log(`\n${checks} engine checks passed.`);

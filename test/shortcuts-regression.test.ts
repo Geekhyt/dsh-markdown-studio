@@ -97,4 +97,61 @@ for (const [deadKey, action, code] of [
   press(deadKey, action, { altKey: true, code });
 press('´', 'insertMathBlock', { altKey: true, shiftKey: true, code: 'KeyE' });
 press('e', 'insertMathBlock', { altKey: true, shiftKey: true, code: 'KeyE' });
+// WCAG 2.1.2 Escape -> Tab releases focus without preventing default or mutating text
+{
+  called.length = 0;
+  let prevented = false;
+  const scope = {};
+  handler({
+    key: 'Escape',
+    currentTarget: scope,
+    nativeEvent: {},
+    preventDefault() {
+      prevented = true;
+    },
+  } as unknown as React.KeyboardEvent<HTMLElement>);
+  // Shift keydown before Shift+Tab must not disarm Escape -> Tab escape hatch
+  handler({
+    key: 'Shift',
+    shiftKey: true,
+    currentTarget: scope,
+    nativeEvent: {},
+    preventDefault() {
+      prevented = true;
+    },
+  } as unknown as React.KeyboardEvent<HTMLElement>);
+  called.length = 0;
+  handler({
+    key: 'Tab',
+    shiftKey: true,
+    currentTarget: scope,
+    nativeEvent: {},
+    preventDefault() {
+      prevented = true;
+    },
+  } as unknown as React.KeyboardEvent<HTMLElement>);
+  assert.equal(prevented, false, 'Escape followed by Shift+Tab releases keyboard focus');
+  assert.equal(called.length, 0, 'Escape followed by Shift+Tab does not mutate the document');
+}
+// Tab inside embedded AI inline review card does not mutate document or auto-accept
+{
+  called.length = 0;
+  let prevented = false;
+  const fakeButton = {
+    tagName: 'BUTTON',
+    closest(sel: string) {
+      return sel.includes('mdstudio-ai-inline-card') || sel.includes('button') ? fakeButton : null;
+    },
+  };
+  handler({
+    key: 'Tab',
+    target: fakeButton,
+    nativeEvent: {},
+    preventDefault() {
+      prevented = true;
+    },
+  } as unknown as React.KeyboardEvent<HTMLElement>);
+  assert.equal(prevented, false, 'Tab inside AI inline card button is not intercepted');
+  assert.equal(called.length, 0, 'Tab inside AI inline card does not mutate editor');
+}
 console.log('ok - Notion-aligned, conflict-free formatting, document, and macOS Option shortcuts pass');

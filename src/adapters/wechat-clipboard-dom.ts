@@ -65,9 +65,13 @@ function unwrapParagraphSections(root: HTMLElement): void {
 }
 
 function moveNestedLists(root: HTMLElement): void {
+  const anchors = new Map<HTMLElement, HTMLElement>();
   Array.from(root.querySelectorAll<HTMLElement>('li > ul, li > ol')).forEach(function (list) {
     const item = list.parentElement;
-    if (item) item.insertAdjacentElement('afterend', list);
+    if (!item) return;
+    const anchor = anchors.get(item) || item;
+    anchor.insertAdjacentElement('afterend', list);
+    anchors.set(item, list);
   });
 }
 

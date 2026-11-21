@@ -549,6 +549,8 @@ export function create(options: EditorOptions): EditorApi {
   const view = new EditorView({ state, parent: opts.parent });
   let lastInlineBlockCount = 0;
   view.scrollDOM.tabIndex = 0;
+  view.scrollDOM.setAttribute('role', 'region');
+  view.scrollDOM.setAttribute('aria-label', resolveAriaLabel(undefined, opts.placeholder));
   const scrollElement = view.scrollDOM;
   const scrollListeners = new Set<(info: EditorScrollInfo) => void>();
   const scrollInfo = (): EditorScrollInfo => ({
@@ -615,12 +617,12 @@ export function create(options: EditorOptions): EditorApi {
       view.dispatch({ ...collapse, effects: setInlineBlocksEffect.of(blocks) });
     },
     setPlaceholder(nextPlaceholder: string, nextAriaLabel?: string) {
+      const label = resolveAriaLabel(nextAriaLabel, nextPlaceholder);
+      view.scrollDOM.setAttribute('aria-label', label);
       view.dispatch({
         effects: [
           placeholderCompartment.reconfigure(nextPlaceholder ? placeholder(nextPlaceholder) : []),
-          contentAttrsCompartment.reconfigure(
-            EditorView.contentAttributes.of({ 'aria-label': resolveAriaLabel(nextAriaLabel, nextPlaceholder) }),
-          ),
+          contentAttrsCompartment.reconfigure(EditorView.contentAttributes.of({ 'aria-label': label })),
         ],
       });
     },

@@ -11,6 +11,7 @@ export function createUiKit(React: typeof ReactNamespace, primitives?: DshPrimit
     title: string;
     active?: boolean;
     disabled?: boolean;
+    ariaExpanded?: boolean;
     onClick?: () => void;
     children?: ReactNode;
   }
@@ -26,6 +27,7 @@ export function createUiKit(React: typeof ReactNamespace, primitives?: DshPrimit
           type: 'button',
           className: 'mdstudio-tool' + (props.active ? ' is-active' : ''),
           'aria-label': props.title,
+          'aria-expanded': props.ariaExpanded,
           disabled: !!props.disabled,
           onMouseDown: function (event: ReactNamespace.MouseEvent<HTMLButtonElement>) {
             event.preventDefault();

@@ -104,7 +104,7 @@ export function trapModalTab(event: ReactNamespace.KeyboardEvent<HTMLDivElement>
   if (event.key !== 'Tab') return;
   const focusable = Array.from(
     event.currentTarget.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      'button:not([disabled]):not([tabindex="-1"]), input:not([disabled]):not([tabindex="-1"]), select:not([disabled]):not([tabindex="-1"]), textarea:not([disabled]):not([tabindex="-1"]), [tabindex]:not([tabindex="-1"])',
     ),
   ).filter((element) => {
     let cur: HTMLElement | null = element;
@@ -118,10 +118,11 @@ export function trapModalTab(event: ReactNamespace.KeyboardEvent<HTMLDivElement>
   if (!focusable.length) return;
   const first = focusable[0];
   const last = focusable[focusable.length - 1];
-  if (event.shiftKey && document.activeElement === first) {
+  const onContainer = document.activeElement === event.currentTarget;
+  if (event.shiftKey && (document.activeElement === first || onContainer)) {
     event.preventDefault();
     last.focus();
-  } else if (!event.shiftKey && document.activeElement === last) {
+  } else if (!event.shiftKey && (document.activeElement === last || onContainer)) {
     event.preventDefault();
     first.focus();
   }

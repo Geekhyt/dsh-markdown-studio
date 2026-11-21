@@ -106,6 +106,12 @@ function clampPaletteContrast(p: Palette): void {
   p.accentDeep = clampPair(p.accentDeep, p.bg, 4.5);
   p.accentDeep = clampPair(p.accentDeep, p.accentSoft, 4.5);
   p.accentDeep = clampPair(p.accentDeep, p.tldrBg, 4.5);
+  p.accentDeep = clampPair(p.accentDeep, p.quoteBg, 4.5);
+  p.accentDeep = clampPair(p.accentDeep, p.alertBg, 4.5);
+  p.linkColor = clampPair(p.linkColor, p.bg, 4.5);
+  p.linkColor = clampPair(p.linkColor, p.tldrBg, 4.5);
+  p.linkColor = clampPair(p.linkColor, p.quoteBg, 4.5);
+  p.linkColor = clampPair(p.linkColor, p.alertBg, 4.5);
   p.point = clampPair(p.point, p.bg, 3.5);
   if (isHexColor(p.tableHead) && isDark(p.bg) === isDark(p.tableHead)) {
     p.accentDeep = clampPair(p.accentDeep, p.tableHead, 4.5);
@@ -114,9 +120,11 @@ function clampPaletteContrast(p: Palette): void {
   p.markText = clampPair(p.markText, p.markBg, 4.5);
   p.muted = clampPair(p.muted, p.bg, 4.5);
   p.muted = clampPair(p.muted, p.soft, 4.5);
+  p.muted = clampPair(p.muted, p.tldrBg, 4.5);
   p.delColor = clampPair(p.delColor, p.bg, 4.5);
   p.delColor = clampPair(p.delColor, p.tldrBg, 4.5);
   p.delColor = clampPair(p.delColor, p.quoteBg, 4.5);
+  p.delColor = clampPair(p.delColor, p.alertBg, 4.5);
   if (isHexColor(p.accent)) p.onAccent = readableOn(p.accent, '#111111', '#ffffff');
   if (isHexColor(p.accent2)) p.onAccent2 = readableOn(p.accent2, '#111111', '#ffffff');
   if (isHexColor(p.codeBg)) {

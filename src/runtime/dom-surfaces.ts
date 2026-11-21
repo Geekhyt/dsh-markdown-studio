@@ -53,7 +53,8 @@ export interface PreviewSurfaceSpec {
   stageBg: string;
   paper: boolean;
   dark: boolean;
-  applyDark: (articleEl: HTMLElement) => Promise<boolean>;
+  empty?: boolean;
+  applyDark: (articleEl: HTMLElement, isCancelled?: () => boolean) => Promise<boolean>;
   cleanupDark?: () => void;
 }
 
@@ -90,6 +91,33 @@ function resetArticleSurface(article: HTMLElement): void {
  * Projects sanitized inline article HTML onto the preview stage and applies
  * asynchronous `mp-darkmode` transformation with cancellation on rapid edits.
  */
+interface MountedSurfaceState {
+  node: HTMLDivElement | null;
+  html: string;
+  dark: boolean;
+  darkApplied: boolean;
+}
+
+const EMPTY_MOUNTED_SURFACE: MountedSurfaceState = { node: null, html: '', dark: false, darkApplied: false };
+
+function syncMountedArticle(
+  article: HTMLDivElement,
+  spec: PreviewSurfaceSpec,
+  lastMountedRef: ReactNamespace.MutableRefObject<MountedSurfaceState>,
+): boolean {
+  const prev = lastMountedRef.current;
+  if (prev.node === article && prev.html === spec.html && prev.dark === spec.dark) return false;
+  resetArticleSurface(article);
+  article.innerHTML = spec.html;
+  lastMountedRef.current = { node: article, html: spec.html, dark: spec.dark, darkApplied: false };
+  return true;
+}
+
+function resolveStageColor(spec: PreviewSurfaceSpec): string {
+  if (spec.dark) return spec.paper ? '#0e1013' : '#191919';
+  return spec.paper ? spec.stageBg : spec.bg;
+}
+
 export function usePreviewHtmlSurface(
   React: typeof ReactNamespace,
   articleRef: ReactNamespace.RefObject<HTMLDivElement | null>,
@@ -97,33 +125,44 @@ export function usePreviewHtmlSurface(
 ): void {
   const applyDarkRef = useLatest(React, spec.applyDark);
   const cleanupDarkRef = useLatest(React, spec.cleanupDark);
+  const lastMountedRef = React.useRef<MountedSurfaceState>({ ...EMPTY_MOUNTED_SURFACE });
   React.useEffect(
     function () {
       const article = articleRef.current;
       const screen = article?.parentElement;
-      if (!article || !screen) return undefined;
-      const lightStage = spec.paper ? spec.stageBg : spec.bg;
-      const darkStage = spec.paper ? '#0e1013' : '#191919';
-      resetArticleSurface(article);
-      article.innerHTML = spec.html;
-      paintStageBackground(screen, spec.dark ? darkStage : lightStage);
+      if (!article || !screen) {
+        lastMountedRef.current = { ...EMPTY_MOUNTED_SURFACE };
+        if (!spec.dark) cleanupDarkRef.current?.();
+        return undefined;
+      }
+      const contentChanged = syncMountedArticle(article, spec, lastMountedRef);
       if (!spec.dark) {
+        paintStageBackground(screen, resolveStageColor(spec));
         cleanupDarkRef.current?.();
         return undefined;
       }
+      if (!contentChanged && lastMountedRef.current.darkApplied) {
+        paintStageBackground(screen, spec.paper ? '#0e1013' : resolveDarkStageBg(article));
+        return undefined;
+      }
+      paintStageBackground(screen, resolveStageColor(spec));
       let cancelled = false;
-      void applyDarkRef.current(article).then(function (applied) {
-        if (cancelled || !applied || spec.paper) return;
-        paintStageBackground(screen, resolveDarkStageBg(article));
-      });
+      void applyDarkRef
+        .current(article, () => cancelled)
+        .then(function (applied) {
+          if (cancelled || !applied) return;
+          lastMountedRef.current = { node: article, html: spec.html, dark: spec.dark, darkApplied: true };
+          if (!spec.paper) paintStageBackground(screen, resolveDarkStageBg(article));
+        });
       return function () {
         cancelled = true;
       };
     },
-    [spec.html, spec.bg, spec.stageBg, spec.paper, spec.dark],
+    [spec.html, spec.bg, spec.stageBg, spec.paper, spec.dark, spec.empty],
   );
   React.useEffect(function () {
     return function () {
+      lastMountedRef.current = { ...EMPTY_MOUNTED_SURFACE };
       cleanupDarkRef.current?.();
     };
   }, []);

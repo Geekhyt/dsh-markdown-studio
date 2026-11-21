@@ -129,7 +129,8 @@ export function parseDeclarations(body: string): Declaration[] {
     if (!part.trim()) return;
     var split = /^\s*([^:]+?)\s*:\s*([\s\S]*)$/.exec(part);
     if (!split) return;
-    var prop = split[1].trim();
+    var rawProp = split[1].trim();
+    var prop = rawProp.indexOf('--') === 0 ? rawProp : rawProp.toLowerCase();
     var value = split[2].trim();
     if (!prop || !value) return;
     var important = false;
@@ -205,19 +206,40 @@ function maxBranchSpecificity(inner: string): number {
   return best;
 }
 
+function extractBalancedPseudo(selector: string, pattern: RegExp, onInner: (inner: string) => void): string {
+  let out = '';
+  let i = 0;
+  while (i < selector.length) {
+    pattern.lastIndex = i;
+    const match = pattern.exec(selector);
+    if (!match) {
+      out += selector.slice(i);
+      break;
+    }
+    out += selector.slice(i, match.index) + ' ';
+    const open = match.index + match[0].length - 1;
+    const close = findMatchingParen(selector, open + 1);
+    if (close === -1) {
+      out += selector.slice(match.index);
+      break;
+    }
+    onInner(selector.slice(open + 1, close));
+    i = close + 1;
+  }
+  return out;
+}
+
 export function selectorSpecificity(selector: string): number {
   let bonus = 0;
-  var source = selector
-    .replace(/:where\(([^)]*)\)/gi, ' ')
-    .replace(/:(?:is|not)\(([^)]*)\)/gi, function (_match, inner: string) {
-      bonus += maxBranchSpecificity(inner);
-      return ' ';
-    })
-    .replace(/\[[^\]]*\]/g, ' .attr ');
+  var source = extractBalancedPseudo(selector, /:where\(/gi, function () {});
+  source = extractBalancedPseudo(source, /:(?:is|not)\(/gi, function (inner) {
+    bonus += maxBranchSpecificity(inner);
+  });
+  var pseudoElements = (source.match(/::[\w-]+/g) || []).length;
+  source = source.replace(/::[\w-]+/g, ' ').replace(/\[[^\]]*\]/g, ' .attr ');
   var ids = (source.match(/#[\w-]+/g) || []).length;
   var classes = (source.match(/\.[\w-]+|:[\w-]+(?:\([^)]*\))?/g) || []).length;
   var types = (source.match(/(^|[\s>+~])([a-zA-Z][\w-]*)/g) || []).length;
-  var pseudoElements = (selector.match(/::[\w-]+/g) || []).length;
   return bonus + ids * 100 + classes * 10 + types + pseudoElements;
 }
 
@@ -365,7 +387,7 @@ function snapshotCounters(
   root: HTMLElement,
   styleMap: Map<HTMLElement, Map<string, StyleValue>>,
   pseudoTargets: Map<HTMLElement, unknown>,
-  vars: Record<string, string>,
+  varsFor: (element: HTMLElement) => Record<string, string>,
 ): Map<HTMLElement, Record<string, number>> {
   var snapshots = new Map<HTMLElement, Record<string, number>>();
   if (!pseudoTargets.size) return snapshots;
@@ -376,13 +398,14 @@ function snapshotCounters(
   nodes.forEach(function (el) {
     var props = styleMap.get(el);
     var reset = props && props.get('counter-reset');
-    if (reset) {
+    var inc = props && props.get('counter-increment');
+    var vars = reset || inc ? varsFor(el) : null;
+    if (reset && vars) {
       parseCounterList(resolveVars(reset.value, vars), 0).forEach(function (pair) {
         state[pair[0]] = pair[1];
       });
     }
-    var inc = props && props.get('counter-increment');
-    if (inc) {
+    if (inc && vars) {
       parseCounterList(resolveVars(inc.value, vars), 1).forEach(function (pair) {
         state[pair[0]] = (state[pair[0]] || 0) + pair[1];
       });
@@ -489,7 +512,6 @@ export function inlineCss<T extends HTMLElement>(root: T, css: string, options?:
   });
 
   var varCache = new Map<HTMLElement, Record<string, string>>();
-  var rootVars = buildElementVars(root, root, varMap, varCache);
   var originalStyles = new Map<HTMLElement, CSSStyleDeclaration>();
   styleMap.forEach(function (_props, element) {
     originalStyles.set(element, (element.cloneNode(false) as HTMLElement).style);
@@ -551,7 +573,9 @@ export function inlineCss<T extends HTMLElement>(root: T, css: string, options?:
     });
   });
 
-  var counters = snapshotCounters(root, styleMap, pseudoMap, rootVars);
+  var counters = snapshotCounters(root, styleMap, pseudoMap, function (el) {
+    return buildElementVars(el, root, varMap, varCache);
+  });
   pseudoMap.forEach(function (record, element) {
     var elementCounters = counters.get(element);
     var elementVars = buildElementVars(element, root, varMap, varCache);

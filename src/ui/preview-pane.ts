@@ -40,6 +40,7 @@ export function PreviewPane(props: PreviewPaneProps): ReactNode {
     stageBg: props.rendered.stageBg,
     paper: props.rendered.paper,
     dark,
+    empty: props.empty,
     applyDark: applyDarkPreview,
     cleanupDark: cleanupDarkPreview,
   });
@@ -130,7 +131,6 @@ export function PreviewPane(props: PreviewPaneProps): ReactNode {
                 className: 'mdstudio-preview-article',
                 ref: articleRef,
                 onClick: props.onPreviewClick,
-                dangerouslySetInnerHTML: { __html: props.rendered.html },
               }),
             ),
           ),

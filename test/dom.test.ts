@@ -560,6 +560,23 @@ check('prepareClipboardDom unwraps section blocks nested inside paragraphs with 
       );
       assert.equal(box2.innerHTML.includes('evil.example'), false, 'CSS var() cannot smuggle external url()');
       assert.equal(q(box2, 'p').style.color, 'rgb(34, 34, 34)');
+
+      // F-23: nested :is(li:not(.a)), uppercase CONTENT property, and ::before specificity
+      assert.equal(engine.selectorSpecificity('#mdstudio p::before'), 102);
+      assert.equal(engine.selectorSpecificity(':is(li:not(.a))'), 11);
+      const box3 = document.createElement('section');
+      box3.id = 'mdstudio';
+      box3.innerHTML = '<h2>Title</h2>';
+      engine.inlineCss(box3, '#mdstudio h2::before { CONTENT: "§ "; COLOR: #112233; }');
+      assert.equal(box3.querySelector('[data-mdstudio-pseudo="before"]')?.textContent, '§ ');
+
+      // F-25: multiple nested lists inside a single <li> preserve their order on WeChat clipboard normalization
+      const listHost = document.createElement('section');
+      listHost.innerHTML = '<ul><li>Parent<ul><li>First</li></ul><ol><li>Second</li></ol></li></ul>';
+      prepareClipboardDom(listHost);
+      const outer = listHost.querySelector('ul')!;
+      const tags = Array.from(outer.children).map((el) => el.tagName.toLowerCase());
+      assert.deepEqual(tags, ['li', 'ul', 'ol'], 'multiple nested lists keep original order after <li>');
     });
   } finally {
     for (const [key, prev] of saved.entries()) {

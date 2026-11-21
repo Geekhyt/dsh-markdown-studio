@@ -95,14 +95,18 @@ export function cleanupDarkPreview(): void {
  * Apply WeChat's official Dark Mode transform to a preview clone. The source
  * HTML and clipboard output stay in the authored light theme.
  */
-export async function applyDarkPreview(article: HTMLElement): Promise<boolean> {
+export async function applyDarkPreview(article: HTMLElement, isCancelled?: () => boolean): Promise<boolean> {
   try {
     const root = article.querySelector<HTMLElement>('#mdstudio');
     if (root) {
       const initial = window.getComputedStyle(root).backgroundColor;
-      if (alphaOf(initial) > 0.1 && luminance(initial) < 0.2) return true;
+      if (alphaOf(initial) > 0.1 && luminance(initial) < 0.2) {
+        cleanupDarkPreview();
+        return true;
+      }
     }
     const Darkmode = await import('mp-darkmode');
+    if (isCancelled?.() || !article.isConnected) return false;
     loadedDarkmode = Darkmode;
     if (typeof Darkmode.reset === 'function') Darkmode.reset([]);
     if (root) {
