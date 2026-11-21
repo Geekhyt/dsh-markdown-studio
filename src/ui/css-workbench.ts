@@ -175,10 +175,12 @@ function renderCssSurface(
   });
 }
 
+function hasOnlyModKey(event: ReactNamespace.KeyboardEvent<HTMLElement>): boolean {
+  return (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey;
+}
+
 function isSaveKeyEvent(event: ReactNamespace.KeyboardEvent<HTMLElement>): boolean {
-  const mod = event.metaKey || event.ctrlKey;
-  if (!mod || event.shiftKey || event.altKey) return false;
-  return event.key.toLowerCase() === 's';
+  return hasOnlyModKey(event) && event.key.toLowerCase() === 's';
 }
 
 function canSaveTheme(customList: CustomTheme[], editing: CustomTheme | null, trimmedCss: string): boolean {

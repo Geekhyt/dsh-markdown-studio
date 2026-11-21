@@ -545,6 +545,19 @@ function computeOutlineLeft(anchor: HTMLElement | null): number {
   return Math.max(10, Math.min(Math.round(aRect.left - pRect.left), maxLeft));
 }
 
+function hasOpenModal(): boolean {
+  return typeof document !== 'undefined' && Boolean(document.querySelector('[aria-modal="true"]'));
+}
+
+function isUnhandledEscape(event: KeyboardEvent): boolean {
+  return event.key === 'Escape' && !event.defaultPrevented && !hasOpenModal();
+}
+
+function focusAnchorButton(anchor: HTMLElement | null): void {
+  const trigger = anchor?.querySelector<HTMLElement>('button');
+  if (trigger) trigger.focus();
+}
+
 export function EditorPane(props: EditorPaneProps): ReactNode {
   const h = props.React.createElement;
   const t = props.t;
@@ -575,12 +588,10 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
     props.React,
     'keydown',
     function (event: KeyboardEvent) {
-      if (event.key !== 'Escape' || event.defaultPrevented) return;
-      if (typeof document !== 'undefined' && document.querySelector('[aria-modal="true"]')) return;
+      if (!isUnhandledEscape(event)) return;
       event.preventDefault();
       outline.onClose();
-      const trigger = outlineAnchorRef.current?.querySelector<HTMLElement>('button');
-      if (trigger) trigger.focus();
+      focusAnchorButton(outlineAnchorRef.current);
     },
     outline.open,
   );

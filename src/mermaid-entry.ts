@@ -23,13 +23,16 @@ function ensureInitialized(): void {
 
 let renderSeq = 0;
 
+function removeBodyNode(nodeId: string): void {
+  const node = document.getElementById(nodeId);
+  if (node && node.parentNode === document.body) node.remove();
+}
+
 /** Mermaid mounts a temporary `#d<id>` (or sandbox `#i<id>`) node on <body> and leaves it behind when parsing fails. */
 function removeTempNodes(id: string): void {
   if (typeof document === 'undefined') return;
-  for (const prefix of ['d', 'i']) {
-    const node = document.getElementById(prefix + id);
-    if (node && node.parentNode === document.body) node.remove();
-  }
+  removeBodyNode('d' + id);
+  removeBodyNode('i' + id);
 }
 
 export async function render(code: unknown, id?: string): Promise<string> {

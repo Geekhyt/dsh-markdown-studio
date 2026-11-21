@@ -37,18 +37,22 @@ function stripSvgLinks(root: Element): void {
   });
 }
 
+function decorateMathSvg(svgNode: Element | null, source: string): void {
+  if (!svgNode) return;
+  svgNode.setAttribute('aria-label', '公式：' + source);
+  stripSvgLinks(svgNode);
+}
+
+function ensureSvgNamespace(html: string): string {
+  return /^<svg[^>]*\sxmlns=/.test(html) ? html : html.replace(/^<svg/, '<svg xmlns="http://www.w3.org/2000/svg"');
+}
+
 export function render(texSource: unknown, displayMode?: boolean): string {
-  const node = doc.convert(String(texSource || ''), { display: Boolean(displayMode) });
+  const source = String(texSource || '');
+  const node = doc.convert(source, { display: Boolean(displayMode) });
   const svgNode = node.firstElementChild;
-  if (svgNode) {
-    svgNode.setAttribute('aria-label', '公式：' + String(texSource || ''));
-    stripSvgLinks(svgNode);
-  }
-  let html = adaptor.outerHTML(svgNode || node);
-  if (!/^<svg[^>]*\sxmlns=/.test(html)) {
-    html = html.replace(/^<svg/, '<svg xmlns="http://www.w3.org/2000/svg"');
-  }
-  return html;
+  decorateMathSvg(svgNode, source);
+  return ensureSvgNamespace(adaptor.outerHTML(svgNode || node));
 }
 
 if (typeof window !== 'undefined') {

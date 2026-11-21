@@ -53,6 +53,18 @@ export function prependMermaidDirective(code: string, directive: string): string
   return directive + '\n' + code;
 }
 
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function viewBoxSize(viewBox: number[], index: number): number {
+  return viewBox.length === 4 && viewBox[index] > 0 ? viewBox[index] : 0;
+}
+
+function parseSvgDimension(root: Element, viewBox: number[], name: string, index: number, fallback: number): number {
+  return viewBoxSize(viewBox, index) || Number.parseFloat(String(root.getAttribute(name))) || fallback;
+}
+
 function svgToPng(svg: string, background: string): Promise<string> {
   return new Promise(function (resolve, reject) {
     try {
@@ -61,13 +73,8 @@ function svgToPng(svg: string, background: string): Promise<string> {
       const viewBox = String(root.getAttribute('viewBox') || '')
         .split(/[\s,]+/)
         .map(Number);
-      function dimension(name: string, index: number, fallback: number): number {
-        return viewBox.length === 4 && viewBox[index] > 0
-          ? viewBox[index]
-          : parseFloat(root.getAttribute(name) || '') || fallback;
-      }
-      const width = dimension('width', 2, 800);
-      const height = dimension('height', 3, 600);
+      const width = parseSvgDimension(root, viewBox, 'width', 2, 800);
+      const height = parseSvgDimension(root, viewBox, 'height', 3, 600);
       root.setAttribute('width', String(width));
       root.setAttribute('height', String(height));
       if (!root.getAttribute('xmlns')) root.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
@@ -143,6 +150,32 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
     return loadPromiseRef.current;
   }
 
+  function updateCacheIfActive(key: string, entry: MermaidCacheEntry): void {
+    if (cacheRef.current.has(key)) cacheRef.current.set(key, entry);
+  }
+
+  async function renderMermaidToAsset(
+    mermaid: MermaidModule,
+    theme: MermaidTheme,
+    currentKey: string,
+    currentCode: string,
+    currentIndex: number,
+  ): Promise<MermaidCacheEntry | null> {
+    const svg = await mermaid.render(
+      prependMermaidDirective(currentCode, theme.directive),
+      'mdstudio-mermaid-' + Date.now() + '-' + currentIndex,
+    );
+    if (!cacheRef.current.has(currentKey)) return null;
+    const png = await svgToPng(svg, theme.background);
+    const prepared = await prepareImageForWechat(png);
+    const stored = await options.hostClient.storeAsset(prepared.dataUrl, prepared.filename);
+    return {
+      status: 'ready',
+      filename: stored.filename,
+      assetPath: stored.assetPath || 'assets/' + stored.filename,
+    };
+  }
+
   async function renderAndStore(
     mermaid: MermaidModule,
     theme: MermaidTheme,
@@ -151,31 +184,13 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
     currentIndex: number,
   ): Promise<void> {
     try {
-      const svg = await mermaid.render(
-        prependMermaidDirective(currentCode, theme.directive),
-        'mdstudio-mermaid-' + Date.now() + '-' + currentIndex,
-      );
-      if (!cacheRef.current.has(currentKey)) return;
-      const png = await svgToPng(svg, theme.background);
-      const prepared = await prepareImageForWechat(png);
-      const stored = await options.hostClient.storeAsset(prepared.dataUrl, prepared.filename);
-      if (!cacheRef.current.has(currentKey)) return;
-      cacheRef.current.set(currentKey, {
-        status: 'ready',
-        filename: stored.filename,
-        assetPath: stored.assetPath || 'assets/' + stored.filename,
-      });
+      const entry = await renderMermaidToAsset(mermaid, theme, currentKey, currentCode, currentIndex);
+      if (!entry) return;
+      updateCacheIfActive(currentKey, entry);
     } catch (error) {
-      if (cacheRef.current.has(currentKey)) {
-        cacheRef.current.set(currentKey, {
-          status: 'error',
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
+      updateCacheIfActive(currentKey, { status: 'error', error: errorText(error) });
     }
-    if (options.pageAliveRef.current) {
-      setVersion((value) => value + 1);
-    }
+    if (options.pageAliveRef.current) setVersion((value) => value + 1);
   }
 
   async function ensure(markdown: string): Promise<void> {

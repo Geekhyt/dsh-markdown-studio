@@ -63,12 +63,18 @@ function paintStageBackground(screen: HTMLElement, color: string): void {
   if (screen.parentElement) screen.parentElement.style.backgroundColor = bg;
 }
 
+const TRANSPARENT_BG = new Set(['', 'rgba(0, 0, 0, 0)', 'transparent']);
+
+function readElementBg(element: HTMLElement): string {
+  return typeof window !== 'undefined'
+    ? window.getComputedStyle(element).backgroundColor
+    : element.style.backgroundColor;
+}
+
 function resolveDarkStageBg(article: HTMLElement): string {
   const root = article.querySelector<HTMLElement>('#mdstudio') || article;
-  const resolved =
-    typeof window !== 'undefined' ? window.getComputedStyle(root).backgroundColor : root.style.backgroundColor;
-  if (!resolved || resolved === 'rgba(0, 0, 0, 0)' || resolved === 'transparent') return '#191919';
-  return resolved;
+  const resolved = readElementBg(root);
+  return TRANSPARENT_BG.has(resolved) ? '#191919' : resolved;
 }
 
 function resetArticleSurface(article: HTMLElement): void {
