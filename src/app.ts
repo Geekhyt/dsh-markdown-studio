@@ -13,7 +13,13 @@ import { formatHostClientError, HostClient } from './adapters/host-client';
 import { observeHostTitlebarInset } from './adapters/host-shell';
 import { prepareImageForWechat } from './adapters/image-encode';
 import { renderArticle } from './adapters/render-article';
-import { LibraryStorageError, loadInitialLibrary, savePersistedLibrary } from './adapters/storage';
+import {
+  LIBRARY_KEY_V2,
+  LibraryStorageError,
+  loadInitialLibrary,
+  loadPersistedLibrary,
+  savePersistedLibrary,
+} from './adapters/storage';
 import { createArticleExporter } from './application/article-exporter';
 import { createAssetGarbageCollector } from './application/asset-gc';
 import { createDocumentCommands } from './application/document-commands';
@@ -50,6 +56,7 @@ import {
 import { extractCustomThemePreview, findCustomTheme } from './domain/custom-themes';
 import type { EditorApi, EditorSelection } from './domain/editor-types';
 import { assetFilesInMarkdown, collectLocalImages, portableizeAssetUrls, replaceLocalImages } from './domain/images';
+import { collectReferencedAssets } from './domain/library-archive';
 import type { MergeConflict, MergeDecision } from './domain/library-backup';
 import { sanitizeSettings } from './domain/settings';
 import type { WritingSkill } from './domain/writing-skills';
@@ -119,32 +126,43 @@ function detectPlatformModifiers(): { modKey: string; shiftKey: string; altKey: 
 async function migrateDataImages(
   markdown: string,
   client: HostClient,
+  onTrackInFlight?: (filename: string, active: boolean) => void,
 ): Promise<{ mapping: Map<string, string>; migrated: number }> {
   const entries = Array.from(collectLocalImages(markdown).entries()).filter(([, info]) => info.kind === 'data');
   const mapping = new Map<string, string>();
-  const results = await Promise.all(
-    entries.map(async ([rawUrl]) => {
-      try {
-        const prepared = await prepareImageForWechat(rawUrl);
-        const stored = await client.storeAsset(prepared.dataUrl, prepared.filename);
-        const nextPath = stored.assetPath || stored.localUrl || stored.url;
-        return nextPath ? ([rawUrl, nextPath] as const) : null;
-      } catch {
-        /* keep inline base64 when local image service is unreachable */
-        return null;
-      }
-    }),
-  );
-  for (const pair of results) {
-    if (pair) mapping.set(pair[0], pair[1]);
+  const tracked: string[] = [];
+  try {
+    const results = await Promise.all(
+      entries.map(async ([rawUrl]) => {
+        try {
+          const prepared = await prepareImageForWechat(rawUrl);
+          const stored = await client.storeAsset(prepared.dataUrl, prepared.filename);
+          if (stored.filename) {
+            onTrackInFlight?.(stored.filename, true);
+            tracked.push(stored.filename);
+          }
+          const nextPath = stored.assetPath || stored.localUrl || stored.url;
+          return nextPath ? ([rawUrl, nextPath] as const) : null;
+        } catch {
+          /* keep inline base64 when local image service is unreachable */
+          return null;
+        }
+      }),
+    );
+    for (const pair of results) {
+      if (pair) mapping.set(pair[0], pair[1]);
+    }
+    return { mapping, migrated: mapping.size };
+  } finally {
+    for (const filename of tracked) onTrackInFlight?.(filename, false);
   }
-  return { mapping, migrated: mapping.size };
 }
 
 function resolvePreviewSettings(base: themes.ThemeSettings, cssOpen: boolean, draftCss: string): themes.ThemeSettings {
   const trimmed = draftCss.trim();
   if (!cssOpen || !trimmed) return base;
-  const draftId = '__css_workbench_live__';
+  // Use the `custom:` prefix so standalone custom theme isolation matches the saved theme identically.
+  const draftId = 'custom:__css_workbench_live__';
   const draftPreview = extractCustomThemePreview(trimmed, base.accent);
   return {
     ...base,
@@ -152,6 +170,26 @@ function resolvePreviewSettings(base: themes.ThemeSettings, cssOpen: boolean, dr
     accent: draftPreview.accent,
     customThemes: [{ id: draftId, name: 'Draft', css: trimmed }],
   };
+}
+
+function countMarkdownWords(text: string): number {
+  let words = 0;
+  let inLatinWord = false;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code >= 0x4e00 && code <= 0x9fff) {
+      words++;
+      inLatinWord = false;
+    } else if ((code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122)) {
+      if (!inLatinWord) {
+        words++;
+        inLatinWord = true;
+      }
+    } else {
+      inLatinWord = false;
+    }
+  }
+  return words;
 }
 
 function computePaneVisibility(
@@ -204,9 +242,9 @@ export function createClientPlugin(
   primitives?: DshPrimitivesModule | null,
 ): ClientPlugin {
   const h = React.createElement;
-  const uiKit = createUiKit(React, primitives);
   const localeCtrl = createStudioLocaleController(React, LOCALE_NS);
   const { t, lang, useLocaleRevision } = localeCtrl;
+  const uiKit = createUiKit(React, primitives, () => lang());
   const StudioErrorBoundary = createErrorBoundary(React, { Button: uiKit.Button, cssText: CHROME_CSS });
 
   function useDeferredText(value: string): string {
@@ -225,7 +263,7 @@ export function createClientPlugin(
     const localeRevision = useLocaleRevision();
     const dialogHost = useDialogHost(React, t, uiKit.bridge);
 
-    const [store] = React.useState(() => new DocumentStore(props.initial, savePersistedLibrary));
+    const [store] = React.useState(() => new DocumentStore(props.initial, savePersistedLibrary, loadPersistedLibrary));
     const [hostClient] = React.useState(
       () => new HostClient(ASSET_SERVICE_ROUTE, (input, init) => window.fetch(input, init)),
     );
@@ -247,8 +285,17 @@ export function createClientPlugin(
     const dialogReturnFocusRef = React.useRef<HTMLElement | null>(null);
     const pageAliveRef = React.useRef(true);
     const toastSeq = React.useRef(0);
-    const inFlightAssetsRef = React.useRef<Set<string>>(new Set());
+    const inFlightAssetsRef = React.useRef<Map<string, number>>(new Map());
+    const dirtyDiskRef = React.useRef(false);
     const cancelAutosaveRef = React.useRef<() => void>(() => {});
+
+    function trackInFlightAsset(filename: string, active: boolean): void {
+      if (!filename) return;
+      const counts = inFlightAssetsRef.current;
+      const next = (counts.get(filename) || 0) + (active ? 1 : -1);
+      if (next > 0) counts.set(filename, next);
+      else counts.delete(filename);
+    }
 
     const [previewMode, setPreviewMode] = React.useState<PreviewMode>(() =>
       typeof window !== 'undefined' && window.innerWidth >= 900 ? 'desktop' : 'mobile',
@@ -330,12 +377,22 @@ export function createClientPlugin(
       window.setTimeout(focusEditor, 30);
     }
 
+    function captureDialogTriggerFocus(): void {
+      const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      if (active && active.getAttribute('role') === 'menuitem') {
+        const moreBtn = rootRef.current?.querySelector<HTMLElement>('[data-mdstudio-menu-trigger="more"]');
+        dialogReturnFocusRef.current = moreBtn || null;
+        return;
+      }
+      dialogReturnFocusRef.current = active;
+    }
+
     function restoreDialogTriggerFocus(): void {
       const target = dialogReturnFocusRef.current;
       dialogReturnFocusRef.current = null;
       if (target && target.isConnected) {
         window.requestAnimationFrame(() => target.focus());
-      } else {
+      } else if (store.getActive().view !== 'preview') {
         window.requestAnimationFrame(() => focusEditor());
       }
     }
@@ -373,8 +430,29 @@ export function createClientPlugin(
 
     function detachFileContext(): void {
       cancelAutosaveRef.current();
+      dirtyDiskRef.current = false;
       fileContext.reset(store.getActive().id);
       fileContext.setFileName('');
+    }
+
+    async function flushLinkedFileBeforeSwitch(): Promise<boolean> {
+      const handle = fileContext.linkedFile();
+      if (!handle || !dirtyDiskRef.current || fileContext.conflictRef.current) return true;
+      cancelAutosaveRef.current();
+      try {
+        const result = await fileContext.writeFile(handle, markdownRef.current);
+        if (result === 'saved') {
+          dirtyDiskRef.current = false;
+          const folder = fileContext.linkedFolder();
+          if (folder) {
+            void writeFolderAssets(folder, markdownRef.current, localImageServerUrlRef.current).catch(() => {});
+          }
+          return true;
+        }
+        return false;
+      } catch {
+        return false;
+      }
     }
 
     const writingSkills = useWritingSkills({
@@ -433,7 +511,11 @@ export function createClientPlugin(
         getSnapshot: () => store.getSnapshot(),
         mermaidFilenames: () => mermaidAssets.filenames(),
         extraFilenames: () => {
-          const extra = new Set<string>(inFlightAssetsRef.current);
+          const extra = new Set<string>(inFlightAssetsRef.current.keys());
+          const persisted = loadPersistedLibrary();
+          if (persisted) {
+            for (const name of collectReferencedAssets(persisted)) extra.add(name);
+          }
           for (const name of collectImportRecoveryAssets()) extra.add(name);
           for (const md of docHistory.historyMarkdowns()) {
             for (const name of assetFilesInMarkdown(md)) extra.add(name);
@@ -442,8 +524,8 @@ export function createClientPlugin(
         },
       }),
     );
-    const pruneOrphanAssets = () => {
-      void assetGc.prune();
+    const pruneOrphanAssets = (bypassGraceFor?: Iterable<string>) => {
+      void assetGc.prune(bypassGraceFor ? { bypassGraceFor } : undefined);
     };
 
     const docLibrary = useDocumentLibrary({
@@ -486,14 +568,17 @@ export function createClientPlugin(
       notify,
       fileContext,
       onMenuClose: () => setMenuOpen(false),
-      onOpenFile: async (directory, entry, text) => {
+      onOpenFile: async (directory, entry, text, openedFile) => {
+        if (!(await flushLinkedFileBeforeSwitch())) return;
         const isStaleOpen = (): boolean => !pageAliveRef.current || fileContext.linkedFile() !== entry.handle;
+        const fileObj = openedFile || (await entry.handle.getFile());
         resetEditorTo({ title: deriveTitleWithFallback(text), markdown: text, settings, view });
+        await fileContext.stampFile(entry.handle, fileObj, text);
+        if (!pageAliveRef.current) return;
         fileContext.applyDocumentRef({ kind: 'folder', directory, file: entry.handle });
-        await fileContext.stampFile(entry.handle, await entry.handle.getFile());
         if (isStaleOpen()) return;
         fileContext.setFileName(entry.name);
-        const imported = await importFolderAssets(directory, text, hostClient);
+        const imported = await importFolderAssets(directory, text, hostClient, trackInFlightAsset);
         if (isStaleOpen() || store.getActive().markdown !== text) return;
         if (imported.text !== text) {
           setMarkdown(imported.text, {
@@ -543,6 +628,8 @@ export function createClientPlugin(
       resetEditorTo,
       setDocumentRef: fileContext.applyDocumentRef,
       stampFile: fileContext.stampFile,
+      flushBeforeSwitch: flushLinkedFileBeforeSwitch,
+      isPageAlive: () => pageAliveRef.current,
       download: downloadFile,
       isAbortError,
       errorMessage,
@@ -572,6 +659,7 @@ export function createClientPlugin(
         new Promise((resolve) => setMergeReview({ conflicts, defaultDecision, resolve })),
       writingSkills: writingSkills.skillState,
       onWritingSkills: writingSkills.setSkillStateAll,
+      onTrackInFlight: trackInFlightAsset,
     });
 
     const searchCmds = createEditorSearch({
@@ -678,10 +766,9 @@ export function createClientPlugin(
       hostClient,
       describeHostError,
       insertBlock: formatting.insertBlock,
-      onTrackInFlight: (filename, active) => {
-        if (active) inFlightAssetsRef.current.add(filename);
-        else inFlightAssetsRef.current.delete(filename);
-      },
+      onTrackInFlight: trackInFlightAsset,
+      getActiveArticleId: () => store.getActive().id,
+      isPageAlive: () => pageAliveRef.current,
     });
 
     function undo(): void {
@@ -752,6 +839,10 @@ export function createClientPlugin(
       deriveTitle: deriveTitleWithFallback,
       errorMessage,
       onPruneAssets: pruneOrphanAssets,
+      onTrackInFlight: trackInFlightAsset,
+      getActiveArticleId: () => store.getActive().id,
+      isPageAlive: () => pageAliveRef.current,
+      flushBeforeSwitch: flushLinkedFileBeforeSwitch,
     });
 
     const scrollSync = useScrollSync({
@@ -769,11 +860,17 @@ export function createClientPlugin(
     useElementBinding(React, rootRef, observeHostTitlebarInset);
     useWindowEvent(React, 'beforeunload', () => store.flush());
     useWindowEvent(React, 'pagehide', () => store.flush());
+    useWindowEvent(React, 'storage', (event: StorageEvent) => {
+      if (event.key !== LIBRARY_KEY_V2 || store.getStatus() !== 'saved') return;
+      const external = loadPersistedLibrary();
+      if (external) store.syncExternal(external);
+    });
 
     useWindowEvent(
       React,
       'keydown',
       (event: KeyboardEvent) => {
+        if (event.isComposing || event.keyCode === 229) return;
         if (event.key !== 'Escape') return;
         const blocked = [
           event.defaultPrevented,
@@ -793,7 +890,6 @@ export function createClientPlugin(
 
     useMountDisposable(React, () => {
       pageAliveRef.current = true;
-      store.flush();
 
       if (!codeMirrorApiRef.current && textareaRef.current) {
         const ta = textareaRef.current;
@@ -826,7 +922,7 @@ export function createClientPlugin(
       const migrateTimer = window.setTimeout(() => {
         const snapshot = markdownRef.current;
         if (!/data:image\//i.test(snapshot)) return;
-        migrateDataImages(snapshot, hostClient)
+        migrateDataImages(snapshot, hostClient, trackInFlightAsset)
           .then((result) => {
             if (!alive || !result.migrated) return;
             const current = markdownRef.current;
@@ -857,6 +953,7 @@ export function createClientPlugin(
         if (active.id !== lastObservedId) {
           lastObservedId = active.id;
           lastObservedMd = active.markdown;
+          dirtyDiskRef.current = false;
           clearAutosaveTimer();
           return;
         }
@@ -864,7 +961,9 @@ export function createClientPlugin(
         lastObservedMd = active.markdown;
         clearAutosaveTimer();
         const targetArticleId = active.id;
-        if (!fileContext.linkedFile() || fileContext.conflictRef.current) return;
+        if (!fileContext.linkedFile()) return;
+        dirtyDiskRef.current = true;
+        if (fileContext.conflictRef.current) return;
         autoSaveTimer = window.setTimeout(() => {
           autoSaveTimer = null;
           if (store.getActive().id !== targetArticleId) return;
@@ -874,6 +973,7 @@ export function createClientPlugin(
           fileContext
             .writeFile(currentHandle, snapshotMd)
             .then((result) => {
+              if (result === 'saved' && markdownRef.current === snapshotMd) dirtyDiskRef.current = false;
               const folder = result === 'saved' ? fileContext.linkedFolder() : null;
               if (folder && store.getActive().id === targetArticleId) {
                 void writeFolderAssets(folder, snapshotMd, localImageServerUrlRef.current).catch(() => {});
@@ -956,7 +1056,8 @@ export function createClientPlugin(
     useImmersiveShortcuts(React, immersive, enterImmersive, exitImmersive, canHandleImmersiveShortcut);
 
     function handleEditorKeyDown(event: React.KeyboardEvent<HTMLElement>): void {
-      if (event.nativeEvent.isComposing) return;
+      const native = event.nativeEvent as KeyboardEvent | undefined;
+      if (native && (native.isComposing || native.keyCode === 229)) return;
       selectionBubble.clearPointer();
       if (slashMenu.handleKeyDown(event, Boolean(writingSkills.session))) return;
       handleEditorShortcut(event);
@@ -978,9 +1079,10 @@ export function createClientPlugin(
       }
       if (!/\.(md|markdown|txt)$/i.test(first.name)) return;
       const targetArticleId = store.getActive().id;
-      first
-        .text()
-        .then((text) => {
+      void (async () => {
+        try {
+          if (!(await flushLinkedFileBeforeSwitch())) return;
+          const text = await first.text();
           if (!pageAliveRef.current || store.getActive().id !== targetArticleId) return;
           detachFileContext();
           writingSkills.resetSession();
@@ -989,8 +1091,10 @@ export function createClientPlugin(
           setMarkdown(text, { boundary: true, title: deriveTitleWithFallback(text), resetHistory: true });
           focusRange(0, 0);
           notify(t('toast.imported'));
-        })
-        .catch(() => {});
+        } catch {
+          /* ignore unreadable dropped file */
+        }
+      })();
     }
 
     function previewClick(event: React.MouseEvent<HTMLElement>): void {
@@ -1053,11 +1157,10 @@ export function createClientPlugin(
 
     const docStats = React.useMemo(
       () => ({
-        chars: doc.markdown.length,
-        words:
-          (doc.markdown.match(/[\u4e00-\u9fff]/g) || []).length + (doc.markdown.match(/[A-Za-z0-9]+/g) || []).length,
+        chars: deferredMarkdown.length,
+        words: countMarkdownWords(deferredMarkdown),
       }),
-      [doc.markdown],
+      [deferredMarkdown],
     );
     const panes = computePaneVisibility(immersive, view, cssWorkbench.open);
     const { modKey, shiftKey, altKey } = React.useMemo(() => detectPlatformModifiers(), []);
@@ -1110,7 +1213,7 @@ export function createClientPlugin(
           },
           onImmersive: enterImmersive,
           onOpenLibrary: () => {
-            if (document.activeElement instanceof HTMLElement) dialogReturnFocusRef.current = document.activeElement;
+            captureDialogTriggerFocus();
             docLibrary.openLibrary();
             setMenuOpen(false);
           },
@@ -1126,7 +1229,7 @@ export function createClientPlugin(
             docLibrary.newDocument();
           },
           onOpenFolder: () => {
-            if (document.activeElement instanceof HTMLElement) dialogReturnFocusRef.current = document.activeElement;
+            captureDialogTriggerFocus();
             void workspaceTools.openFolder();
           },
           onOpenFile: fileActions.openLocalFile,
@@ -1137,7 +1240,7 @@ export function createClientPlugin(
           onExportBundle: () => void articleExport.exportBundle(),
           onImport: docCommands.handleImportClick,
           onManageSkills: () => {
-            if (document.activeElement instanceof HTMLElement) dialogReturnFocusRef.current = document.activeElement;
+            captureDialogTriggerFocus();
             setMenuOpen(false);
             writingSkills.openManager(null);
           },
@@ -1215,8 +1318,14 @@ export function createClientPlugin(
             onList: formatting.insertList,
             onTable: formatting.insertTable,
             onHr: formatting.insertHr,
-            onSearch: searchCmds.openSearch,
-            onOutline: () => setOutlineOpen((prev) => !prev),
+            onSearch: () => {
+              selectionBubble.clear();
+              searchCmds.openSearch();
+            },
+            onOutline: () => {
+              selectionBubble.clear();
+              setOutlineOpen((prev) => !prev);
+            },
             onReload: () => void fileActions.reloadLinkedFile(),
           },
           slash: {
@@ -1318,6 +1427,7 @@ export function createClientPlugin(
           requestSeq: cssWorkbench.seq,
           settings,
           modKey,
+          locale: lang() === 'en' ? 'en' : 'zh',
           onBack: closeCssWorkbench,
           onSettings: updateSettings,
           onNotify: (text) => notify(text),
@@ -1513,6 +1623,8 @@ export function createClientPlugin(
         type: 'file',
         ref: fileRef,
         className: 'mdstudio-hidden-input',
+        tabIndex: -1,
+        'aria-hidden': 'true',
         accept: '.md,.markdown,.txt,.zip,text/markdown,text/plain,application/zip',
         onChange: docCommands.handleFile,
       }),
@@ -1520,6 +1632,8 @@ export function createClientPlugin(
         type: 'file',
         ref: imageRef,
         className: 'mdstudio-hidden-input',
+        tabIndex: -1,
+        'aria-hidden': 'true',
         accept: 'image/*',
         multiple: true,
         onChange: (event) => {

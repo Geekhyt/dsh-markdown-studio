@@ -73,6 +73,7 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
   }
 
   async function refreshPermission(): Promise<'granted' | 'prompt' | 'denied'> {
+    const generation = generationRef.current;
     const handle = permissionHandle();
     if (!handle || typeof handle.queryPermission !== 'function') {
       setPermission('granted');
@@ -81,10 +82,10 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
     try {
       const result = await handle.queryPermission({ mode: 'readwrite' });
       const next = result === 'granted' ? 'granted' : result === 'denied' ? 'denied' : 'prompt';
-      setPermission(next);
+      if (generation === generationRef.current) setPermission(next);
       return next;
     } catch (error) {
-      setPermission('prompt');
+      if (generation === generationRef.current) setPermission('prompt');
       return 'prompt';
     }
   }
@@ -169,8 +170,12 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
       if (generation !== generationRef.current) return 'stale';
       if (handle.queryPermission) {
         let allowed = await handle.queryPermission({ mode: 'readwrite' });
-        if (allowed !== 'granted' && requestWritePermission)
+        if (allowed !== 'granted' && requestWritePermission) {
           allowed = await handle.requestPermission({ mode: 'readwrite' });
+        }
+        if (generation === generationRef.current) {
+          setPermission(allowed === 'granted' ? 'granted' : allowed === 'denied' ? 'denied' : 'prompt');
+        }
         if (allowed !== 'granted') return 'denied';
       }
       const current = linkedFile();
@@ -309,11 +314,17 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
 
   function checkExternalOnFocus(): void {
     if (!linkedFile() || conflictRef.current) return;
-    void restoringRef.current.then(async function () {
-      const perm = await refreshPermission();
-      if (perm !== 'granted') return false;
-      return isExternallyChanged();
-    });
+    const generation = generationRef.current;
+    void restoringRef.current
+      .then(() => writesRef.current)
+      .then(async function () {
+        if (generation !== generationRef.current || !linkedFile() || conflictRef.current) return false;
+        const perm = await refreshPermission();
+        if (generation !== generationRef.current || perm !== 'granted' || !linkedFile() || conflictRef.current) {
+          return false;
+        }
+        return isExternallyChanged();
+      });
   }
 
   useWindowEvent(React, 'focus', checkExternalOnFocus);

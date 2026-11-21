@@ -1,6 +1,6 @@
 import type * as ReactNamespace from 'react';
 import type { ComponentType, ReactElement, ReactNode } from 'react';
-import { useAutoDismissTimer, useDocumentEvent } from '../runtime/react-lifecycle';
+import { useAutoDismissTimer, useDocumentEvent, useWindowEvent } from '../runtime/react-lifecycle';
 import type {
   DshButtonProps,
   DshCheckboxProps,
@@ -100,21 +100,25 @@ function nextMenuIndex(key: string, current: number, total: number): number {
   return -1;
 }
 
-export function trapModalTab(event: ReactNamespace.KeyboardEvent<HTMLDivElement>): void {
-  if (event.key !== 'Tab') return;
-  const focusable = Array.from(
-    event.currentTarget.querySelectorAll<HTMLElement>(
-      'button:not([disabled]):not([tabindex="-1"]), input:not([disabled]):not([tabindex="-1"]), select:not([disabled]):not([tabindex="-1"]), textarea:not([disabled]):not([tabindex="-1"]), [tabindex]:not([tabindex="-1"])',
-    ),
-  ).filter((element) => {
+const FOCUSABLE_SELECTOR =
+  'button:not([disabled]):not([tabindex="-1"]), input:not([type="hidden"]):not([disabled]):not([tabindex="-1"]), select:not([disabled]):not([tabindex="-1"]), textarea:not([disabled]):not([tabindex="-1"]), [tabindex]:not([tabindex="-1"])';
+
+export function getFocusableElements(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter((element) => {
+    if (element.getAttribute('aria-hidden') === 'true') return false;
     let cur: HTMLElement | null = element;
-    while (cur && cur !== event.currentTarget) {
+    while (cur && cur !== container) {
       const style = window.getComputedStyle(cur);
       if (style.display === 'none' || style.visibility === 'hidden') return false;
       cur = cur.parentElement;
     }
     return true;
   });
+}
+
+export function trapModalTab(event: ReactNamespace.KeyboardEvent<HTMLElement>): void {
+  if (event.key !== 'Tab') return;
+  const focusable = getFocusableElements(event.currentTarget);
   if (!focusable.length) return;
   const first = focusable[0];
   const last = focusable[focusable.length - 1];
@@ -256,8 +260,10 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
 
   function FallbackTooltip(props: DshTooltipProps): ReactElement {
     const [tip, setTip] = React.useState<{ left: number; top: number } | null>(null);
+    const [tipId] = React.useState(() => 'mdstudio-tip-' + Math.random().toString(36).slice(2, 8));
     const child = props.children as ReactElement<{
       title?: string;
+      'aria-describedby'?: string;
       onMouseEnter?: (event: ReactNamespace.MouseEvent<HTMLElement>) => void;
       onMouseLeave?: (event: ReactNamespace.MouseEvent<HTMLElement>) => void;
       onFocus?: (event: ReactNamespace.FocusEvent<HTMLElement>) => void;
@@ -274,12 +280,22 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
     const hide = function (): void {
       setTip(null);
     };
+    useDocumentEvent(
+      React,
+      'keydown',
+      function (event: KeyboardEvent) {
+        if (event.key === 'Escape') setTip(null);
+      },
+      Boolean(tip),
+    );
     const resolved = tip ? (typeof props.label === 'function' ? props.label() : props.label) : '';
+    const visible = Boolean(!props.disabled && tip && resolved);
     return h(
       React.Fragment,
       null,
       React.cloneElement(child, {
         title: undefined,
+        'aria-describedby': visible ? tipId : child.props['aria-describedby'],
         onMouseEnter: function (event: ReactNamespace.MouseEvent<HTMLElement>) {
           child.props.onMouseEnter?.(event);
           show(event.currentTarget);
@@ -301,10 +317,11 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
           child.props.onClick?.(event);
         },
       }),
-      !props.disabled && tip && resolved
+      visible && tip
         ? h(
             'span',
             {
+              id: tipId,
               className: 'mdstudio-tooltip',
               role: 'tooltip',
               style: { left: tip.left, top: tip.top, ...(props.maxWidth ? { maxWidth: props.maxWidth } : {}) },
@@ -337,19 +354,32 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
 
   function FallbackModal(props: DshModalProps): ReactElement | null {
     const focusedOnOpenRef = React.useRef(false);
+    const previousFocusRef = React.useRef<HTMLElement | null>(null);
+    const focusTimerRef = React.useRef<number | null>(null);
     const attachDialogRef = React.useCallback(function (el: HTMLDivElement | null): void {
       if (!el) {
         focusedOnOpenRef.current = false;
+        if (focusTimerRef.current !== null) {
+          window.clearTimeout(focusTimerRef.current);
+          focusTimerRef.current = null;
+        }
+        const prev = previousFocusRef.current;
+        previousFocusRef.current = null;
+        const active = document.activeElement;
+        const focusLost = !active || active === document.body || active === document.documentElement;
+        if (focusLost && prev && document.contains(prev)) prev.focus();
         return;
       }
       if (!focusedOnOpenRef.current) {
         focusedOnOpenRef.current = true;
-        window.setTimeout(function () {
+        const active = document.activeElement as HTMLElement | null;
+        previousFocusRef.current = active && !el.contains(active) ? active : null;
+        focusTimerRef.current = window.setTimeout(function () {
+          focusTimerRef.current = null;
           if (!el.isConnected || el.contains(document.activeElement)) return;
-          const first = el.querySelector<HTMLElement>(
-            '[autofocus], input:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])',
-          );
-          (first || el).focus();
+          const focusable = getFocusableElements(el);
+          const auto = focusable.find((item) => item.hasAttribute('autofocus'));
+          (auto || focusable[0] || el).focus();
         }, 0);
       }
     }, []);
@@ -357,6 +387,7 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
       React,
       'keydown',
       function (event: KeyboardEvent) {
+        if (event.isComposing || event.keyCode === 229) return;
         if (event.key === 'Escape') {
           event.stopPropagation();
           props.onClose();
@@ -471,7 +502,12 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
     );
   }
 
-  function positionFixedMenu(menuEl: HTMLElement, anchorEl: HTMLElement | null, align?: 'start' | 'end'): void {
+  function positionFixedMenu(
+    menuEl: HTMLElement,
+    anchorEl: HTMLElement | null,
+    align?: 'start' | 'end',
+    side?: 'top' | 'bottom' | 'right',
+  ): void {
     if (!anchorEl || typeof window === 'undefined') return;
     const rect = anchorEl.getBoundingClientRect();
     if (!rect.width && !rect.height) return;
@@ -479,13 +515,20 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
     const vh = window.innerHeight || 768;
     const menuWidth = menuEl.offsetWidth || 244;
     const pad = 8;
-    const rawLeft = align === 'start' ? rect.left : rect.right - menuWidth;
+    const rawLeft = side === 'right' ? rect.right + 4 : align === 'start' ? rect.left : rect.right - menuWidth;
     const left = Math.min(Math.max(rawLeft, pad), Math.max(pad, vw - menuWidth - pad));
     const spaceBelow = vh - rect.bottom - 12;
     const spaceAbove = rect.top - 12;
-    const openAbove = spaceBelow < 180 && spaceAbove > spaceBelow;
+    const openAbove =
+      side === 'top' ? spaceAbove >= 160 || spaceAbove > spaceBelow : spaceBelow < 180 && spaceAbove > spaceBelow;
     menuEl.style.left = Math.round(left) + 'px';
     menuEl.style.right = 'auto';
+    if (side === 'right') {
+      menuEl.style.top = Math.round(Math.min(Math.max(rect.top, pad), Math.max(pad, vh - 180))) + 'px';
+      menuEl.style.bottom = 'auto';
+      menuEl.style.maxHeight = Math.min(640, Math.max(120, Math.round(vh - rect.top - 12))) + 'px';
+      return;
+    }
     if (openAbove) {
       menuEl.style.top = 'auto';
       menuEl.style.bottom = Math.round(vh - rect.top + 4) + 'px';
@@ -497,29 +540,44 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
     }
   }
 
-  function FallbackMenu(props: BridgedMenuProps): ReactElement {
-    const wrapRef = React.useRef<HTMLDivElement | null>(null);
+  function FallbackMenuPanel(
+    panelProps: BridgedMenuProps & { wrapRef: ReactNamespace.RefObject<HTMLDivElement | null> },
+  ): ReactElement {
     const focusedOnOpenRef = React.useRef(false);
-    const attachMenuRef = function (el: HTMLDivElement | null): void {
-      if (!el) {
-        focusedOnOpenRef.current = false;
+    const menuElRef = React.useRef<HTMLDivElement | null>(null);
+    const reposition = function (event?: Event): void {
+      const el = menuElRef.current;
+      if (!el) return;
+      if (event && event.type === 'scroll' && event.target === el) return;
+      positionFixedMenu(el, panelProps.wrapRef.current || el.parentElement, panelProps.align, panelProps.side);
+    };
+    useWindowEvent(React, 'resize', reposition, true);
+    useWindowEvent(React, 'scroll', reposition, true, true);
+    const attachMenuRef = React.useCallback(
+      function (el: HTMLDivElement | null): void {
+        menuElRef.current = el;
+        if (!el) return;
+        positionFixedMenu(el, panelProps.wrapRef.current || el.parentElement, panelProps.align, panelProps.side);
+        if (panelProps.autoFocus !== false && !focusedOnOpenRef.current) {
+          focusedOnOpenRef.current = true;
+          const first = el.querySelector<HTMLElement>('[role="menuitem"]:not([disabled])');
+          if (first) first.focus();
+        }
+      },
+      [panelProps.align, panelProps.side, panelProps.autoFocus, panelProps.wrapRef],
+    );
+    const onMenuKeyDown = function (event: ReactNamespace.KeyboardEvent<HTMLDivElement>): void {
+      if (event.key === 'Tab') {
+        panelProps.onClose();
         return;
       }
-      positionFixedMenu(el, wrapRef.current || el.parentElement, props.align);
-      if (props.autoFocus !== false && !focusedOnOpenRef.current) {
-        focusedOnOpenRef.current = true;
-        const first = el.querySelector<HTMLElement>('[role="menuitem"]:not([disabled])');
-        if (first) first.focus();
-      }
-    };
-    const onMenuKeyDown = function (event: ReactNamespace.KeyboardEvent<HTMLDivElement>): void {
       const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]:not([disabled])'));
       if (!items.length) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         event.stopPropagation();
-        props.onClose();
-        const btn = wrapRef.current?.querySelector<HTMLElement>('button');
+        panelProps.onClose();
+        const btn = panelProps.wrapRef.current?.querySelector<HTMLElement>('button');
         if (btn)
           window.setTimeout(function () {
             btn.focus();
@@ -531,8 +589,33 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
       event.preventDefault();
       items[next].focus();
     };
-    const alignCls = props.align === 'start' ? 'mdstudio-menu is-align-start' : 'mdstudio-menu';
-    const menuCls = joinClass(alignCls, props.listClassName);
+    const alignCls = panelProps.align === 'start' ? 'mdstudio-menu is-align-start' : 'mdstudio-menu';
+    const menuCls = joinClass(alignCls, panelProps.listClassName);
+    return h(
+      'div',
+      {
+        ref: attachMenuRef,
+        className: menuCls,
+        role: 'menu',
+        'aria-label': panelProps.ariaLabel,
+        onKeyDown: onMenuKeyDown,
+      },
+      panelProps.items.map(function (entry) {
+        return renderFallbackMenuEntry(panelProps, entry);
+      }),
+      panelProps.footer && panelProps.footer.length
+        ? h('div', { className: 'mdstudio-menu-sep', role: 'separator' })
+        : null,
+      panelProps.footer
+        ? panelProps.footer.map(function (entry) {
+            return renderFallbackMenuEntry(panelProps, entry);
+          })
+        : null,
+    );
+  }
+
+  function FallbackMenu(props: BridgedMenuProps): ReactElement {
+    const wrapRef = React.useRef<HTMLDivElement | null>(null);
     return h(
       'div',
       { ref: wrapRef, className: joinClass('mdstudio-menu-wrap', props.className) },
@@ -544,29 +627,7 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
             onClick: props.onClose,
           })
         : null,
-      props.open
-        ? h(
-            'div',
-            {
-              ref: attachMenuRef,
-              className: menuCls,
-              role: 'menu',
-              'aria-label': props.ariaLabel,
-              onKeyDown: onMenuKeyDown,
-            },
-            props.items.map(function (entry) {
-              return renderFallbackMenuEntry(props, entry);
-            }),
-            props.footer && props.footer.length
-              ? h('div', { className: 'mdstudio-menu-sep', role: 'separator' })
-              : null,
-            props.footer
-              ? props.footer.map(function (entry) {
-                  return renderFallbackMenuEntry(props, entry);
-                })
-              : null,
-          )
-        : null,
+      props.open ? h(FallbackMenuPanel, { ...props, wrapRef }) : null,
     );
   }
 

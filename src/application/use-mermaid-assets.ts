@@ -10,6 +10,40 @@ interface MermaidModule {
   render(code: unknown, id?: string): Promise<string>;
 }
 
+let sharedMermaidLoadPromise: Promise<MermaidModule | null> | null = null;
+
+function loadMermaidModule(): Promise<MermaidModule | null> {
+  if (typeof window !== 'undefined' && window.__MDSTUDIO_MERMAID__) {
+    return Promise.resolve(window.__MDSTUDIO_MERMAID__);
+  }
+  if (sharedMermaidLoadPromise) return sharedMermaidLoadPromise;
+  sharedMermaidLoadPromise = new Promise(function (resolve) {
+    if (typeof document === 'undefined') {
+      sharedMermaidLoadPromise = null;
+      resolve(null);
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = '/api/markdown-studio/mermaid.js';
+    script.async = true;
+    script.setAttribute('data-plugin', 'dsh-markdown-studio');
+    script.onload = function () {
+      if (!window.__MDSTUDIO_MERMAID__) {
+        sharedMermaidLoadPromise = null;
+        script.remove();
+      }
+      resolve(window.__MDSTUDIO_MERMAID__ || null);
+    };
+    script.onerror = function () {
+      sharedMermaidLoadPromise = null;
+      script.remove();
+      resolve(null);
+    };
+    document.head.appendChild(script);
+  });
+  return sharedMermaidLoadPromise;
+}
+
 export interface MermaidAssetsOptions {
   React: typeof ReactNamespace;
   hostClient: HostClient;
@@ -36,8 +70,10 @@ function decodeHtmlEntities(text: string): string {
 }
 
 export function extractMermaidBlocks(markdown: unknown): string[] {
+  const source = String(markdown || '');
+  if (!/mermaid/i.test(source)) return [];
   const blocks: string[] = [];
-  const html = renderMarkdown(String(markdown || ''), { linkFootnotes: false }).html;
+  const html = renderMarkdown(source, { linkFootnotes: false }).html;
   const pattern = /<code class="mdstudio-lang-mermaid">([\s\S]*?)<\/code>/g;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(html))) {
@@ -118,37 +154,13 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
   const React = options.React;
   const cacheRef = React.useRef<Map<string, MermaidCacheEntry>>(new Map());
   const [version, setVersion] = React.useState(0);
-  const loadPromiseRef = React.useRef<Promise<MermaidModule | null> | null>(null);
   const ensureGenRef = React.useRef(0);
   const inFlightEnsureRef = React.useRef<{ key: string; promise: Promise<void> } | null>(null);
+  const pinnedKeysRef = React.useRef<Set<string>>(new Set());
   const themeRef = useLatest(React, options.theme);
 
   function load(): Promise<MermaidModule | null> {
-    if (window.__MDSTUDIO_MERMAID__) return Promise.resolve(window.__MDSTUDIO_MERMAID__);
-    if (loadPromiseRef.current) return loadPromiseRef.current;
-    loadPromiseRef.current = new Promise(function (resolve) {
-      if (typeof document === 'undefined') {
-        resolve(null);
-        return;
-      }
-      const script = document.createElement('script');
-      script.src = '/api/markdown-studio/mermaid.js';
-      script.async = true;
-      script.onload = function () {
-        if (!window.__MDSTUDIO_MERMAID__) {
-          loadPromiseRef.current = null;
-          script.remove();
-        }
-        resolve(window.__MDSTUDIO_MERMAID__ || null);
-      };
-      script.onerror = function () {
-        loadPromiseRef.current = null;
-        script.remove();
-        resolve(null);
-      };
-      document.head.appendChild(script);
-    });
-    return loadPromiseRef.current;
+    return loadMermaidModule();
   }
 
   function updateCacheIfActive(key: string, entry: MermaidCacheEntry): void {
@@ -221,7 +233,7 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
   function pruneInactiveCache(keys: string[]): void {
     const active = new Set(keys);
     cacheRef.current.forEach(function (_entry, key) {
-      if (!active.has(key)) cacheRef.current.delete(key);
+      if (!active.has(key) && !pinnedKeysRef.current.has(key)) cacheRef.current.delete(key);
     });
   }
 
@@ -234,43 +246,58 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
     theme: MermaidTheme,
     blocks: string[],
     gen: number,
+    unstoppable: boolean,
   ): Promise<void> {
     const keys = blocks.map((code) => mermaidCacheKey(code, theme));
-    pruneInactiveCache(keys);
-    for (let index = 0; index < blocks.length; index++) {
-      if (!isCurrentGen(gen)) return;
-      await ensureBlock(mermaid, theme, keys[index], blocks[index], index);
+    if (unstoppable) {
+      for (const k of keys) pinnedKeysRef.current.add(k);
+    } else {
+      pruneInactiveCache(keys);
+    }
+    try {
+      for (let index = 0; index < blocks.length; index++) {
+        if (!unstoppable && !isCurrentGen(gen)) return;
+        await ensureBlock(mermaid, theme, keys[index], blocks[index], index);
+      }
+    } finally {
+      if (unstoppable) {
+        for (const k of keys) pinnedKeysRef.current.delete(k);
+      }
     }
   }
 
-  async function runEnsure(markdown: string, theme: MermaidTheme, gen: number): Promise<void> {
+  async function runEnsure(markdown: string, theme: MermaidTheme, gen: number, unstoppable: boolean): Promise<void> {
     const blocks = extractMermaidBlocks(markdown);
     if (!blocks.length) {
-      if (isCurrentGen(gen)) cacheRef.current.clear();
+      if (!unstoppable && isCurrentGen(gen) && pinnedKeysRef.current.size === 0) cacheRef.current.clear();
       return;
     }
     const mermaid = await load();
-    if (!mermaid || typeof mermaid.render !== 'function' || !isCurrentGen(gen)) return;
-    await renderAllBlocks(mermaid, theme, blocks, gen);
+    if (!mermaid || typeof mermaid.render !== 'function' || (!unstoppable && !isCurrentGen(gen))) return;
+    await renderAllBlocks(mermaid, theme, blocks, gen, unstoppable);
   }
 
-  async function ensure(markdown: string): Promise<void> {
+  async function ensureInternal(markdown: string, unstoppable: boolean): Promise<void> {
     const theme = themeRef.current;
-    const runKey = markdown + '\0' + theme.directive;
+    const runKey = markdown + '\0' + theme.directive + '\0' + (unstoppable ? '1' : '0');
     const existing = inFlightEnsureRef.current;
     if (existing && existing.key === runKey) return existing.promise;
-    const gen = ++ensureGenRef.current;
-    const promise = runEnsure(markdown, theme, gen).finally(function () {
+    const gen = unstoppable ? ensureGenRef.current : ++ensureGenRef.current;
+    const promise = runEnsure(markdown, theme, gen, unstoppable).finally(function () {
       if (inFlightEnsureRef.current && inFlightEnsureRef.current.promise === promise) {
         inFlightEnsureRef.current = null;
       }
     });
-    inFlightEnsureRef.current = { key: runKey, promise };
+    if (!unstoppable) inFlightEnsureRef.current = { key: runKey, promise };
     return promise;
   }
 
+  function ensure(markdown: string): Promise<void> {
+    return ensureInternal(markdown, true);
+  }
+
   useDebouncedKeyTask(React, options.markdown + '\0' + options.theme.directive, 250, true, function () {
-    void ensure(options.markdown);
+    void ensureInternal(options.markdown, false);
   });
 
   return {

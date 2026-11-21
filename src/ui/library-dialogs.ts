@@ -51,19 +51,26 @@ function highlightHit(h: typeof ReactNamespace.createElement, text: string, need
   );
 }
 
-function formatRelativeStamp(ts: number, t: (key: string) => string): string {
-  const diff = Math.max(0, Date.now() - ts);
-  if (diff < 60_000) return t('library.justNow');
-  if (diff < 3_600_000) return Math.floor(diff / 60_000) + ' ' + t('library.minutesAgo');
-  if (diff < 86_400_000) return Math.floor(diff / 3_600_000) + ' ' + t('library.hoursAgo');
-  if (diff < 7 * 86_400_000) return Math.floor(diff / 86_400_000) + ' ' + t('library.daysAgo');
-  return new Date(ts).toLocaleDateString();
+function formatRelativeUnit(count: number, unit: string): string {
+  return /^[a-z]\b/i.test(unit) ? count + unit : count + ' ' + unit;
 }
 
-function formatLibraryMeta(entry: Article, tab: 'docs' | 'trash', t: (key: string) => string): string {
+function formatRelativeStamp(ts: number, t: (key: string) => string, locale?: string): string {
+  const diff = Math.max(0, Date.now() - ts);
+  if (diff < 60_000) return t('library.justNow');
+  if (diff < 3_600_000) return formatRelativeUnit(Math.floor(diff / 60_000), t('library.minutesAgo'));
+  if (diff < 86_400_000) return formatRelativeUnit(Math.floor(diff / 3_600_000), t('library.hoursAgo'));
+  if (diff < 7 * 86_400_000) return formatRelativeUnit(Math.floor(diff / 86_400_000), t('library.daysAgo'));
+  const dateLocale = locale ? (/^zh/i.test(locale) ? 'zh-CN' : locale) : undefined;
+  return new Date(ts).toLocaleDateString(dateLocale);
+}
+
+function formatLibraryMeta(entry: Article, tab: 'docs' | 'trash', t: (key: string) => string, locale?: string): string {
   const chars = entry.markdown.length + ' ' + t('stats.chars');
-  if (tab === 'docs') return formatRelativeStamp(entry.updatedAt, t) + ' · ' + chars;
-  return t('library.deletedAt') + ' ' + formatRelativeStamp(entry.deletedAt || entry.updatedAt, t) + ' · ' + chars;
+  if (tab === 'docs') return formatRelativeStamp(entry.updatedAt, t, locale) + ' · ' + chars;
+  return (
+    t('library.deletedAt') + ' ' + formatRelativeStamp(entry.deletedAt || entry.updatedAt, t, locale) + ' · ' + chars
+  );
 }
 
 function renderDocsRow(props: LibraryDialogProps, result: LibrarySearchResult, needle: string): ReactNode {
@@ -107,7 +114,7 @@ function renderDocsRow(props: LibraryDialogProps, result: LibrarySearchResult, n
     h(
       'div',
       { className: 'mdstudio-library-tail' },
-      h('span', { className: 'mdstudio-library-meta' }, formatLibraryMeta(entry, 'docs', t)),
+      h('span', { className: 'mdstudio-library-meta' }, formatLibraryMeta(entry, 'docs', t, props.ui.locale?.())),
       h(
         'div',
         { className: 'mdstudio-library-row-actions' },
@@ -150,7 +157,7 @@ function renderTrashRow(props: LibraryDialogProps, result: LibrarySearchResult, 
         'span',
         { className: 'mdstudio-library-row-body' },
         h('span', { className: 'mdstudio-library-title' }, highlightHit(h, entry.title || t('untitled'), needle)),
-        h('span', { className: 'mdstudio-library-meta' }, formatLibraryMeta(entry, 'trash', t)),
+        h('span', { className: 'mdstudio-library-meta' }, formatLibraryMeta(entry, 'trash', t, props.ui.locale?.())),
       ),
     ),
     h(
@@ -344,8 +351,10 @@ export function LibraryDialog(props: LibraryDialogProps): ReactNode {
           {
             type: 'button',
             role: 'tab',
+            id: 'mdstudio-library-tab-docs',
             'data-mdstudio-tab': 'docs',
             'aria-selected': tab === 'docs',
+            'aria-controls': 'mdstudio-library-panel',
             tabIndex: tab === 'docs' ? 0 : -1,
             className: 'mdstudio-library-tab' + (tab === 'docs' ? ' is-active' : ''),
             onClick: function () {
@@ -359,8 +368,10 @@ export function LibraryDialog(props: LibraryDialogProps): ReactNode {
           {
             type: 'button',
             role: 'tab',
+            id: 'mdstudio-library-tab-trash',
             'data-mdstudio-tab': 'trash',
             'aria-selected': tab === 'trash',
+            'aria-controls': 'mdstudio-library-panel',
             tabIndex: tab === 'trash' ? 0 : -1,
             className: 'mdstudio-library-tab' + (tab === 'trash' ? ' is-active' : ''),
             onClick: function () {
@@ -430,6 +441,8 @@ export function LibraryDialog(props: LibraryDialogProps): ReactNode {
         type: 'file',
         ref: fileRef,
         className: 'mdstudio-hidden-input',
+        tabIndex: -1,
+        'aria-hidden': 'true',
         accept: '.zip,application/zip,.json,application/json',
         onChange: function (event) {
           props.actions.onImport(event.target.files && event.target.files[0]);
@@ -456,7 +469,12 @@ export function LibraryDialog(props: LibraryDialogProps): ReactNode {
       : null,
     h(
       'div',
-      { className: 'mdstudio-library-body' },
+      {
+        className: 'mdstudio-library-body',
+        id: 'mdstudio-library-panel',
+        role: 'tabpanel',
+        'aria-labelledby': 'mdstudio-library-tab-' + tab,
+      },
       results.length
         ? h(
             'div',
@@ -820,6 +838,7 @@ function renderWorkspaceDirectory(
           type: 'button',
           className: 'mdstudio-workspace-dir',
           'aria-expanded': expanded,
+          'aria-current': selected ? 'true' : undefined,
           onClick: function () {
             props.actions.onSelectDirectory(entry.path);
           },
@@ -1067,7 +1086,7 @@ export function WorkspaceDialog(props: WorkspaceDialogProps): ReactNode {
       { className: 'mdstudio-library-body mdstudio-workspace-body' },
       props.error ? h('div', { className: 'mdstudio-host-error' }, props.error) : null,
       props.loading
-        ? h('p', { className: 'mdstudio-help mdstudio-library-empty' }, '…')
+        ? h('p', { className: 'mdstudio-help mdstudio-library-empty', role: 'status' }, t('workspace.loading'))
         : h(
             'div',
             { className: 'mdstudio-workspace-tree' },
@@ -1076,6 +1095,7 @@ export function WorkspaceDialog(props: WorkspaceDialogProps): ReactNode {
               {
                 type: 'button',
                 className: 'mdstudio-workspace-root' + (props.selectedDir ? '' : ' is-selected'),
+                'aria-current': props.selectedDir ? undefined : 'true',
                 onClick: function () {
                   props.actions.onSelectDirectory('');
                 },

@@ -90,12 +90,13 @@ function renderInstructionsSurface(
   value: string,
   readOnly: boolean,
   placeholderText: string,
+  ariaLabel: string,
   onChange: (next: string) => void,
   onKeyDown: (event: ReactNamespace.KeyboardEvent<HTMLElement>) => void,
 ): ReactNode {
   const h = React.createElement;
   if (readOnly) {
-    return h('pre', { className: 'mdstudio-skill-readonly', tabIndex: 0 }, value);
+    return h('pre', { className: 'mdstudio-skill-readonly', tabIndex: 0, 'aria-label': ariaLabel }, value);
   }
   const useCm = typeof window !== 'undefined' && typeof window.ResizeObserver === 'function';
   if (useCm) {
@@ -105,14 +106,14 @@ function renderInstructionsSurface(
       h(CodeMirrorEditor, {
         React,
         value,
-        language: 'markdown',
-        placeholder: placeholderText,
+        config: {
+          language: 'markdown',
+          placeholder: placeholderText,
+          ariaLabel,
+          enableHistory: true,
+        },
         onChange,
-        onSelection: function () {},
         onKeyDown,
-        onPaste: function () {},
-        onDragOver: function () {},
-        onDrop: function () {},
       }),
     );
   }
@@ -120,6 +121,7 @@ function renderInstructionsSurface(
     className: 'mdstudio-skill-textarea',
     value,
     placeholder: placeholderText,
+    'aria-label': ariaLabel,
     spellCheck: false,
     onKeyDown,
     onChange: function (e: ReactNamespace.ChangeEvent<HTMLTextAreaElement>) {
@@ -147,8 +149,11 @@ function renderSkillTabItem(
     {
       type: 'button',
       key: item.id,
-      role: 'option',
+      role: 'tab',
+      id: 'mdstudio-skill-tab-' + item.id,
       'aria-selected': selected,
+      'aria-controls': 'mdstudio-skill-panel',
+      tabIndex: selected ? 0 : -1,
       className: 'mdstudio-skill-item' + (selected ? ' is-active' : ''),
       onClick: function () {
         onSelect(item);
@@ -158,6 +163,14 @@ function renderSkillTabItem(
     h('span', { className: 'mdstudio-skill-item-name' }, item.name),
     item.builtin ? h('span', { className: 'mdstudio-skill-item-chip' }, props.t('ai.builtinBadge')) : null,
   );
+}
+
+function nextTabIndex(key: string, current: number, total: number): number {
+  if (key === 'ArrowRight') return (current + 1) % total;
+  if (key === 'ArrowLeft') return (current - 1 + total) % total;
+  if (key === 'Home') return 0;
+  if (key === 'End') return total - 1;
+  return -1;
 }
 
 function renderBuiltinSummaryBar(
@@ -359,6 +372,8 @@ function SkillManagerDialogContent(props: SkillManagerDialogProps): ReactNode {
       type: 'file',
       accept: '.md,.txt,text/markdown',
       className: 'mdstudio-hidden-input',
+      tabIndex: -1,
+      'aria-hidden': 'true',
       onChange: function (e: ReactNamespace.ChangeEvent<HTMLInputElement>) {
         void handleFileChosen(e);
       },
@@ -369,16 +384,35 @@ function SkillManagerDialogContent(props: SkillManagerDialogProps): ReactNode {
       h('span', { className: 'mdstudio-skill-head-title' }, t('ai.managerTitle')),
       h(
         'div',
-        { className: 'mdstudio-skill-tabs', role: 'listbox', 'aria-label': t('ai.skillListLabel') },
+        {
+          className: 'mdstudio-skill-tabs',
+          role: 'tablist',
+          'aria-label': t('ai.skillListLabel'),
+          'aria-orientation': 'horizontal',
+          onKeyDown: function (event: ReactNamespace.KeyboardEvent<HTMLDivElement>) {
+            const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+            if (!tabs.length) return;
+            const current = tabs.indexOf(document.activeElement as HTMLButtonElement);
+            const next = nextTabIndex(event.key, Math.max(0, current), tabs.length);
+            if (next < 0) return;
+            event.preventDefault();
+            tabs[next].click();
+            tabs[next].focus();
+          },
+        },
         props.skills.map(function (item) {
           return renderSkillTabItem(props, item, form.selectedId === item.id, selectExisting);
         }),
         form.selectedId === null
           ? h(
-              'div',
+              'button',
               {
-                role: 'option',
+                type: 'button',
+                role: 'tab',
+                id: 'mdstudio-skill-tab-draft',
                 'aria-selected': true,
+                'aria-controls': 'mdstudio-skill-panel',
+                tabIndex: 0,
                 className: 'mdstudio-skill-item is-active is-draft',
               },
               h('span', { className: 'mdstudio-skill-item-name' }, form.name.trim() || t('ai.newSkillDraft')),
@@ -430,7 +464,12 @@ function SkillManagerDialogContent(props: SkillManagerDialogProps): ReactNode {
     ),
     h(
       'div',
-      { className: 'mdstudio-skill-main' },
+      {
+        className: 'mdstudio-skill-main',
+        id: 'mdstudio-skill-panel',
+        role: 'tabpanel',
+        'aria-labelledby': form.selectedId ? 'mdstudio-skill-tab-' + form.selectedId : 'mdstudio-skill-tab-draft',
+      },
       isBuiltin
         ? renderBuiltinSummaryBar(props, currentSkill, customCount, function () {
             if (!currentSkill) return;
@@ -460,6 +499,7 @@ function SkillManagerDialogContent(props: SkillManagerDialogProps): ReactNode {
         form.instructions,
         isBuiltin,
         t('ai.skillBodyPlaceholder'),
+        t('ai.skillBodyLabel'),
         function (next) {
           setForm({ ...form, instructions: next });
         },

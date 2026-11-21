@@ -245,7 +245,7 @@ export function HeaderBar(props: HeaderBarProps): ReactNode {
       ),
       h(
         'div',
-        { className: 'mdstudio-segmented', role: 'group', 'aria-label': t('view.split') },
+        { className: 'mdstudio-segmented', role: 'group', 'aria-label': t('menu.groupView') },
         viewSegment('split', 'split'),
         viewSegment('edit', 'pencil'),
         viewSegment('preview', 'eye'),
@@ -300,6 +300,7 @@ export function HeaderBar(props: HeaderBarProps): ReactNode {
             {
               type: 'button',
               className: 'mdstudio-icon-btn' + (state.menuOpen ? ' is-active' : ''),
+              'data-mdstudio-menu-trigger': 'more',
               'aria-label': t('more'),
               'aria-haspopup': 'menu',
               'aria-expanded': state.menuOpen,

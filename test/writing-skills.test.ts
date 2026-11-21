@@ -4,7 +4,7 @@ import http from 'node:http';
 import { AiHostError, AiHostService, type HostLlmChunk } from '../host/application/ai-service';
 import { AI_ROUTE_PATH, createAiRoute } from '../host/http/ai-route';
 import { apply as applyHostPlugin } from '../index';
-import { AiClient, AiClientError } from '../src/adapters/ai-client';
+import { AiClient, AiClientError, formatAiClientError } from '../src/adapters/ai-client';
 import { loadWritingSkills, saveWritingSkills, WRITING_SKILLS_KEY } from '../src/adapters/storage';
 import { createLibraryBackup, extractBackupWritingSkills, mergeWritingSkillStates } from '../src/domain/library-backup';
 import { computeTextDiff, tokenizeDiff } from '../src/domain/text-diff';
@@ -231,6 +231,47 @@ await check('selection prompt, fence unwrapper, patch applier and protected toke
     false,
   );
   assert.equal(hasMissingProtectedTokens('含 `code` 与 $x_1$', '含 code 与 $x_1$'), true);
+  // Generalized protected token coverage: TeX \(...\) / \[...\], tilde fences ~~~, double backticks, footnotes, currency guard
+  assert.equal(
+    hasMissingProtectedTokens('质能方程 \\(E = mc^2\\) 成立', '质能方程 E = mc2 成立'),
+    true,
+    'missing inline TeX \\(...\\) triggers syntax warning',
+  );
+  assert.equal(
+    hasMissingProtectedTokens('公式 \\[a^2 + b^2 = c^2\\] 成立', '公式 a^2 + b^2 = c^2 成立'),
+    true,
+    'missing block TeX \\[...\\] triggers syntax warning',
+  );
+  assert.equal(
+    hasMissingProtectedTokens('~~~ts\nconst x = 1;\n~~~', 'const x = 1;'),
+    true,
+    'missing tilde fenced code block triggers syntax warning',
+  );
+  assert.equal(
+    hasMissingProtectedTokens('使用 ``a `b` c`` 表示嵌套反引号', '使用 a b c 表示嵌套反引号'),
+    true,
+    'missing multi-backtick code span triggers syntax warning',
+  );
+  assert.equal(
+    hasMissingProtectedTokens('参考注释[^note1]说明', '参考注释说明'),
+    true,
+    'missing footnote reference triggers syntax warning',
+  );
+  assert.equal(
+    hasMissingProtectedTokens('预算区间 $100/$200 可接受', '预算区间 $100 或 $200 可接受'),
+    false,
+    'currency amounts like $100/$200 are not misclassified as math tokens',
+  );
+  assert.equal(
+    hasMissingProtectedTokens('  ```ts\n  const y = 2;\n  ```', '  ```ts\n  const y = 2;\n  ```'),
+    false,
+    'indented fenced code block is preserved cleanly',
+  );
+  assert.equal(
+    hasMissingProtectedTokens('含转义 \\$100 与 \\$200 美元', '含转义 \\$100 和 \\$200 美元'),
+    false,
+    'escaped dollar signs are not treated as inline math',
+  );
 });
 
 await check('computeTextDiff pinpoints Chinese/English word & punctuation deletions and additions', () => {
@@ -645,6 +686,50 @@ await check('AiHostService, createAiRoute and AiClient stream NDJSON and enforce
   assert.ok(routes.has(AI_ROUTE_PATH), 'host apply() registers /api/markdown-studio/ai');
   for (const fn of cleanups) fn();
   assert.equal(routes.has(AI_ROUTE_PATH), false, 'host effect cleanup unregisters /api/markdown-studio/ai');
+});
+
+await check('formatAiClientError prioritizes structured error codes over loose substring patterns', () => {
+  const t = (key: string) => key;
+  assert.equal(
+    formatAiClientError(new AiClientError('STREAM_INTERRUPTED', 'upstream dropped chunk 401 before EOF'), t),
+    'err.aiStreamInterrupted',
+    'structured STREAM_INTERRUPTED wins over bare 401 in message',
+  );
+  assert.equal(
+    formatAiClientError(new AiClientError('HTTP_401', 'HTTP 401'), t),
+    'err.aiApiKeyMissing',
+    'explicit HTTP_401 maps to API key missing',
+  );
+  assert.equal(
+    formatAiClientError(new AiClientError('RATE_LIMITED', 'slow down'), t),
+    'err.aiRateLimited',
+    'explicit RATE_LIMITED maps to rate limit error',
+  );
+  assert.equal(
+    formatAiClientError(new AiClientError('HTTP_429', 'HTTP 429'), t),
+    'err.aiRateLimited',
+    'explicit HTTP_429 maps to rate limit error',
+  );
+  assert.equal(
+    formatAiClientError(new AiClientError('INTERNAL', 'Too many requests (status 429)'), t),
+    'err.aiRateLimited',
+    'generic INTERNAL with rate-limit message maps to err.aiRateLimited',
+  );
+  assert.equal(
+    formatAiClientError(new AiClientError('INTERNAL', 'HTTP 401 Unauthorized'), t),
+    'err.aiApiKeyMissing',
+    'generic INTERNAL with explicit HTTP 401 maps to err.aiApiKeyMissing',
+  );
+  assert.equal(
+    formatAiClientError(new AiClientError('INTERNAL', 'worker failed at line 401'), t),
+    'err.internal',
+    'generic INTERNAL with unrelated number 401 does not falsely claim missing API key',
+  );
+  assert.equal(
+    formatAiClientError(new AiClientError('ROUTE_NOT_LOADED', 'HTTP 404'), t),
+    'err.aiRouteNotLoaded',
+    'ROUTE_NOT_LOADED maps cleanly via i18n key without hardcoded Chinese',
+  );
 });
 
 console.log(`\n${checks} writing-skills checks passed.`);

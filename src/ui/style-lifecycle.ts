@@ -40,8 +40,9 @@ export function unmountPluginStyles(): void {
   if (typeof document === 'undefined') return;
   const nodes = document.querySelectorAll(`style[data-plugin=${JSON.stringify(PLUGIN_ID)}]`);
   nodes.forEach((node) => {
-    if (typeof (node as { remove?: () => void }).remove === 'function') {
-      (node as { remove: () => void }).remove();
+    const candidate = node as { dataset?: { pluginCss?: string }; remove?: () => void };
+    if (candidate.dataset?.pluginCss && typeof candidate.remove === 'function') {
+      candidate.remove();
     }
   });
 }

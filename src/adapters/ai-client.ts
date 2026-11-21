@@ -55,17 +55,44 @@ const AI_ERROR_CODE_KEYS: Record<string, string> = {
   INTERNAL: 'err.internal',
 };
 
-const API_KEY_MISSING_PATTERN = /api[\s_-]?key|unauthori[sz]ed|authentication|invalid[\s_-]?token|\b401\b/i;
+const AUTH_ERROR_CODES = new Set([
+  'API_KEY_MISSING',
+  'INVALID_API_KEY',
+  'UNAUTHORIZED',
+  'AUTHENTICATION_ERROR',
+  'HTTP_401',
+]);
+
+const RATE_LIMIT_CODES = new Set(['RATE_LIMITED', 'QUOTA_EXCEEDED', 'HTTP_429']);
+
+const GENERIC_UPSTREAM_CODES = new Set(['', 'AI_ERROR', 'LLM_ERROR', 'INTERNAL']);
+
+const API_KEY_MISSING_PATTERN =
+  /api[\s_-]?key|unauthori[sz]ed|invalid[\s_-]?token|authentication[\s_-]*(?:failed|error|required)|(?:http|status)[\s:]*401\b/i;
+
+const RATE_LIMIT_PATTERN =
+  /rate[\s_-]?limit|too[\s_-]?many[\s_-]?requests|quota[\s_-]?exceeded|(?:http|status)[\s:]*429\b/i;
+
+function formatUpstreamFallback(code: string, message: string, t: (key: string) => string): string | null {
+  if (!GENERIC_UPSTREAM_CODES.has(code)) return null;
+  if (API_KEY_MISSING_PATTERN.test(message)) return t('err.aiApiKeyMissing');
+  if (code && RATE_LIMIT_PATTERN.test(message)) return t('err.aiRateLimited');
+  return null;
+}
 
 export function formatAiClientError(error: unknown, t: (key: string) => string): string {
   const candidate = error && typeof error === 'object' ? (error as { code?: unknown; message?: unknown }) : null;
   const code = typeof candidate?.code === 'string' ? candidate.code : '';
   const message = typeof candidate?.message === 'string' ? candidate.message : '';
-  if (API_KEY_MISSING_PATTERN.test(code + ' ' + message)) return t('err.aiApiKeyMissing');
+  if (AUTH_ERROR_CODES.has(code)) return t('err.aiApiKeyMissing');
+  if (RATE_LIMIT_CODES.has(code)) return t('err.aiRateLimited');
+  const structuredKey = code && code !== 'INTERNAL' ? AI_ERROR_CODE_KEYS[code] : '';
+  if (structuredKey) return t(structuredKey);
+  const upstreamMatch = formatUpstreamFallback(code, message, t);
+  if (upstreamMatch) return upstreamMatch;
   const httpMatch = /^HTTP_(\d+)$/.exec(code);
   if (httpMatch) return `${t('err.aiHttpError')} (HTTP ${httpMatch[1]})`;
-  const key = code ? AI_ERROR_CODE_KEYS[code] : '';
-  if (key) return t(key);
+  if (code && AI_ERROR_CODE_KEYS[code]) return t(AI_ERROR_CODE_KEYS[code]);
   if (error instanceof Error && error.message) return error.message;
   return t('ai.requestFailed');
 }
@@ -84,13 +111,8 @@ function formatErrorMessage(message: string, hint: string): string {
 }
 
 function httpStatusError(status: number): AiClientError {
-  if (status === 404) {
-    return new AiClientError(
-      'ROUTE_NOT_LOADED',
-      '宿主尚未加载新版 AI 服务，请完全退出并重新打开一次 DeepSeek Harness（⌘Q 重启）',
-    );
-  }
-  return new AiClientError('HTTP_' + status, `AI 服务响应异常（HTTP ${status}）`);
+  if (status === 404) return new AiClientError('ROUTE_NOT_LOADED', 'DeepSeek Harness AI route not loaded (HTTP 404)');
+  return new AiClientError('HTTP_' + status, `HTTP ${status}`);
 }
 
 function parseModelOption(item: unknown): AiModelOption | null {
@@ -223,7 +245,13 @@ export class AiClient {
     if (!contentType.includes('application/json')) {
       return { available: false, provider: '', model: '', models: [] };
     }
-    const data = recordOf(await response.json());
+    let rawJson: unknown;
+    try {
+      rawJson = await response.json();
+    } catch {
+      return { available: false, provider: '', model: '', models: [] };
+    }
+    const data = recordOf(rawJson);
     if (!data || data.ok !== true) {
       return { available: false, provider: '', model: '', models: [] };
     }
@@ -256,7 +284,13 @@ export class AiClient {
     }
     const contentType = response.headers.get('content-type') || '';
     if (contentType.includes('application/json')) {
-      const json = recordOf(await response.json());
+      let parsed: unknown;
+      try {
+        parsed = await response.json();
+      } catch {
+        throw new AiClientError('HOST_BAD_RESPONSE', '宿主 AI 响应格式异常');
+      }
+      const json = recordOf(parsed);
       const err = recordOf(json?.error);
       const hint = strOf(err?.hint);
       throw new AiClientError(

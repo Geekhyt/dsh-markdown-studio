@@ -43,7 +43,8 @@ const REQUIRED_PRIMITIVE_EXPORTS = [
   'Checkbox',
   'Input',
   'Pill',
-  'SegmentedTabs',
+  'StateDot',
+  'Switch',
   'Tag',
   'Modal',
   'Menu',
@@ -53,7 +54,7 @@ const REQUIRED_PRIMITIVE_EXPORTS = [
   'IconCopyOutlineRegular',
 ];
 
-const REQUIRED_SEAMS = ['sidebar.panellist', 'webServer', '__ModuleLoader__.load'];
+const REQUIRED_SEAMS = ['sidebar.panellist', 'webServer', '__ModuleLoader__.load', 'locale', 'llm'];
 
 if (!existsSync(ASAR_PATH)) {
   console.log(`[check-host-api] Skipped: DeepSeek Harness app.asar not present on this machine (${ASAR_PATH}).`);

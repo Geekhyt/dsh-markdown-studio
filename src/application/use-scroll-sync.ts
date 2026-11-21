@@ -22,18 +22,32 @@ export function useScrollSync(options: ScrollSyncOptions): ScrollSyncApi {
   const React = options.React;
   const [enabled, setEnabled] = React.useState(true);
   const enabledRef = useLatest(React, enabled);
-  const lockRef = React.useRef(false);
+  const lockSourceRef = React.useRef<'editor' | 'preview' | null>(null);
+  const unlockTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewRef = React.useRef<HTMLDivElement | null>(null);
   const disposeRef = React.useRef<(() => void) | null>(null);
 
   useMountDisposable(React, function () {
     return function () {
+      if (unlockTimerRef.current !== null) {
+        clearTimeout(unlockTimerRef.current);
+        unlockTimerRef.current = null;
+      }
       if (disposeRef.current) {
         disposeRef.current();
         disposeRef.current = null;
       }
     };
   });
+
+  function acquireLock(source: 'editor' | 'preview'): void {
+    lockSourceRef.current = source;
+    if (unlockTimerRef.current !== null) clearTimeout(unlockTimerRef.current);
+    unlockTimerRef.current = setTimeout(function () {
+      lockSourceRef.current = null;
+      unlockTimerRef.current = null;
+    }, 80);
+  }
 
   function scrollMax(element: HTMLElement): number {
     return Math.max(0, element.scrollHeight - element.clientHeight);
@@ -44,7 +58,7 @@ export function useScrollSync(options: ScrollSyncOptions): ScrollSyncApi {
   }
 
   function syncPreviewFromEditor(): void {
-    if (!enabledRef.current || lockRef.current) return;
+    if (!enabledRef.current || lockSourceRef.current === 'preview') return;
     const preview = previewRef.current;
     if (!preview || preview.clientHeight === 0) return;
     let top = 0;
@@ -58,29 +72,23 @@ export function useScrollSync(options: ScrollSyncOptions): ScrollSyncApi {
       max = scrollMax(options.textareaRef.current);
     }
     if (max <= 0) return;
-    lockRef.current = true;
+    acquireLock('editor');
     scrollToRatio(preview, top / max);
-    window.requestAnimationFrame(function () {
-      lockRef.current = false;
-    });
   }
 
   function syncEditorFromPreview(): void {
-    if (!enabledRef.current || lockRef.current) return;
+    if (!enabledRef.current || lockSourceRef.current === 'editor') return;
     const preview = previewRef.current;
     if (!preview) return;
     const max = scrollMax(preview);
     if (max <= 0) return;
     const ratio = preview.scrollTop / max;
-    lockRef.current = true;
+    acquireLock('preview');
     if (options.codeMirrorApiRef.current) {
       options.codeMirrorApiRef.current.scrollToRatio(ratio);
     } else if (options.textareaRef.current) {
       scrollToRatio(options.textareaRef.current, ratio);
     }
-    window.requestAnimationFrame(function () {
-      lockRef.current = false;
-    });
   }
 
   function registerCodeMirror(api: EditorApi | null): void {
@@ -93,12 +101,9 @@ export function useScrollSync(options: ScrollSyncOptions): ScrollSyncApi {
       if (options.onCodeMirrorReady) options.onCodeMirrorReady(null);
       return;
     }
-    lockRef.current = true;
+    acquireLock('preview');
     if (options.onCodeMirrorReady) options.onCodeMirrorReady(api);
     disposeRef.current = api.onScroll(syncPreviewFromEditor);
-    window.requestAnimationFrame(function () {
-      lockRef.current = false;
-    });
   }
 
   return {

@@ -90,15 +90,18 @@ export function mergeLibraryBackup(
   const trash = new Map((current.trash || []).map((entry) => [entry.id, entry] as const));
   const decisionFor = (id: string, exists: boolean): MergeDecision =>
     Object.hasOwn(decisions, id) ? decisions[id] : exists ? prefer : 'incoming';
+  const incomingDocIds = new Set<string>();
   for (const entry of incoming.docs) {
     const exists = docs.has(entry.id) || trash.has(entry.id);
     const decision = decisionFor(entry.id, exists);
     if (decision === 'incoming' || !exists) {
       docs.set(entry.id, entry);
       trash.delete(entry.id);
+      incomingDocIds.add(entry.id);
     }
   }
   for (const entry of incoming.trash || []) {
+    if (incomingDocIds.has(entry.id)) continue;
     const exists = docs.has(entry.id) || trash.has(entry.id);
     const decision = decisionFor(entry.id, exists);
     if (decision === 'incoming' || !exists) {

@@ -325,6 +325,80 @@ check('unknown theme ids fall back to classic while preserving valid user accent
   );
 });
 
+check('every theme × accent × container keeps >= 4.5:1 contrast for inline strong, em, and links', () => {
+  const sample = [
+    ':::lead',
+    'Lead with **bold**, *italic*, and [link](https://example.com)',
+    ':::',
+    '',
+    ':::tldr',
+    'Summary with **bold**, *italic*, and [link](https://example.com)',
+    ':::',
+    '',
+    ':::pull',
+    'Pull quote with **bold**, *italic*, and [link](https://example.com)',
+    ':::',
+    '',
+    '> Blockquote with **bold**, *italic*, and [link](https://example.com)',
+    '',
+    '> [!NOTE]',
+    '> Alert with **bold**, *italic*, and [link](https://example.com)',
+    '',
+    '| **Bold H** | *Italic H* | [Link H](https://example.com) |',
+    '| --- | --- | --- |',
+    '| 1 | 2 | 3 |',
+    '',
+  ].join('\n');
+  const containers = ['th', 'blockquote', '.mdstudio-pull', '.mdstudio-lead', '.mdstudio-tldr', '.mdstudio-alert'];
+  const inlines = ['strong', 'em', 'a'];
+  const resolveEffectiveBg = (el: HTMLElement, rootBg: string): string => {
+    let cur: HTMLElement | null = el;
+    while (cur) {
+      const bg = cur.style.backgroundColor;
+      if (bg && bg !== 'transparent' && bg !== 'rgba(0, 0, 0, 0)') return toHex6(bg);
+      cur = cur.parentElement;
+    }
+    return rootBg;
+  };
+  const resolveEffectiveFg = (el: HTMLElement, rootFg: string): string => {
+    let cur: HTMLElement | null = el;
+    while (cur) {
+      const fg = cur.style.color;
+      if (fg && fg !== 'inherit') return toHex6(fg);
+      cur = cur.parentElement;
+    }
+    return rootFg;
+  };
+  for (const theme of THEMES) {
+    for (const accent of [theme.defaultAccent, ...STRESS_ACCENTS]) {
+      const rendered = renderArticle(
+        sample,
+        { ...DEFAULT_SETTINGS, theme: theme.id, accent, linkFootnotes: false },
+        { forCopy: true, forPreview: false, footnotesTitle: '脚注' },
+      );
+      const doc = new JSDOM(rendered.html).window.document;
+      const rootEl = doc.querySelector<HTMLElement>('#mdstudio')!;
+      const rootBg = toHex6(rootEl.style.backgroundColor || '#ffffff');
+      const rootFg = toHex6(rootEl.style.color || '#111111');
+      for (const containerSel of containers) {
+        for (const containerEl of Array.from(doc.querySelectorAll<HTMLElement>(containerSel))) {
+          for (const inlineSel of inlines) {
+            for (const inlineEl of Array.from(containerEl.querySelectorAll<HTMLElement>(inlineSel))) {
+              const fg = resolveEffectiveFg(inlineEl, rootFg);
+              const bg = resolveEffectiveBg(inlineEl, rootBg);
+              const ratio = contrast(fg, bg);
+              assert.ok(
+                ratio >= 4.5,
+                `${theme.id} @ ${accent} ${containerSel} ${inlineSel} contrast ${ratio.toFixed(2)}:1 (${fg} on ${bg}) < 4.5:1`,
+              );
+            }
+          }
+        }
+      }
+    }
+  }
+});
+
 console.log(`\n${checks} theme-system checks passed.`);
 
 const { derivePalette } = await import('../src/theme-system/palette');

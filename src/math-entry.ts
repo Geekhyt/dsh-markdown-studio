@@ -13,10 +13,11 @@ declare global {
 
 const adaptor = browserAdaptor();
 RegisterHTMLHandler(adaptor);
-// The TeX `html` extension (\href, \style, \class, \cssId) can inject links and
-// arbitrary styles into the SVG output, so it is never loaded.
+// Exclude TeX extensions that inject links, arbitrary inline CSS styles, or
+// `<foreignObject>` tooltips (`html`: \href/\style, `bbox`: \bbox[...], `action`: \mathtip/\toggle).
+const BLOCKED_TEX_PACKAGES = new Set(['html', 'bbox', 'action']);
 const SAFE_TEX_PACKAGES = AllPackages.filter(function (name) {
-  return name !== 'html';
+  return !BLOCKED_TEX_PACKAGES.has(name);
 });
 const tex = new TeX({ packages: SAFE_TEX_PACKAGES });
 const svg = new SVG({ fontCache: 'none' });
@@ -24,8 +25,13 @@ const doc = mathjax.document(document, { InputJax: tex, OutputJax: svg });
 
 export const cssText = '';
 
-/** Defense in depth: unwrap every SVG `<a>` so formulas can never carry navigable links. */
+const SVG_PAINT_ATTRS = ['fill', 'stroke', 'filter', 'clip-path', 'mask'];
+
+/** Defense in depth: unwrap SVG links, drop `<foreignObject>`, and neutralize external paint/style URLs. */
 function stripSvgLinks(root: Element): void {
+  Array.from(root.querySelectorAll('foreignObject')).forEach(function (node) {
+    node.remove();
+  });
   Array.from(root.querySelectorAll('a')).forEach(function (link) {
     while (link.firstChild) link.parentNode?.insertBefore(link.firstChild, link);
     link.remove();
@@ -34,6 +40,14 @@ function stripSvgLinks(root: Element): void {
     if (node.tagName.toLowerCase() === 'use') return;
     node.removeAttribute('href');
     node.removeAttribute('xlink:href');
+  });
+  Array.from(root.querySelectorAll('*')).forEach(function (node) {
+    const inlineStyle = node.getAttribute('style');
+    if (inlineStyle && /url\s*\(/i.test(inlineStyle)) node.removeAttribute('style');
+    for (const attr of SVG_PAINT_ATTRS) {
+      const value = node.getAttribute(attr);
+      if (value && /url\s*\(/i.test(value)) node.removeAttribute(attr);
+    }
   });
 }
 

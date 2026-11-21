@@ -21,8 +21,18 @@ function isJsonContentType(value: string): boolean {
 const ALLOWED_DESKTOP_PROTOCOLS = new Set(['dsh-app:', 'dsh:', 'app:', 'file:']);
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
 
+function isLoopbackHost(host: string): boolean {
+  if (!host) return true;
+  try {
+    return LOOPBACK_HOSTS.has(new URL('http://' + host.trim()).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 function isAllowedOrigin(origin: string, host: string, site: string): boolean {
-  if (!origin) return true;
+  if (!isLoopbackHost(host)) return false;
+  if (!origin) return site !== 'cross-site';
   // An opaque `null` origin is only trusted when the browser vouches for it via Sec-Fetch-Site.
   if (origin === 'null') return site === 'same-origin' || site === 'none';
   try {
@@ -30,14 +40,14 @@ function isAllowedOrigin(origin: string, host: string, site: string): boolean {
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       return ALLOWED_DESKTOP_PROTOCOLS.has(parsed.protocol);
     }
-    return parsed.host === host && LOOPBACK_HOSTS.has(parsed.hostname.toLowerCase());
+    return parsed.host.toLowerCase() === host.toLowerCase() && LOOPBACK_HOSTS.has(parsed.hostname.toLowerCase());
   } catch (error) {
     return false;
   }
 }
 
 function sendJson(res: ServerResponse, status: number, payload: unknown): void {
-  if (res.headersSent) return;
+  if (res.headersSent || res.destroyed || res.closed) return;
   const body = JSON.stringify(payload);
   res.statusCode = status;
   res.setHeader('content-type', 'application/json; charset=utf-8');
@@ -47,21 +57,34 @@ function sendJson(res: ServerResponse, status: number, payload: unknown): void {
 }
 
 function writeNdjson(res: ServerResponse, event: Record<string, unknown>): void {
-  if (res.writableEnded) return;
+  if (res.writableEnded || res.destroyed || res.closed) return;
   res.write(JSON.stringify(event) + '\n');
 }
 
 async function readJsonObject(req: IncomingMessage, limit: number): Promise<Record<string, unknown>> {
+  const rawLen = headerValue(req.headers['content-length']).trim();
+  if (rawLen && Number.isFinite(Number(rawLen)) && Number(rawLen) > limit) {
+    throw new AiHostError('BODY_TOO_LARGE', '请求内容超出限制');
+  }
   return await new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
     let settled = false;
+    const cleanup = (): void => {
+      req.removeListener('data', onData);
+      req.removeListener('end', onEnd);
+      req.removeListener('error', onError);
+      req.removeListener('aborted', onAborted);
+      req.removeListener('close', onClose);
+    };
     const fail = (err: Error): void => {
       if (settled) return;
       settled = true;
+      chunks.length = 0;
+      cleanup();
       reject(err);
     };
-    req.on('data', (chunk: unknown) => {
+    const onData = (chunk: unknown): void => {
       if (settled) return;
       const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
       size += buf.length;
@@ -71,12 +94,14 @@ async function readJsonObject(req: IncomingMessage, limit: number): Promise<Reco
         return;
       }
       chunks.push(buf);
-    });
-    req.on('end', () => {
+    };
+    const onEnd = (): void => {
       if (settled) return;
       settled = true;
+      cleanup();
       try {
         const raw = Buffer.concat(chunks).toString('utf8');
+        chunks.length = 0;
         const parsed: unknown = raw ? JSON.parse(raw) : {};
         if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
           reject(new AiHostError('BAD_JSON', '请求体必须是 JSON 对象'));
@@ -86,8 +111,17 @@ async function readJsonObject(req: IncomingMessage, limit: number): Promise<Reco
       } catch (error) {
         reject(new AiHostError('BAD_JSON', '请求 JSON 无法解析'));
       }
-    });
-    req.on('error', fail);
+    };
+    const onError = (err: Error): void => fail(err);
+    const onAborted = (): void => fail(new AiHostError('BAD_JSON', '请求连接已提前断开'));
+    const onClose = (): void => {
+      if (!req.complete) fail(new AiHostError('BAD_JSON', '请求连接已提前断开'));
+    };
+    req.on('data', onData);
+    req.on('end', onEnd);
+    req.on('error', onError);
+    req.on('aborted', onAborted);
+    req.on('close', onClose);
   });
 }
 
@@ -148,7 +182,7 @@ async function handleStreamAction(
       });
     }
   } finally {
-    if (!res.writableEnded) res.end();
+    if (!res.writableEnded && !res.destroyed && !res.closed) res.end();
   }
 }
 

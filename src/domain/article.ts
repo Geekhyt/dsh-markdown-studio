@@ -49,8 +49,8 @@ export function deriveTitle(markdown: unknown, fallback: string): string {
     const titleLine = /^title\s*:\s*(.+)$/m.exec(frontmatter[1]);
     if (titleLine) return titleLine[1].trim().replace(/^["']|["']$/g, '') || fallback;
   }
-  const heading = /^#\s+(.+)$/m.exec(text);
-  return heading ? heading[1].trim() : fallback;
+  const h1 = markdownHeadings(text).find((item) => item.level === 1);
+  return h1 ? h1.text.trim() || fallback : fallback;
 }
 
 export function markdownToPlain(markdown: unknown): string {
@@ -95,16 +95,17 @@ export function markdownHeadings(text: string): Heading[] {
   let offset = 0;
   let fence = '';
   for (const line of lines) {
+    const clean = line.endsWith('\r') ? line.slice(0, -1) : line;
     const prevFence = fence;
-    fence = advanceHeadingFence(fence, line);
+    fence = advanceHeadingFence(fence, clean);
     if (!prevFence && !fence) {
-      const match = /^ {0,3}(#{1,6})\s+(.+)$/.exec(line);
+      const match = /^ {0,3}(#{1,6})\s+(.+)$/.exec(clean);
       if (match) {
         headings.push({
           level: match[1].length,
           text: match[2].replace(/\s+#+\s*$/, ''),
           start: offset,
-          length: line.length,
+          length: clean.length,
         });
       }
     }

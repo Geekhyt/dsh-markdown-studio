@@ -59,12 +59,14 @@ function assetItemOf(value: unknown): AssetItem | null {
   const assetPath = stringField(item.assetPath);
   const url = stringField(item.url);
   if (!filename || !assetPath || !url) return null;
+  const storedAt = stringField(item.storedAt);
   return {
     filename,
     assetPath,
     url,
     bytes: Number(item.bytes) || 0,
     mime: stringField(item.mime) || 'image/png',
+    ...(storedAt ? { storedAt } : {}),
   };
 }
 
@@ -97,7 +99,13 @@ export class HostClient {
     if (!contentType.includes('application/json')) {
       throw new HostClientError('HOST_UNAVAILABLE', 'Host returned a non-JSON response');
     }
-    const data = recordOf(await response.json());
+    let rawJson: unknown;
+    try {
+      rawJson = await response.json();
+    } catch {
+      throw new HostClientError('HOST_BAD_RESPONSE', 'Host returned malformed JSON');
+    }
+    const data = recordOf(rawJson);
     if (!data) throw new HostClientError('HOST_BAD_RESPONSE', 'Host returned an invalid response');
     if (data.ok === false) {
       const error = recordOf(data.error) || {};

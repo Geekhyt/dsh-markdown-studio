@@ -5,6 +5,7 @@ import { MAX_CUSTOM_THEMES } from '../domain/custom-themes';
 import { useMountDisposable } from '../runtime/react-lifecycle';
 import type { CustomTheme, ThemeSettings } from '../themes';
 import * as themes from '../themes';
+import { trapModalTab } from './dsh-primitives';
 import type { IconName } from './icons';
 import { buildSlashHelpRows } from './shortcut-model';
 import { ACCENT_PRESETS, renderCustomThemeSwatch, renderThemeSwatch } from './theme-swatches';
@@ -83,6 +84,7 @@ function renderTypographyControls(props: SettingsDrawerProps): ReactNode {
           style: { backgroundColor: color },
           title: color,
           'aria-label': color,
+          'aria-pressed': active,
           onClick: function () {
             props.themeActions.onSettings({ accent: color });
           },
@@ -328,7 +330,15 @@ function SettingsDrawerContent(props: SettingsDrawerProps): ReactNode {
 
   return h(
     'aside',
-    { ref: drawerRef, className: 'mdstudio-drawer', 'aria-label': t('drawer.title'), 'data-mdstudio-tab': tab },
+    {
+      ref: drawerRef,
+      className: 'mdstudio-drawer',
+      'aria-label': t('drawer.title'),
+      'data-mdstudio-tab': tab,
+      onKeyDown: function (event: ReactNamespace.KeyboardEvent<HTMLElement>) {
+        if (typeof window !== 'undefined' && window.innerWidth <= 720) trapModalTab(event);
+      },
+    },
     h(
       'div',
       { className: 'mdstudio-drawer-head' },
@@ -493,6 +503,8 @@ function SettingsDrawerContent(props: SettingsDrawerProps): ReactNode {
             type: 'file',
             ref: themeFileRef,
             className: 'mdstudio-hidden-input',
+            tabIndex: -1,
+            'aria-hidden': 'true',
             accept: '.json,application/json',
             onChange: function (event) {
               props.themeActions.onImportTheme(event.target.files && event.target.files[0]);

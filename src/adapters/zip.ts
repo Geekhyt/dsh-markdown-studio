@@ -75,7 +75,6 @@ export function createZipStreamWriter(sink: WritableLike): ZipStreamWriter {
       if (closed) throw new Error('zip stream is closed');
       const encoded = encoder.encode(name);
       assertZipBudget(centrals.length + 1, totalBytes + data.length, data.length, encoded.length);
-      totalBytes += data.length;
       const crc = crc32(data);
       const local = new Uint8Array([
         ...u32(0x04034b50),
@@ -90,10 +89,17 @@ export function createZipStreamWriter(sink: WritableLike): ZipStreamWriter {
         ...u16(encoded.length),
         ...u16(0),
       ]);
-      centrals.push({ name: encoded, crc, size: data.length, offset });
-      await sink.write(local);
-      await sink.write(encoded);
-      await sink.write(data);
+      const entryOffset = offset;
+      try {
+        await sink.write(local);
+        await sink.write(encoded);
+        await sink.write(data);
+      } catch (error) {
+        closed = true;
+        throw error;
+      }
+      totalBytes += data.length;
+      centrals.push({ name: encoded, crc, size: data.length, offset: entryOffset });
       offset += local.length + encoded.length + data.length;
     },
     async close() {
@@ -251,6 +257,16 @@ async function inflateRawBytes(bytes: Uint8Array, limit: number): Promise<Uint8A
   return output;
 }
 
+const MAX_ZIP_COMPRESSION_RATIO = 100;
+const RATIO_GUARD_MIN_BYTES = 1024 * 1024;
+
+function isUnsafeZipPath(name: string): boolean {
+  if (!name) return false;
+  if (/[\x00-\x1f]/.test(name)) return true;
+  if (name.startsWith('/') || name.startsWith('\\') || /^[a-zA-Z]:/.test(name)) return true;
+  return name.split(/[/\\]/).some((segment) => segment === '..');
+}
+
 function zipDirectory(view: DataView): { count: number; start: number; end: number } {
   if (view.byteLength > ZIP_LIMITS.archiveBytes) throw new Error('ZIP_LIMIT_EXCEEDED');
   const lowest = Math.max(0, view.byteLength - 65557);
@@ -262,11 +278,12 @@ function zipDirectory(view: DataView): { count: number; start: number; end: numb
     }
   }
   if (end < 0) throw new Error('not a zip file');
+  const diskEntries = view.getUint16(end + 8, true);
   const count = view.getUint16(end + 10, true);
   const size = view.getUint32(end + 12, true);
   const start = view.getUint32(end + 16, true);
   assertZipBudget(count, 0);
-  if (view.getUint16(end + 4, true) || view.getUint16(end + 6, true) || start + size !== end)
+  if (diskEntries !== count || view.getUint16(end + 4, true) || view.getUint16(end + 6, true) || start + size !== end)
     throw new Error('corrupt zip directory');
   return { count, start, end };
 }
@@ -277,6 +294,16 @@ interface ZipRecord {
   compressed: Uint8Array;
   method: number;
   crc: number;
+  rangeStart: number;
+  rangeEnd: number;
+}
+
+function decodeZipName(bytes: Uint8Array): string {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error('corrupt zip filename');
+  }
 }
 
 function zipRecord(
@@ -287,6 +314,7 @@ function zipRecord(
   const view = new DataView(buffer);
   if (offset + 46 > directory.end || view.getUint32(offset, true) !== 0x02014b50)
     throw new Error('corrupt zip directory');
+  const flags = view.getUint16(offset + 8, true);
   const method = view.getUint16(offset + 10, true);
   const compressedSize = view.getUint32(offset + 20, true);
   const size = view.getUint32(offset + 24, true);
@@ -296,19 +324,38 @@ function zipRecord(
   assertZipBudget(0, 0, size, nameLength);
   if (next > directory.end || local + 30 > directory.start || view.getUint32(local, true) !== 0x04034b50)
     throw new Error('corrupt zip entry');
-  if (view.getUint16(offset + 8, true) & 1) throw new Error('encrypted zip is not supported');
-  const start = local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true);
+  const localFlags = view.getUint16(local + 6, true);
+  if (flags & 1 || localFlags & 1) throw new Error('encrypted zip is not supported');
+  if (view.getUint16(local + 8, true) !== method) throw new Error('corrupt zip entry');
+  const localNameLength = view.getUint16(local + 26, true);
+  const start = local + 30 + localNameLength + view.getUint16(local + 28, true);
   if (start + compressedSize > directory.start) throw new Error('corrupt zip data');
+  if (size > RATIO_GUARD_MIN_BYTES && compressedSize > 0 && size / compressedSize > MAX_ZIP_COMPRESSION_RATIO) {
+    throw new Error('ZIP_LIMIT_EXCEEDED');
+  }
+  const name = decodeZipName(new Uint8Array(buffer, offset + 46, nameLength));
+  const localName = decodeZipName(new Uint8Array(buffer, local + 30, localNameLength));
+  if (localName !== name) throw new Error('corrupt zip entry');
+  if (isUnsafeZipPath(name)) throw new Error('unsafe zip path');
   return {
     next,
     entry: {
-      name: new TextDecoder().decode(new Uint8Array(buffer, offset + 46, nameLength)),
+      name,
       size,
       method,
       compressed: new Uint8Array(buffer, start, compressedSize),
       crc: view.getUint32(offset + 16, true),
+      rangeStart: local,
+      rangeEnd: start + compressedSize,
     },
   };
+}
+
+function assertDisjointRanges(records: ZipRecord[]): void {
+  const sorted = [...records].sort((a, b) => a.rangeStart - b.rangeStart);
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i].rangeStart < sorted[i - 1].rangeEnd) throw new Error('corrupt zip overlap');
+  }
 }
 
 export async function unzipEntries(buffer: ArrayBuffer): Promise<ZipEntry[]> {
@@ -324,6 +371,7 @@ export async function unzipEntries(buffer: ArrayBuffer): Promise<ZipEntry[]> {
     records.push(record.entry);
   }
   if (offset !== directory.end) throw new Error('corrupt zip directory');
+  assertDisjointRanges(records);
   const entries: ZipEntry[] = [];
   const names = new Set<string>();
   for (const record of records) {

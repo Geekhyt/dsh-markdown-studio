@@ -683,13 +683,26 @@ function extractCssSelectors(css: string): string {
   return out;
 }
 
+function parseCustomBasePragma(css: string): 'standalone' | 'classic' | null {
+  const match = /\/\*\s*@base\s*:\s*(standalone|classic)\s*\*\//i.exec(css);
+  if (!match) return null;
+  return match[1].toLowerCase() === 'standalone' ? 'standalone' : 'classic';
+}
+
 function isStandaloneCustomCss(css: string): boolean {
+  const pragma = parseCustomBasePragma(css);
+  if (pragma) return pragma === 'standalone';
   const selectors = extractCssSelectors(css);
-  const hasRoot = /(?:#mdstudio|\.mdstudio-content)\b/i.test(selectors);
+  const hasRoot = /(?:#mdstudio|\.mdstudio-content|:root|\bbody\b|\bhtml\b)/i.test(selectors);
   const hasProse = /(?:^|[,\s>+~])p(?=$|[\s,:{.#[])/im.test(selectors);
-  const hasHeadings = /\bh1\b/i.test(selectors) && /\bh2\b/i.test(selectors);
-  const hasBlocks = /\bblockquote\b/i.test(selectors) && /\bpre\b/i.test(selectors);
-  return hasRoot && hasProse && hasHeadings && hasBlocks;
+  const headingMatches = selectors.match(/\bh[1-6]\b/gi) || [];
+  const headingCount = new Set(headingMatches.map((h) => h.toLowerCase())).size;
+  const hasBlocks = /\b(?:blockquote|pre|code|ul|ol|table)\b/i.test(selectors);
+  if (!(hasRoot && hasProse && headingCount >= 1 && (headingCount >= 2 || hasBlocks))) return false;
+  // Distinguish full standalone themes from short override snippets that only tweak accent/spacing.
+  const hasSurface = /(?:^|[;{\s])(?:background(?:-color)?|--mdstudio-bg)\s*:/im.test(css);
+  const hasTextTone = /(?:^|[;{\s])(?:color|--mdstudio-text)\s*:/im.test(css);
+  return hasSurface && hasTextTone;
 }
 
 export function buildCss(settings: ThemeSettings): string {

@@ -334,6 +334,10 @@ function renderLink(ctx: RenderContext, labelHtml: string, labelText: string, hr
   return '<span class="mdstudio-link">' + labelHtml + '<sup class="mdstudio-ref">[' + index + ']</sup></span>';
 }
 
+function unescapeLinkDest(value: string): string {
+  return value.replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~])/g, '$1');
+}
+
 function parseDestination(raw: string): Destination {
   var dest = String(raw || '').trim();
   var href = '';
@@ -341,15 +345,15 @@ function parseDestination(raw: string): Destination {
   if (dest.charAt(0) === '<') {
     var close = dest.indexOf('>');
     if (close !== -1) {
-      href = dest.slice(1, close);
+      href = unescapeLinkDest(dest.slice(1, close));
       var rest = dest.slice(close + 1).trim();
-      title = stripQuotes(rest);
+      title = unescapeLinkDest(stripQuotes(rest));
     }
   } else {
     var split = /^(\S+)(?:\s+([\s\S]+))?$/.exec(dest);
     if (split) {
-      href = split[1];
-      title = stripQuotes((split[2] || '').trim());
+      href = unescapeLinkDest(split[1]);
+      title = unescapeLinkDest(stripQuotes((split[2] || '').trim()));
     }
   }
   return { href: href, title: title };
@@ -1028,9 +1032,9 @@ function listMarkerMatches(line: string, match: RegExpExecArray | null, indent: 
 }
 
 function parseTaskLine(raw: string): { text: string; checked: boolean | null } {
-  const task = /^\[([ xX])\]\s*([\s\S]*)$/.exec(raw);
+  const task = /^\[([ xX])\](?:[ \t]+([\s\S]*)|[ \t]*)$/.exec(raw);
   if (!task) return { text: raw, checked: null };
-  return { text: task[2], checked: task[1].toLowerCase() === 'x' };
+  return { text: task[2] || '', checked: task[1].toLowerCase() === 'x' };
 }
 
 function formatTaskItem(rawInner: string, checked: boolean, loose: boolean): string {
@@ -1079,6 +1083,33 @@ function renderListHtml(
   return html + (ordered ? '</ol>' : '</ul>');
 }
 
+function appendListContinuationLine(
+  line: string,
+  lines: string[],
+  i: number,
+  match: RegExpExecArray | null,
+  baseIndent: number,
+  ordered: boolean,
+  current: ListItem,
+): boolean {
+  const indent = (line.match(/^\s*/) || [''])[0].length;
+  if (listMarkerMatches(line, match, baseIndent, !ordered)) return false;
+  if (match && match[1].length < baseIndent) return false;
+  if (indent >= current.indent) {
+    current.lines.push(line.slice(current.indent));
+    return true;
+  }
+  if (indent > baseIndent && !isBlockStart(line, lines, i)) {
+    current.lines.push(line.slice(indent));
+    return true;
+  }
+  if (!match && !isBlockStart(line, lines, i)) {
+    current.lines.push(line);
+    return true;
+  }
+  return false;
+}
+
 function parseList(lines: string[], start: number, ctx: RenderContext): BlockResult {
   var marker = /^(\s*)([-+*]|\d{1,9}[.)])(?:[ \t]+(.*)|[ \t]*)$/;
   var first = marker.exec(lines[start]);
@@ -1097,7 +1128,7 @@ function parseList(lines: string[], start: number, ctx: RenderContext): BlockRes
     if (listMarkerMatches(line, match, baseIndent, ordered)) {
       if (current) items.push(current);
       const itemMatch = match as RegExpExecArray;
-      var task = parseTaskLine(itemMatch[3] || '');
+      var task = ordered ? { text: itemMatch[3] || '', checked: null } : parseTaskLine(itemMatch[3] || '');
       current = {
         lines: [task.text],
         checked: task.checked,
@@ -1120,7 +1151,7 @@ function parseList(lines: string[], start: number, ctx: RenderContext): BlockRes
       var nextMatch = marker.exec(nextLine);
       var nextIndent = (nextLine.match(/^\s*/) || [''])[0].length;
       var sibling = listMarkerMatches(nextLine, nextMatch, baseIndent, ordered);
-      if (sibling || nextIndent > baseIndent) {
+      if (sibling || nextIndent >= current.indent) {
         current.lines.push('');
         loose = true;
         i = nextIndex;
@@ -1130,19 +1161,7 @@ function parseList(lines: string[], start: number, ctx: RenderContext): BlockRes
       break;
     }
 
-    var indent = (line.match(/^\s*/) || [''])[0].length;
-    if (listMarkerMatches(line, match, baseIndent, !ordered)) break;
-    if (match && match[1].length < baseIndent) break;
-
-    if (indent > baseIndent) {
-      var strip = Math.min(indent, current.indent);
-      current.lines.push(line.slice(strip));
-      i++;
-      continue;
-    }
-
-    if (!match && !isBlockStart(line, lines, i)) {
-      current.lines.push(line);
+    if (appendListContinuationLine(line, lines, i, match, baseIndent, ordered, current)) {
       i++;
       continue;
     }
@@ -1182,6 +1201,22 @@ function parseFence(lines: string[], start: number): BlockResult {
 
 const ALERT_MARKER_RE = /^ {0,3}> ?\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\](?:\s|$)/i;
 
+function quoteEndsInOpenParagraph(content: string[]): boolean {
+  let fence: FenceOpening | null = null;
+  let lastWasClosedFence = false;
+  for (let idx = 0; idx < content.length; idx++) {
+    const prevFence = fence;
+    fence = stepFenceState(fence, content[idx]);
+    lastWasClosedFence = Boolean(prevFence && !fence);
+  }
+  if (fence || lastWasClosedFence) return false;
+  const last = content[content.length - 1] || '';
+  if (!last.trim()) return false;
+  if (/^ {0,3}(?:#{1,6}(?:\s|$)|(?:[-+*]|\d{1,9}[.)])(?:\s|$))/.test(last)) return false;
+  if (isHr(last) || last.includes('|')) return false;
+  return true;
+}
+
 function isQuoteLazyContinuation(
   isAlertBlock: boolean,
   content: string[],
@@ -1189,7 +1224,7 @@ function isQuoteLazyContinuation(
   lines: string[],
   index: number,
 ): boolean {
-  if (isAlertBlock || !content.length || content[content.length - 1] === '') return false;
+  if (isAlertBlock || !content.length || !quoteEndsInOpenParagraph(content)) return false;
   return !isBlockStart(line, lines, index);
 }
 
@@ -1711,12 +1746,46 @@ function blocks(lines: string[], ctx: RenderContext): string {
   return out;
 }
 
+function parseStrictDelimitedTitle(rest: string): string | null {
+  if (!rest) return '';
+  const m = /^(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|\(((?:\\.|[^()\\])*)\))$/.exec(rest);
+  if (!m) return null;
+  return unescapeLinkDest(m[1] ?? m[2] ?? m[3] ?? '');
+}
+
+function isPlausibleLinkRefHref(href: string, angleBracketed: boolean): boolean {
+  if (!href) return false;
+  if (angleBracketed) return true;
+  if (/^(?:[a-z][a-z0-9+.-]*:|\/|\.{1,2}\/|#|\?)/i.test(href)) return true;
+  return /^[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]+$/.test(href) && (href.includes('/') || href.includes('.'));
+}
+
+function parseLinkRefDestination(raw: string): Destination | null {
+  const dest = String(raw || '').trim();
+  if (!dest) return null;
+  if (dest.charAt(0) === '<') {
+    const close = dest.indexOf('>');
+    if (close === -1) return null;
+    const href = unescapeLinkDest(dest.slice(1, close));
+    const title = parseStrictDelimitedTitle(dest.slice(close + 1).trim());
+    if (!href || title === null) return null;
+    return { href, title };
+  }
+  const split = /^(\S+)(?:[ \t]+([\s\S]+))?$/.exec(dest);
+  if (!split) return null;
+  const href = unescapeLinkDest(split[1]);
+  if (!isPlausibleLinkRefHref(href, false)) return null;
+  const title = parseStrictDelimitedTitle((split[2] || '').trim());
+  if (title === null) return null;
+  return { href, title };
+}
+
 function parseLinkRefLine(line: string, linkDefs: Map<string, Destination>): boolean {
   const match = /^ {0,3}\[([^^\]\n][^\]]*)\]:[ \t]*(.+)$/.exec(line);
   if (!match) return false;
   const key = normalizeRefKey(match[1]);
-  const dest = parseDestination(match[2]);
-  if (!key || !dest.href) return false;
+  const dest = parseLinkRefDestination(match[2]);
+  if (!key || !dest) return false;
   if (!linkDefs.has(key)) linkDefs.set(key, dest);
   return true;
 }
@@ -1732,12 +1801,14 @@ function extractDefinitions(text: string): {
   var linkDefs = new Map<string, Destination>();
   var current: FootnoteDefinition | null = null;
   var fenceState: FenceOpening | null = null;
+  var canStartLinkDef = true;
   for (var index = 0; index < lines.length; index++) {
     var line = lines[index];
     var prevFence = fenceState;
     fenceState = stepFenceState(fenceState, line);
     if (prevFence || fenceState) {
       current = null;
+      canStartLinkDef = !fenceState;
       kept.push(line);
       continue;
     }
@@ -1745,17 +1816,20 @@ function extractDefinitions(text: string): {
     if (match) {
       current = { id: match[1], text: match[2] };
       footnotes.set(match[1], current);
+      canStartLinkDef = true;
       continue;
     }
     if (current && /^(?: {2,}|\t)/.test(line) && line.trim()) {
       current.text += '\n' + line.replace(/^(?: {2,}|\t)+/, '');
       continue;
     }
-    if (parseLinkRefLine(line, linkDefs)) {
+    if (canStartLinkDef && parseLinkRefLine(line, linkDefs)) {
       current = null;
+      canStartLinkDef = true;
       continue;
     }
     current = null;
+    canStartLinkDef = !line.trim() || /^ {0,3}(?:#{1,6}(?:\s|$)|>)/.test(line) || isHr(line);
     kept.push(line);
   }
   return { text: kept.join('\n'), footnotes, linkDefs };
@@ -1871,6 +1945,60 @@ function disambiguateFootnoteMarkers(html: string, ctx: RenderContext, locale?: 
       '<sup class="mdstudio-footnote-ref">[' + prefix + '$1]</sup>',
     )
     .replace(/(<p class="mdstudio-footnote-item" id="mdstudio-fn-\d+">)\[(\d+)\]/g, '$1[' + prefix + '$2]');
+}
+
+function lineHasInlineMath(line: string): boolean {
+  let i = 0;
+  while (i < line.length) {
+    const ch = line.charAt(i);
+    if (ch === '`') {
+      let ticks = 1;
+      while (line.charAt(i + ticks) === '`') ticks++;
+      const close = findCodeSpanClose(line, i + ticks, ticks);
+      i = close === -1 ? i + ticks : close + ticks;
+      continue;
+    }
+    if (ch === '\\') {
+      if (inlineTeXMath(line, i)) return true;
+      i += 2;
+      continue;
+    }
+    if (ch === '$' && inlineMath(line, i)) return true;
+    i++;
+  }
+  return false;
+}
+
+/** Parser-consistent math syntax detector: ignores code fences, inline code, escapes, and currency `$`. */
+export function containsMath(source: string): boolean {
+  if (!source || !/[$\\]/.test(source)) return false;
+  const normalized = source.replace(/\r\n?/g, '\n');
+  const fm = parseFrontmatter(normalized);
+  const lines = (fm ? fm.rest : normalized).split('\n');
+  let fence: FenceOpening | null = null;
+  let openBlockDelim: '$$' | '\\]' | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const nextFence = stepFenceState(fence, line);
+    if (fence || nextFence) {
+      fence = nextFence;
+      continue;
+    }
+    if (openBlockDelim) {
+      if (line.includes(openBlockDelim)) return true;
+      continue;
+    }
+    if (/^\s*\$\$\s*$/.test(line)) {
+      openBlockDelim = '$$';
+      continue;
+    }
+    if (/^\s*\\\[\s*$/.test(line)) {
+      openBlockDelim = '\\]';
+      continue;
+    }
+    if (lineHasInlineMath(line)) return true;
+  }
+  return false;
 }
 
 export function renderMarkdown(source: unknown, options?: RenderOptions): RenderResult {

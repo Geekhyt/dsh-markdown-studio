@@ -2,6 +2,36 @@
 
 All notable changes to `dsh-markdown-studio` are documented in this file.
 
+## [0.1.8] - 2026-11-21
+
+### Security
+- **Single-Pass CSS Escape Decoding & Function Sanitizer**: Replaced two-pass CSS escape decoding with a CSS Syntax Level 3 single-pass decoder and extended external resource stripping to cover `src()`, `cross-fade()`, CDO/CDC HTML comment tokens, hex-escaped function names (`\75 rl(...)`), C0 control characters, and backslash-relative URLs (`/\attacker...`) while preserving inline `data:image/svg+xml` assets (`src/domain/custom-css.ts`, `src/css-inliner.ts`).
+- **Host Route, MathJax & ZIP Boundary Hardening**: Enforced strict `Host`/origin/body-size validation across host asset, AI, and chunk routes (`host/http/`), blocked `\href` / `\style` injection vectors in MathJax (`src/math-entry.ts`), and tightened ZIP path-traversal and decompression budget enforcement (`src/adapters/zip.ts`).
+
+### Fixed
+- **Markdown Parser, CSS Inliner & WeChat Clipboard**:
+  - Fixed CommonMark link-reference definitions (`[id]: url`), task-list & blockquote lazy continuation, currency `$` vs inline math disambiguation (preserving prose around `$100` / `$200`), and CSS `var()` fallback + `[attr$="..."]` selector handling (`src/markdown-parser.ts`, `src/css-inliner.ts`).
+  - Unwrapped `<section>` elements nested inside `<p>` during clipboard DOM preparation (`src/adapters/wechat-clipboard-dom.ts`).
+  - Scoped `inspectWechatHtml` (`src/domain/wechat-html-lint.ts`) so `<code class="mdstudio-lang-katex">` and literal code examples inside `<code>...</code>` no longer trigger false-positive WeChat lint warnings.
+- **Multi-Tab Persistence, Backup & Asset Lifecycle**:
+  - Upgraded cross-tab `DocumentStore` synchronization (`src/application/document-store.ts`) to merge edits at the individual document level (preserving concurrent edits across open tabs without clobbering sibling drafts or hijacking the active tab).
+  - Seeded `LIBRARY_BACKUP_KEY` immediately on first write (`src/adapters/storage.ts`), bypassed the GC grace window and flushed immediately on explicit trash purge (`src/application/asset-gc.ts`, `src/application/use-document-library.ts`), and skipped redundant overwrite prompts when linked files are already marked conflicted (`src/application/file-commands.ts`).
+  - Serialized `mermaid.render()` calls through a Promise queue with parent-agnostic temporary DOM cleanup (`src/mermaid-entry.ts`), added a fast `/mermaid/i` precheck (`src/application/use-mermaid-assets.ts`), and replaced raw regex math detection with parser-consistent `containsMath()` so `math.js` never fetches on currency, bash variables, or code blocks (`src/application/use-math-assets.ts`).
+  - Hardened `ImageHostService`, `LocalAssetServer`, and host routes against concurrent writes and keep-alive leaks (`host/application/image-store.ts`, `host/local-server.ts`, `host/http/routes.ts`).
+- **Custom Theme Isolation, Dark Preview & Editorial Contrast**:
+  - Added explicit `/* @base: standalone | classic */` pragma support and relaxed structural standalone detection (`src/themes.ts`) so minimalist standalone custom themes without `h1`/`pre`/`blockquote` no longer fall back into the Classic base.
+  - Generalized inverted-surface inline contrast rules (`src/theme-system/`) to guarantee WCAG 2 AA (`>= 4.5:1`) across all 8 themes × 5 accents × 6 containers (including `ruby` table headers and `poster` `:::pull` quotes).
+  - Replaced the 24-selector allowlist and absolute luminance cutoff in `liftDarkText` (`src/adapters/dark-preview.ts`) with a text-bearing DOM walker backed by real WCAG `contrast` / `ensureContrast` (`>= 4.5:1`) and unified dark stage surface constants (`DARK_STAGE_DEFAULT` / `DARK_STAGE_PAPER`) in `src/theme-system/color.ts`.
+
+### Changed & UX
+- **Multi-Line `Tab` / `Shift+Tab` Block Indentation**: Selecting multiple lines (or a full line) and pressing `Tab` now indents every selected line cleanly instead of replacing the selection with two spaces, `Shift+Tab` outdents every selected line, and WCAG 2.1.2 `Esc → Tab` focus escape automatically disarms on editor blur or pointer interaction (`src/application/editor-shortcuts.ts`, `src/ui/editor-pane.ts`).
+- **Parser-Consistent AI Protected Token Guard & Structured Error Classification**:
+  - Replaced overlapping regexes in `extractProtectedTokens()` (`src/domain/writing-skills.ts`) with a single-pass lexical scanner covering ```` ``` ```` / `~~~` fences, multi-backtick inline code, `$`/`$$`/`\(...\)`/`\[...\]` math, URLs/assets, and footnotes while excluding currency ranges such as `$100/$200`.
+  - Prioritized structured error codes in `formatAiClientError()` (`src/adapters/ai-client.ts`) over loose substring matching, added bilingual `err.aiRateLimited` localization (`src/locales/ui-strings.ts`), and removed hardcoded Chinese strings from `httpStatusError`.
+- **Responsive `FallbackMenu` & Explicit Locale Propagation**:
+  - Honored the `side` (`top` | `bottom` | `right`) prop in `FallbackMenu` and added live `resize` / capture-phase `scroll` repositioning (`src/ui/dsh-primitives.ts`) so open menus stay anchored inside resized viewports.
+  - Propagated explicit `locale` through `UiKit` for relative timestamps, dates, and CSS Workbench starter templates (`src/ui/ui-kit.ts`, `src/ui/css-workbench.ts`, `src/ui/library-dialogs.ts`), and aligned English view labels in `docs/DETAIL.md`.
+
 ## [0.1.7] - 2026-11-21
 
 ### Security
@@ -94,6 +124,7 @@ Initial public release.
   - Host-side content-addressed PNG/JPEG store (`$DSH_HOME/storages/dsh-markdown-studio/assets/`) with magic-byte validation, authenticated write routes, automatic reference-counted garbage collection on permanent article deletion, and a read-only loopback server (`127.0.0.1:4010-4019`) so Markdown stays portable as `assets/<hash>.png`.
   - Multi-article `localStorage` library with no artificial article/trash limits, future-schema overwrite protection, unreadable-payload preservation, keyword-highlighted search, conflict-aware merge dialog, `PK` magic-header `.zip` archive import/export (`4096` entries / `256 MiB` bounded decompression), and SHA-256 baseline conflict detection for local File System Access API `.md` / folder workspaces.
 
+[0.1.8]: https://github.com/Geekhyt/dsh-markdown-studio/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/Geekhyt/dsh-markdown-studio/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/Geekhyt/dsh-markdown-studio/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/Geekhyt/dsh-markdown-studio/compare/v0.1.4...v0.1.5

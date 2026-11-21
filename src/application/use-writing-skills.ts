@@ -11,6 +11,7 @@ import {
   createCustomSkillId,
   findWritingSkill,
   hasMissingProtectedTokens,
+  MAX_CUSTOM_SKILLS,
   parseSkillMarkdown,
   removeCustomSkill,
   resolveActiveSkill,
@@ -186,8 +187,10 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
   const abortRef = React.useRef<AbortController | null>(null);
   const transitionTimerRef = React.useRef<number | null>(null);
   const transitionSeqRef = React.useRef(0);
+  const transitionMarkdownRef = React.useRef<string | undefined>(undefined);
   const skillStateRef = React.useRef(skillState);
   const sessionRef = useLatest(React, session);
+  const optionsRef = useLatest(React, options);
 
   const clearTransitionTimer = (): void => {
     if (transitionTimerRef.current !== null) {
@@ -196,11 +199,13 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
     }
   };
 
-  const startDiffTransition = (next: EditorDiffTransition, durationMs: number): void => {
+  const startDiffTransition = (next: EditorDiffTransition, durationMs: number, expectedMarkdown?: string): void => {
     clearTransitionTimer();
+    transitionMarkdownRef.current = expectedMarkdown;
     setDiffTransition(next);
     transitionTimerRef.current = window.setTimeout(() => {
       transitionTimerRef.current = null;
+      transitionMarkdownRef.current = undefined;
       setDiffTransition(null);
     }, durationMs);
   };
@@ -208,8 +213,8 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
   const rejectReadyPatch = (patch: SkillPatch): void => {
     transitionSeqRef.current += 1;
     setSession(null);
-    startDiffTransition(toRejectTransition(transitionSeqRef.current, patch), 240);
-    options.focusEditor?.();
+    startDiffTransition(toRejectTransition(transitionSeqRef.current, patch), 240, optionsRef.current.markdown);
+    optionsRef.current.focusEditor?.();
   };
 
   const commitSkillState = (next: WritingSkillState): void => {
@@ -225,6 +230,7 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
       abortRef.current = null;
     }
     clearTransitionTimer();
+    transitionMarkdownRef.current = undefined;
     setDiffTransition(null);
     setSession(null);
   };
@@ -242,13 +248,26 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
     setSession(null);
   };
 
-  useDebouncedKeyTask(
-    React,
-    String(options.markdown ?? ''),
-    0,
-    Boolean(options.markdown !== undefined && session && session.baseMarkdown !== options.markdown),
-    resetSession,
+  const sessionStale = Boolean(options.markdown !== undefined && session && session.baseMarkdown !== options.markdown);
+  const transitionStale = Boolean(
+    options.markdown !== undefined &&
+      diffTransition !== null &&
+      transitionMarkdownRef.current !== undefined &&
+      transitionMarkdownRef.current !== options.markdown,
   );
+
+  useDebouncedKeyTask(React, String(options.markdown ?? ''), 0, sessionStale || transitionStale, () => {
+    if (sessionRef.current && sessionRef.current.baseMarkdown !== optionsRef.current.markdown) {
+      resetSession();
+    } else if (
+      transitionMarkdownRef.current !== undefined &&
+      transitionMarkdownRef.current !== optionsRef.current.markdown
+    ) {
+      clearTransitionTimer();
+      transitionMarkdownRef.current = undefined;
+      setDiffTransition(null);
+    }
+  });
 
   useMountDisposable(React, () => () => {
     if (abortRef.current) abortRef.current.abort();
@@ -261,17 +280,26 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
     commitSkillState({ ...skillStateRef.current, activeSkillId: found.id });
   };
 
+  const canSaveCustom = (current: WritingSkillState, id?: string | null): boolean => {
+    if (current.customSkills.length < MAX_CUSTOM_SKILLS) return true;
+    return Boolean(id && id !== BUILTIN_HUMANIZER_ID && current.customSkills.some((item) => item.id === id));
+  };
+
   const saveCustom = (input: SaveSkillInput): WritingSkill | null => {
     const name = input.name.trim();
     const instructions = input.instructions.trim();
     if (!name || !instructions) return null;
     const current = skillStateRef.current;
+    if (!canSaveCustom(current, input.id)) {
+      optionsRef.current.notify(t('ai.skillImportFailed'), 'error');
+      return null;
+    }
     const id = input.id && input.id !== BUILTIN_HUMANIZER_ID ? input.id : createCustomSkillId();
     const saved: WritingSkill = { id, name, description: input.description.trim(), instructions };
     const nextList = upsertCustomSkill(current.customSkills, saved);
     const activeSkillId = input.setAsDefault ? id : current.activeSkillId;
     commitSkillState({ activeSkillId, customSkills: nextList });
-    options.notify(t('ai.skillSaved'));
+    optionsRef.current.notify(t('ai.skillSaved'));
     return saved;
   };
 
@@ -395,17 +423,18 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
     if (!active) return;
     const target = active.patches.find((p) => p.id === id);
     if (!target) return;
-    const beforeMd = options.editorValue();
+    const live = optionsRef.current;
+    const beforeMd = live.editorValue();
     if (beforeMd.slice(target.start, target.end) !== target.original) {
       resetSession();
       return;
     }
     const afterMd = applySkillPatches(beforeMd, [target]);
     transitionSeqRef.current += 1;
-    options.setMarkdown(afterMd, { boundary: true, prevSelection: options.selection() });
+    live.setMarkdown(afterMd, { boundary: true, prevSelection: live.selection() });
     setSession(null);
-    startDiffTransition(toAcceptTransition(transitionSeqRef.current, target, beforeMd), 640);
-    options.focusEditor?.();
+    startDiffTransition(toAcceptTransition(transitionSeqRef.current, target, beforeMd), 640, afterMd);
+    live.focusEditor?.();
   };
 
   const dismissPatch = (id: string): void => {
@@ -416,7 +445,7 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
   };
 
   const previewMarkdown = (rawMarkdown: string): string => {
-    if (!session) return rawMarkdown;
+    if (!session || rawMarkdown !== session.baseMarkdown) return rawMarkdown;
     if (session.patches.length > 0) return applySkillPatches(rawMarkdown, session.patches);
     if (session.status === 'streaming' && session.streamText.trim()) {
       const { start, end } = session.selectionRange;

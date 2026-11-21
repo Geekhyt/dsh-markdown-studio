@@ -19,9 +19,16 @@ export function parseHex(hex: string): [number, number, number] {
   return [parseInt(value.slice(0, 2), 16), parseInt(value.slice(2, 4), 16), parseInt(value.slice(4, 6), 16)];
 }
 
+export const DARK_STAGE_DEFAULT = '#191919';
+export const DARK_STAGE_PAPER = '#0e1013';
+
 function toHex(channel: number): string {
   var value = Math.max(0, Math.min(255, Math.round(channel))).toString(16);
   return value.length === 1 ? '0' + value : value;
+}
+
+export function rgbToHex(r: number, g: number, b: number): string {
+  return '#' + toHex(r) + toHex(g) + toHex(b);
 }
 
 /** Move `hex` towards `target` by `amount` (0 = hex, 1 = target). */

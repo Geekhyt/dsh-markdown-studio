@@ -154,4 +154,87 @@ press('e', 'insertMathBlock', { altKey: true, shiftKey: true, code: 'KeyE' });
   assert.equal(prevented, false, 'Tab inside AI inline card button is not intercepted');
   assert.equal(called.length, 0, 'Tab inside AI inline card does not mutate editor');
 }
-console.log('ok - Notion-aligned, conflict-free formatting, document, and macOS Option shortcuts pass');
+
+// Multi-line Tab block indent & Shift+Tab block outdent + disarmEscapeTab
+{
+  const { disarmEscapeTab } = await import('../src/application/editor-shortcuts');
+  let value = '- alpha\n- beta\n- gamma';
+  let sel = { start: 0, end: value.length };
+  const handler = createEditorShortcuts(
+    new Proxy(
+      {},
+      {
+        get: (_target, key) => {
+          if (key === 'editorValue') return () => value;
+          if (key === 'selection') return () => sel;
+          if (key === 'replaceRange') {
+            return (_cur: string, start: number, end: number, text: string, nextStart?: number, nextEnd?: number) => {
+              value = value.slice(0, start) + text + value.slice(end);
+              sel = { start: nextStart ?? start, end: nextEnd ?? start };
+            };
+          }
+          return () => {};
+        },
+      },
+    ) as EditorShortcutsOptions,
+  );
+  const scope = {};
+  handler({
+    key: 'Tab',
+    shiftKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    currentTarget: scope,
+    target: scope,
+    preventDefault() {},
+  } as unknown as React.KeyboardEvent<HTMLElement>);
+  assert.equal(
+    value,
+    '  - alpha\n  - beta\n  - gamma',
+    'multi-line Tab indents every selected line instead of deleting',
+  );
+  assert.equal(sel.start, 2);
+  assert.equal(sel.end, value.length);
+
+  handler({
+    key: 'Tab',
+    shiftKey: true,
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    currentTarget: scope,
+    target: scope,
+    preventDefault() {},
+  } as unknown as React.KeyboardEvent<HTMLElement>);
+  assert.equal(value, '- alpha\n- beta\n- gamma', 'multi-line Shift+Tab outdents every selected line cleanly');
+
+  // Escape arms focus escape, disarmEscapeTab clears it on blur/click
+  handler({
+    key: 'Escape',
+    shiftKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    currentTarget: scope,
+    target: scope,
+    preventDefault() {},
+  } as unknown as React.KeyboardEvent<HTMLElement>);
+  disarmEscapeTab();
+  let tabPreventedAfterDisarm = false;
+  sel = { start: 0, end: 0 };
+  handler({
+    key: 'Tab',
+    shiftKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    currentTarget: scope,
+    target: scope,
+    preventDefault() {
+      tabPreventedAfterDisarm = true;
+    },
+  } as unknown as React.KeyboardEvent<HTMLElement>);
+  assert.equal(tabPreventedAfterDisarm, true, 'disarmEscapeTab restores normal Tab indent after blur/click');
+}
+console.log('ok - Notion-aligned, conflict-free formatting, document, multi-line Tab, and macOS Option shortcuts pass');

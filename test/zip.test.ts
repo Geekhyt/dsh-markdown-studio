@@ -135,4 +135,62 @@ await assert.rejects(
   () => unzipEntries(badCrc.buffer.slice(badCrc.byteOffset, badCrc.byteOffset + badCrc.byteLength) as ArrayBuffer),
   /corrupt zip content/,
 );
+
+// Zip-Slip path traversal rejection
+const traversal = Buffer.from(makeZip('../evil.md', 'pwn', 0));
+await assert.rejects(
+  () =>
+    unzipEntries(
+      traversal.buffer.slice(traversal.byteOffset, traversal.byteOffset + traversal.byteLength) as ArrayBuffer,
+    ),
+  /unsafe zip path/,
+);
+
+// Encrypted local file header flag rejection
+const encrypted = Buffer.from(makeZip('secret.md', 'hello', 0));
+encrypted.writeUInt16LE(1, 6);
+await assert.rejects(
+  () =>
+    unzipEntries(
+      encrypted.buffer.slice(encrypted.byteOffset, encrypted.byteOffset + encrypted.byteLength) as ArrayBuffer,
+    ),
+  /encrypted zip/,
+);
+
+// Mismatched LFH compression method rejection
+const badMethod = Buffer.from(makeZip('method.md', 'hello', 0));
+badMethod.writeUInt16LE(8, 8);
+await assert.rejects(
+  () =>
+    unzipEntries(
+      badMethod.buffer.slice(badMethod.byteOffset, badMethod.byteOffset + badMethod.byteLength) as ArrayBuffer,
+    ),
+  /corrupt zip entry/,
+);
+
+// Overlapping local entry ranges (zip-bomb aliasing) rejection
+const twoEntries = Buffer.from(
+  await zipStore([
+    { name: 'a.md', data: new TextEncoder().encode('hello') },
+    { name: 'b.md', data: new TextEncoder().encode('world') },
+  ]).arrayBuffer(),
+);
+const firstCd = twoEntries.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+const secondCd = twoEntries.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]), firstCd + 4);
+twoEntries.writeUInt32LE(0, secondCd + 42); // alias second entry to offset 0
+await assert.rejects(
+  () =>
+    unzipEntries(
+      twoEntries.buffer.slice(twoEntries.byteOffset, twoEntries.byteOffset + twoEntries.byteLength) as ArrayBuffer,
+    ),
+  /corrupt zip/,
+);
+
+// High compression ratio (>100:1 over 1 MiB) bomb rejection
+const bomb = Buffer.from(makeZip('bomb.md', 'A'.repeat(1_200_000), 8));
+await assert.rejects(
+  () => unzipEntries(bomb.buffer.slice(bomb.byteOffset, bomb.byteOffset + bomb.byteLength) as ArrayBuffer),
+  /ZIP_LIMIT_EXCEEDED/,
+);
+
 console.log('ok - ZIP large round trips, shared budgets and bounded decompression');

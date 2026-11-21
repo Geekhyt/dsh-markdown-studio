@@ -13,6 +13,7 @@ export function sanitizeLinkUrl(raw: string): string | null {
   if (!value) return null;
   if (value.startsWith('#')) return value;
   const probe = schemeProbe(value);
+  if (probe.startsWith('//') || probe.startsWith('\\\\') || probe.startsWith('/\\')) return null;
   if (!SCHEME.test(probe)) return value;
   if (/^(https?:|mailto:)/i.test(value)) return value;
   return null;
@@ -23,6 +24,7 @@ export function sanitizeImageUrl(raw: string): string | null {
   const value = String(raw || '').trim();
   if (!value) return null;
   const probe = schemeProbe(value);
+  if (probe.startsWith('//') || probe.startsWith('\\\\') || probe.startsWith('/\\')) return null;
   if (!SCHEME.test(probe)) return value;
   if (/^https?:/i.test(value)) return value;
   if (/^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(value)) return value;

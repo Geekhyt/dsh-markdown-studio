@@ -4,20 +4,26 @@ import { useHostDarkTheme, useImperativeEditor } from '../runtime/dom-surfaces';
 import { useLatest } from '../runtime/react-lifecycle';
 import { create as createEditor } from './codemirror-core';
 
+export interface EditorConfig {
+  language?: 'markdown' | 'css';
+  placeholder?: string;
+  ariaLabel?: string;
+  enableHistory?: boolean;
+}
+
 export interface EditorProps {
   React: typeof ReactNamespace;
   value: string;
-  placeholder?: string;
-  language?: 'markdown' | 'css';
+  config?: EditorConfig;
   inlineBlocks?: readonly EditorInlineBlock[];
   diffTransition?: EditorDiffTransition | null;
   onChange: (value: string, selection: EditorSelection) => void;
-  onSelection: (selection: EditorSelection) => void;
+  onSelection?: (selection: EditorSelection) => void;
   onBlur?: () => void;
-  onKeyDown: (event: ReactNamespace.KeyboardEvent<HTMLDivElement>) => void;
-  onPaste: (event: ReactNamespace.ClipboardEvent<HTMLDivElement>) => void;
-  onDragOver: (event: ReactNamespace.DragEvent<HTMLDivElement>) => void;
-  onDrop: (event: ReactNamespace.DragEvent<HTMLDivElement>) => void;
+  onKeyDown?: (event: ReactNamespace.KeyboardEvent<HTMLDivElement>) => void;
+  onPaste?: (event: ReactNamespace.ClipboardEvent<HTMLDivElement>) => void;
+  onDragOver?: (event: ReactNamespace.DragEvent<HTMLDivElement>) => void;
+  onDrop?: (event: ReactNamespace.DragEvent<HTMLDivElement>) => void;
   onReady?: (api: EditorApi | null) => void;
   onError?: (error: unknown) => void;
 }
@@ -32,23 +38,27 @@ export function CodeMirrorEditor(props: EditorProps) {
   useImperativeEditor<EditorApi, EditorInlineBlock, EditorDiffTransition>(React, hostRef, {
     value: props.value,
     dark,
-    placeholder: props.placeholder,
+    placeholder: props.config?.placeholder,
+    ariaLabel: props.config?.ariaLabel,
     inlineBlocks: props.inlineBlocks,
     diffTransition: props.diffTransition,
     onReady: props.onReady,
     onError: props.onError,
     mount: function (parent, initialDark) {
+      const cfg = propsRef.current.config;
       return createEditor({
         parent,
         doc: propsRef.current.value || '',
-        placeholder: propsRef.current.placeholder || '',
-        language: propsRef.current.language,
+        placeholder: cfg?.placeholder || '',
+        ariaLabel: cfg?.ariaLabel,
+        language: cfg?.language,
+        enableHistory: cfg?.enableHistory,
         dark: initialDark,
         onChange: function (value, selection) {
           propsRef.current.onChange(value, selection);
         },
         onSelection: function (selection) {
-          propsRef.current.onSelection(selection);
+          propsRef.current.onSelection?.(selection);
         },
         onBlur: function () {
           propsRef.current.onBlur?.();
@@ -61,16 +71,16 @@ export function CodeMirrorEditor(props: EditorProps) {
     className: 'mdstudio-codemirror',
     ref: hostRef,
     onKeyDownCapture: function (event: ReactNamespace.KeyboardEvent<HTMLDivElement>) {
-      propsRef.current.onKeyDown(event);
+      propsRef.current.onKeyDown?.(event);
     },
     onPasteCapture: function (event: ReactNamespace.ClipboardEvent<HTMLDivElement>) {
-      propsRef.current.onPaste(event);
+      propsRef.current.onPaste?.(event);
     },
     onDragOver: function (event: ReactNamespace.DragEvent<HTMLDivElement>) {
-      propsRef.current.onDragOver(event);
+      propsRef.current.onDragOver?.(event);
     },
     onDropCapture: function (event: ReactNamespace.DragEvent<HTMLDivElement>) {
-      propsRef.current.onDrop(event);
+      propsRef.current.onDrop?.(event);
     },
   });
 }

@@ -1,6 +1,7 @@
 import type * as ReactNamespace from 'react';
 import type { Article, ViewMode } from '../domain/article';
 import type { ConfirmDialogFn } from '../domain/dialog';
+import { assetFilesInMarkdown } from '../domain/images';
 import type { ThemeSettings } from '../themes';
 import type { DocumentStore } from './document-store';
 
@@ -11,7 +12,7 @@ export interface TrashCommandsOptions {
   notify: Notify;
   t: (key: string) => string;
   confirm: ConfirmDialogFn;
-  onPruneAssets?: () => void;
+  onPruneAssets?: (bypassGraceFor?: Iterable<string>) => void;
 }
 
 export interface TrashCommandsApi {
@@ -29,16 +30,24 @@ export function createTrashCommands(options: TrashCommandsOptions): TrashCommand
   async function purgeArticle(id: string): Promise<void> {
     const ok = await options.confirm({ title: options.t('library.purgeConfirm'), danger: true });
     if (!ok) return;
+    const target = (options.store.getSnapshot().trash || []).find((entry) => entry.id === id);
+    const purgedAssets = target ? assetFilesInMarkdown(target.markdown) : [];
     options.store.purge(id);
-    options.onPruneAssets?.();
+    options.store.flush();
+    options.onPruneAssets?.(purgedAssets);
     options.notify(options.t('library.purged'));
   }
 
   async function emptyTrash(): Promise<void> {
     const ok = await options.confirm({ title: options.t('library.emptyTrashConfirm'), danger: true });
     if (!ok) return;
+    const purgedAssets = new Set<string>();
+    for (const entry of options.store.getSnapshot().trash || []) {
+      for (const file of assetFilesInMarkdown(entry.markdown)) purgedAssets.add(file);
+    }
     options.store.emptyTrash();
-    options.onPruneAssets?.();
+    options.store.flush();
+    options.onPruneAssets?.(purgedAssets);
     options.notify(options.t('library.trashEmptied'));
   }
 
@@ -54,7 +63,7 @@ export interface DocumentLibraryOptions {
   settings: ThemeSettings;
   view: ViewMode;
   onActivate: (entry: Article) => void;
-  onPruneAssets?: () => void;
+  onPruneAssets?: (bypassGraceFor?: Iterable<string>) => void;
 }
 
 export interface DocumentLibraryApi extends TrashCommandsApi {

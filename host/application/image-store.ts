@@ -41,6 +41,7 @@ export interface AssetListItem {
   url: string;
   bytes: number;
   mime: ImageMime;
+  storedAt?: string;
 }
 
 interface ManifestEntry {
@@ -76,24 +77,47 @@ function digest(value: Buffer | string): string {
     .digest('hex');
 }
 
+const PNG_SIG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+
 function hasImageMagicBytes(buffer: Buffer, mime: ImageMime): boolean {
   if (mime === 'image/png') {
-    return buffer.length >= 8 && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47;
+    if (buffer.length < PNG_SIG.length) return false;
+    for (let i = 0; i < PNG_SIG.length; i++) {
+      if (buffer[i] !== PNG_SIG[i]) return false;
+    }
+    return true;
   }
   return buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
 }
 
 function parseDataUrl(dataUrl: unknown): { mime: ImageMime; buffer: Buffer; ext: 'png' | 'jpg' } {
-  const match = /^data:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=\r\n]+)$/i.exec(String(dataUrl || ''));
-  if (!match) {
+  const raw = String(dataUrl || '');
+  const comma = raw.indexOf(',');
+  if (comma === -1) {
     throw new ImageHostError('INVALID_IMAGE', '图片数据不是有效的 Base64 data URL', '请重新粘贴或拖入图片。');
   }
-  let mime = match[1].toLowerCase();
+  const headerMatch = /^data:(image\/[a-z0-9.+-]+);base64$/i.exec(raw.slice(0, comma));
+  const payload = raw.slice(comma + 1);
+  if (!headerMatch || !payload || !/^[A-Za-z0-9+/=\r\n]+$/.test(payload)) {
+    throw new ImageHostError('INVALID_IMAGE', '图片数据不是有效的 Base64 data URL', '请重新粘贴或拖入图片。');
+  }
+  let mime = headerMatch[1].toLowerCase();
   if (mime === 'image/jpg') mime = 'image/jpeg';
   if (mime !== 'image/png' && mime !== 'image/jpeg') {
     throw new ImageHostError('UNSUPPORTED_IMAGE', '仅接受 JPG / PNG', '请先把 GIF/WebP 转成 PNG 或 JPG。');
   }
-  const buffer = Buffer.from(match[2].replace(/\s+/g, ''), 'base64');
+  // Reject wildly oversized base64 payloads before decoding to prevent multi-MB transient buffers.
+  const compact = payload.replace(/\s+/g, '');
+  const estimatedBytes = Math.floor((compact.length * 3) / 4);
+  if (estimatedBytes > MAX_IMAGE_BYTES + 4) {
+    const mb = (estimatedBytes / (1024 * 1024)).toFixed(2);
+    throw new ImageHostError(
+      'IMAGE_TOO_LARGE',
+      `图片约 ${mb} MB，超过 1 MB 限制`,
+      '编辑器会在上传前压缩；若仍失败，请换一张更小的图片。',
+    );
+  }
+  const buffer = Buffer.from(compact, 'base64');
   if (!buffer.length) {
     throw new ImageHostError('INVALID_IMAGE', '图片内容为空', '请重新选择图片。');
   }
@@ -154,10 +178,22 @@ export class ImageHostService {
 
   private async loadManifest(): Promise<Manifest> {
     if (this.manifestCache) return this.manifestCache;
+    let raw: string;
     try {
-      const parsed: unknown = JSON.parse(await readFile(this.manifestPath(), 'utf8'));
+      raw = await readFile(this.manifestPath(), 'utf8');
+    } catch (error) {
+      if (error && (error as NodeJS.ErrnoException).code === 'ENOENT') {
+        this.manifestCache = {};
+        return this.manifestCache;
+      }
+      throw error;
+    }
+    try {
+      const parsed: unknown = JSON.parse(raw);
       this.manifestCache = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Manifest) : {};
     } catch (error) {
+      const backup = this.manifestPath() + '.corrupt.' + Date.now();
+      await rename(this.manifestPath(), backup).catch(() => undefined);
       this.manifestCache = {};
     }
     return this.manifestCache;
@@ -166,10 +202,15 @@ export class ImageHostService {
   private async saveManifest(manifest: Manifest): Promise<void> {
     await mkdir(this.storageDir, { recursive: true, mode: 0o700 });
     const file = this.manifestPath();
-    const temp = file + '.' + process.pid + '.' + Date.now() + '.' + Math.random().toString(36).slice(2) + '.tmp';
-    await writeFile(temp, JSON.stringify(manifest, null, 2) + '\n', { mode: 0o600 });
-    await rename(temp, file);
-    this.manifestCache = manifest;
+    const temp = file + '.' + process.pid + '.' + Date.now() + '.' + randomBytes(6).toString('hex') + '.tmp';
+    try {
+      await writeFile(temp, JSON.stringify(manifest, null, 2) + '\n', { mode: 0o600 });
+      await rename(temp, file);
+      this.manifestCache = manifest;
+    } catch (error) {
+      await unlink(temp).catch(() => undefined);
+      throw error;
+    }
   }
 
   private enqueueManifest<T>(operation: () => Promise<T>): Promise<T> {
@@ -223,7 +264,12 @@ export class ImageHostService {
             storedAt: new Date().toISOString(),
           },
         };
-        await this.saveManifest(next);
+        try {
+          await this.saveManifest(next);
+        } catch (error) {
+          if (!exists) await unlink(file).catch(() => undefined);
+          throw error;
+        }
       }
     });
     const localUrl = this.localServerInfo ? `${this.localServerInfo.url}/uploads/${filename}` : '';
@@ -259,33 +305,36 @@ export class ImageHostService {
   }
 
   async listAssets(): Promise<{ assets: AssetListItem[] }> {
-    let names: string[] = [];
-    try {
-      names = await readdir(this.assetsDir());
-    } catch (error) {
-      names = [];
-    }
-    const manifest = await this.loadManifest();
-    const localBase = this.localServerInfo ? this.localServerInfo.url : '';
-    const assets: AssetListItem[] = [];
-    for (const filename of names.filter((name) => ASSET_NAME_PATTERN.test(name)).sort()) {
-      let bytes = 0;
+    return await this.enqueueManifest(async () => {
+      let names: string[] = [];
       try {
-        bytes = (await stat(path.join(this.assetsDir(), filename))).size;
+        names = await readdir(this.assetsDir());
       } catch (error) {
-        continue;
+        names = [];
       }
-      const entry = manifest[filename];
-      if (!entry) continue;
-      assets.push({
-        filename,
-        assetPath: 'assets/' + filename,
-        url: localBase ? `${localBase}/uploads/${filename}` : ASSET_URL_PREFIX + filename,
-        bytes,
-        mime: filename.endsWith('.png') ? 'image/png' : 'image/jpeg',
-      });
-    }
-    return { assets };
+      const manifest = await this.loadManifest();
+      const localBase = this.localServerInfo ? this.localServerInfo.url : '';
+      const assets: AssetListItem[] = [];
+      for (const filename of names.filter((name) => ASSET_NAME_PATTERN.test(name)).sort()) {
+        let bytes = 0;
+        try {
+          bytes = (await stat(path.join(this.assetsDir(), filename))).size;
+        } catch (error) {
+          continue;
+        }
+        const entry = manifest[filename];
+        if (!entry) continue;
+        assets.push({
+          filename,
+          assetPath: 'assets/' + filename,
+          url: localBase ? `${localBase}/uploads/${filename}` : ASSET_URL_PREFIX + filename,
+          bytes,
+          mime: filename.endsWith('.png') ? 'image/png' : 'image/jpeg',
+          storedAt: entry.storedAt,
+        });
+      }
+      return { assets };
+    });
   }
 
   async deleteAsset(input: unknown): Promise<{ filename: string; deleted: true }> {

@@ -78,7 +78,11 @@ export function createEditorSearch(options: EditorSearchOptions): EditorSearchAp
       boundary: true,
       prevSelection: { start: selected.start, end: selected.end },
     });
-    options.focusRange(selected.start, selected.start + replacement.length);
+    const afterEnd = selected.start + replacement.length;
+    const needle = query.toLowerCase();
+    const nextIdx = next.toLowerCase().indexOf(needle, afterEnd);
+    if (nextIdx >= 0) options.focusRange(nextIdx, nextIdx + query.length);
+    else options.focusRange(afterEnd, afterEnd);
   }
 
   function replaceAll(): void {

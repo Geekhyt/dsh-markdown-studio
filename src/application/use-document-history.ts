@@ -93,7 +93,7 @@ export function useDocumentHistory(options: DocumentHistoryOptions): DocumentHis
         const pre = opts.prevSelection || lastSelectionRef.current || { start: previous.length, end: previous.length };
         history.undo.push({ markdown: previous, selStart: pre.start, selEnd: pre.end });
         history.undoChars += previous.length;
-        while (history.undo.length > 80 || history.undoChars > 3500000) {
+        while (history.undo.length > 1 && (history.undo.length > 80 || history.undoChars > 3500000)) {
           const dropped = history.undo.shift();
           if (!dropped) break;
           history.undoChars -= dropped.markdown.length;
@@ -120,6 +120,7 @@ export function useDocumentHistory(options: DocumentHistoryOptions): DocumentHis
     history.lastAt = 0;
     history.forceBoundary = true;
     markdownRef.current = entry.markdown;
+    lastSelectionRef.current = { start: entry.selStart, end: entry.selEnd };
     options.onApply(entry.markdown);
     options.focusRange(entry.selStart, entry.selEnd);
     return true;
@@ -137,6 +138,7 @@ export function useDocumentHistory(options: DocumentHistoryOptions): DocumentHis
     history.lastAt = 0;
     history.forceBoundary = true;
     markdownRef.current = entry.markdown;
+    lastSelectionRef.current = { start: entry.selStart, end: entry.selEnd };
     options.onApply(entry.markdown);
     options.focusRange(entry.selStart, entry.selEnd);
     return true;

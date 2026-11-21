@@ -3,7 +3,7 @@
  * Every atom resets properties from the base sheet cleanly so slots compose
  * predictably and pass WeChat Official Account structural validation.
  */
-import { rule } from '../core';
+import { invertedInlineRules, rule } from '../core';
 import { v } from '../palette';
 
 var QUOTE_RESET = 'border: 0; ';
@@ -222,13 +222,17 @@ export var TABLE = {
   },
   /** Solid crimson header band with white text (ruby). */
   accentHead: function () {
-    return [rule('th', 'background-color: ' + v('accent') + '; color: ' + v('onAccent') + '; border-bottom: 0;')];
+    return [
+      rule('th', 'background-color: ' + v('accent') + '; color: ' + v('onAccent') + '; border-bottom: 0;'),
+      invertedInlineRules('th', v('onAccent')),
+    ];
   },
   /** Framed 2px ink box + reverse-ink header, zero shadow (poster). */
   posterBox: function () {
     return [
       rule('table', 'border: 2px solid ' + v('ink') + ';'),
       rule('th', 'background-color: ' + v('ink') + '; color: ' + v('onInk') + '; border-bottom: 0;'),
+      invertedInlineRules('th', v('onInk')),
     ];
   },
 };

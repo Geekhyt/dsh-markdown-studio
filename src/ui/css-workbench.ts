@@ -73,6 +73,7 @@ export interface CssWorkbenchProps {
   requestSeq: number;
   settings: ThemeSettings;
   modKey: string;
+  locale?: 'zh' | 'en';
   onBack: () => void;
   onSettings: (patch: Partial<ThemeSettings>) => void;
   onNotify: (text: string) => void;
@@ -151,14 +152,14 @@ function renderCssSurface(
       h(CodeMirrorEditor, {
         React: props.React,
         value: cssDraft,
-        language: 'css',
-        placeholder: t('drawer.customPlaceholder'),
+        config: {
+          language: 'css',
+          placeholder: t('drawer.customPlaceholder'),
+          ariaLabel: t('drawer.custom'),
+          enableHistory: true,
+        },
         onChange: setCssDraft,
-        onSelection: function () {},
         onKeyDown: onKeyDown,
-        onPaste: function () {},
-        onDragOver: function () {},
-        onDrop: function () {},
       }),
     );
   }
@@ -236,7 +237,8 @@ function CssWorkbenchContent(props: CssWorkbenchProps): ReactNode {
   const ui = props.ui;
   const settings = props.settings;
   const customList = settings.customThemes || [];
-  const cssLocale: 'zh' | 'en' = t('drawer.tabTheme') === 'Theme' ? 'en' : 'zh';
+  const rawLocale = props.locale || props.ui.locale?.();
+  const cssLocale: 'zh' | 'en' = rawLocale ? (/^en/i.test(rawLocale) ? 'en' : 'zh') : 'zh';
   const [draft, setDraft] = React.useState(() =>
     resolveTargetDraft(settings, props.targetId, t('drawer.defaultCustomName'), cssLocale),
   );

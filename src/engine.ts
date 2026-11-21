@@ -6,10 +6,11 @@ import {
   resolveVars,
   selectorSpecificity,
 } from './css-inliner';
-import { escapeAttr, escapeHtml, highlightCode, renderMarkdown } from './markdown-parser';
+import { containsMath, escapeAttr, escapeHtml, highlightCode, renderMarkdown } from './markdown-parser';
 
 export type { EngineReference, RenderOptions, RenderResult } from './markdown-parser';
 export {
+  containsMath,
   escapeAttr,
   escapeHtml,
   highlightCode,
@@ -23,6 +24,7 @@ export {
 };
 
 export const engine = {
+  containsMath,
   escapeHtml,
   escapeAttr,
   renderMarkdown,

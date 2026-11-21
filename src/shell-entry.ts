@@ -109,10 +109,9 @@ export function create(
 
   function materializeMain(plugin: ClientPlugin): ComponentType<Record<string, unknown>> {
     cachedPlugin = plugin;
-    if (activeCtx) {
-      const main = bindStudioPluginToContext(plugin, activeCtx, activeDisposers);
-      if (main) cachedMain = main;
-    }
+    if (!activeCtx) throw new Error('Markdown Studio context is inactive');
+    const main = bindStudioPluginToContext(plugin, activeCtx, activeDisposers);
+    if (main) cachedMain = main;
     if (!cachedMain) throw new Error('Markdown Studio chunk did not register a main view');
     return cachedMain;
   }
@@ -121,16 +120,18 @@ export function create(
     if (cachedMain) return Promise.resolve(cachedMain);
     if (cachedPlugin && activeCtx) return Promise.resolve(materializeMain(cachedPlugin));
     if (!inflight) {
-      inflight = loader().then(
-        (plugin) => {
-          inflight = null;
-          return materializeMain(plugin);
-        },
-        (err) => {
-          inflight = null;
-          throw err;
-        },
-      );
+      inflight = Promise.resolve()
+        .then(() => loader())
+        .then(
+          (plugin) => {
+            inflight = null;
+            return materializeMain(plugin);
+          },
+          (err) => {
+            inflight = null;
+            throw err;
+          },
+        );
     }
     return inflight;
   }
@@ -156,7 +157,7 @@ export function create(
         'div',
         {
           role: 'alert',
-          style: { padding: '32px', color: 'var(--dsw-alias-label-primary, #1f2329)', fontSize: '14px' },
+          style: { padding: '32px', color: 'var(--dsw-alias-label-primary, currentColor)', fontSize: '14px' },
         },
         h('p', { style: { margin: '0 0 12px', fontWeight: 600 } }, shellText('shell.failed')),
         h(
@@ -167,9 +168,9 @@ export function create(
             style: {
               padding: '6px 14px',
               borderRadius: '8px',
-              border: '0.5px solid var(--dsw-alias-border-l2, rgba(15, 17, 21, 0.16))',
-              background: 'var(--dsw-alias-bg-layer-2, #f2f4f7)',
-              color: 'var(--dsw-alias-label-primary, #0f1115)',
+              border: '0.5px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.35))',
+              background: 'var(--dsw-alias-bg-layer-2, transparent)',
+              color: 'var(--dsw-alias-label-primary, currentColor)',
               cursor: 'pointer',
             },
           },
@@ -187,7 +188,7 @@ export function create(
           alignItems: 'center',
           justifyContent: 'center',
           height: '100%',
-          color: 'var(--dsw-alias-label-secondary, #646a73)',
+          color: 'var(--dsw-alias-label-secondary, currentColor)',
           fontSize: '13px',
         },
       },

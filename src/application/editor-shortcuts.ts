@@ -37,10 +37,10 @@ export interface EditorShortcutsOptions {
   cancelAiReview?: () => boolean;
 }
 
-function handleSaveShortcut(options: EditorShortcutsOptions): void {
+function handleSaveShortcut(options: EditorShortcutsOptions, forceDialog: boolean): void {
   const currentFile = options.linkedFile();
-  if (currentFile && typeof currentFile.createWritable === 'function') {
-    void options.saveLocalFile(false);
+  if (forceDialog || (currentFile && typeof currentFile.createWritable === 'function')) {
+    void options.saveLocalFile(forceDialog);
     return;
   }
   const saved = options.persistNow();
@@ -75,7 +75,7 @@ function handleActionKey(
   }
   if (key === 's' && !event.altKey) {
     event.preventDefault();
-    handleSaveShortcut(options);
+    handleSaveShortcut(options, event.shiftKey);
     return true;
   }
   return false;
@@ -131,7 +131,7 @@ function handleShiftFormattingKey(
   key: string,
   code: string,
 ): boolean {
-  if (!event.shiftKey) return false;
+  if (!event.shiftKey || event.altKey) return false;
   if (key === 'b') {
     event.preventDefault();
     options.wrapSelection('**', '**', options.t('toolbar.bold'));
@@ -222,30 +222,87 @@ function isEmbeddedInteractiveTarget(target: EventTarget | null): boolean {
   return Boolean(el.closest('.cm-scroller') && !el.closest('.cm-content'));
 }
 
+function blockBoundsForSelection(value: string, start: number, end: number): { blockStart: number; blockEnd: number } {
+  const blockStart = start > 0 ? value.lastIndexOf('\n', start - 1) + 1 : 0;
+  const effectiveEnd = end > start && value[end - 1] === '\n' ? end - 1 : end;
+  const nextNl = value.indexOf('\n', effectiveEnd);
+  const blockEnd = nextNl < 0 ? value.length : nextNl;
+  return { blockStart, blockEnd };
+}
+
+function outdentBlock(
+  lines: string[],
+  start: number,
+  end: number,
+  blockStart: number,
+): {
+  text: string;
+  nextStart: number;
+  nextEnd: number;
+  changed: boolean;
+} {
+  let firstDrop = 0;
+  let totalDrop = 0;
+  const out = lines.map(function (line, idx) {
+    const match = /^(?: {1,2}|\t)/.exec(line);
+    if (!match) return line;
+    const drop = match[0].length;
+    if (idx === 0) firstDrop = drop;
+    totalDrop += drop;
+    return line.slice(drop);
+  });
+  const nextStart = Math.max(blockStart, start - firstDrop);
+  const nextEnd = Math.max(nextStart, end - totalDrop);
+  return { text: out.join('\n'), nextStart, nextEnd, changed: totalDrop > 0 };
+}
+
+function indentBlock(
+  lines: string[],
+  start: number,
+  end: number,
+): {
+  text: string;
+  nextStart: number;
+  nextEnd: number;
+} {
+  const out = lines.map(function (line) {
+    return '  ' + line;
+  });
+  return {
+    text: out.join('\n'),
+    nextStart: start + 2,
+    nextEnd: end + lines.length * 2,
+  };
+}
+
 function indentOrOutdentSelection(options: EditorShortcutsOptions, shiftKey: boolean): void {
   const value = options.editorValue();
   const range = options.selection();
+  const { blockStart, blockEnd } = blockBoundsForSelection(value, range.start, range.end);
+  const spansMultipleLines = range.end > range.start && value.slice(range.start, range.end).includes('\n');
+  const selectsWholeLine = range.end > range.start && range.start === blockStart && range.end === blockEnd;
   if (shiftKey) {
-    const lineStart = range.start > 0 ? value.lastIndexOf('\n', range.start - 1) + 1 : 0;
-    const match = /^(?: {2}|\t)/.exec(value.slice(lineStart));
-    if (match) {
-      const drop = match[0].length;
-      options.replaceRange(
-        value,
-        lineStart,
-        lineStart + drop,
-        '',
-        Math.max(lineStart, range.start - drop),
-        Math.max(lineStart, range.end - drop),
-      );
-    }
+    const lines = value.slice(blockStart, blockEnd).split('\n');
+    const out = outdentBlock(lines, range.start, range.end, blockStart);
+    if (out.changed) options.replaceRange(value, blockStart, blockEnd, out.text, out.nextStart, out.nextEnd);
+    return;
+  }
+  if (spansMultipleLines || selectsWholeLine) {
+    const lines = value.slice(blockStart, blockEnd).split('\n');
+    const indented = indentBlock(lines, range.start, range.end);
+    options.replaceRange(value, blockStart, blockEnd, indented.text, indented.nextStart, indented.nextEnd);
     return;
   }
   options.replaceRange(value, range.start, range.end, '  ', range.start + 2, range.start + 2);
 }
 
-const ESCAPE_TAB_ARMED = new WeakMap<object, boolean>();
+const ESCAPE_TAB_ARMED = new WeakMap<object, number>();
 const FALLBACK_SCOPE = {};
+let escapeTabGeneration = 1;
+
+export function disarmEscapeTab(): void {
+  escapeTabGeneration += 1;
+}
 
 function escapeScopeOf(event: ReactNamespace.KeyboardEvent<HTMLElement>): object {
   return (event.currentTarget as object | null) || (event.target as object | null) || FALLBACK_SCOPE;
@@ -262,11 +319,11 @@ function handleNonModKey(options: EditorShortcutsOptions, event: ReactNamespace.
       return true;
     }
     // WCAG 2.1.2 keyboard escape hatch: Escape followed by Tab/Shift+Tab releases focus from the editor.
-    ESCAPE_TAB_ARMED.set(scope, true);
+    ESCAPE_TAB_ARMED.set(scope, escapeTabGeneration);
     return false;
   }
   if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey) {
-    if (ESCAPE_TAB_ARMED.get(scope) || isEmbeddedInteractiveTarget(event.target)) {
+    if (ESCAPE_TAB_ARMED.get(scope) === escapeTabGeneration || isEmbeddedInteractiveTarget(event.target)) {
       ESCAPE_TAB_ARMED.delete(scope);
       return true;
     }
@@ -283,7 +340,8 @@ export function createEditorShortcuts(
   options: EditorShortcutsOptions,
 ): (event: ReactNamespace.KeyboardEvent<HTMLElement>) => void {
   return function handleEditorShortcut(event: ReactNamespace.KeyboardEvent<HTMLElement>): void {
-    if (event.nativeEvent.isComposing) return;
+    const native = event.nativeEvent as KeyboardEvent | undefined;
+    if (native && (native.isComposing || native.keyCode === 229)) return;
     if (handleNonModKey(options, event)) return;
     if (!(event.metaKey || event.ctrlKey)) return;
     const key = String(event.key || '').toLowerCase();

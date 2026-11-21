@@ -159,6 +159,14 @@ for (const hardened of [
   '#mdstudio p { background: image-set("data:image/svg+xml,\\"" 1x, "https://attacker.example/beacon.png" 2x); }',
   '#mdstudio p { background: url("https://attacker.example/a)b"); color: #111; }',
   '@import url("https://attacker.example/a;b.css"); #mdstudio p { color: #222; }',
+  '#mdstudio p { background: \\75 rl("https://attacker.example/hex-fn.png"); }',
+  '#mdstudio p { background: url(\\68 ttps://attacker.example/unquoted-esc.png); }',
+  '#mdstudio p { background: url(ht\ttps://attacker.example/c0-tab.png); }',
+  '#mdstudio p { background: url(//attacker.example/proto-rel.png); }',
+  '#mdstudio p { background: url(/\\\\attacker.example/backslash-rel.png); }',
+  '#mdstudio p { background: cross-fade("https://attacker.example/cf.png", #fff); }',
+  '<!-- @import "https://attacker.example/cdo.css"; --> #mdstudio p { color: #333; }',
+  '#mdstudio p { background: url(https://attacker.example/a\\)b); color: #444; }',
 ]) {
   const out = stripExternalCssUrls(hardened);
   assert.equal(/attacker\.example/.test(out), false, `hardened CSS URL vector stripped: ${hardened}`);
@@ -169,5 +177,11 @@ assert.ok(
   ),
   'sibling rule survives quoted-semicolon @import removal',
 );
+assert.ok(
+  stripExternalCssUrls('<!-- @import "https://attacker.example/cdo.css"; --> #mdstudio p { color: #333; }').includes(
+    'color: #333',
+  ),
+  'sibling rule survives CDO @import removal',
+);
 
-console.log('34 custom-css and custom-themes checks passed.');
+console.log('42 custom-css and custom-themes checks passed.');

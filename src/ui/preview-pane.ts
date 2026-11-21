@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { applyDarkPreview, cleanupDarkPreview } from '../adapters/dark-preview';
 import type { RenderedArticle } from '../adapters/render-article';
 import { useHostDarkTheme, usePreviewHtmlSurface } from '../runtime/dom-surfaces';
+import { DARK_STAGE_DEFAULT, DARK_STAGE_PAPER } from '../theme-system/color';
 import type { UiKit } from './ui-kit';
 
 export interface PreviewPaneProps {
@@ -27,8 +28,8 @@ export function PreviewPane(props: PreviewPaneProps): ReactNode {
   const previewTheme: 'light' | 'dark' = dark ? 'dark' : 'light';
   const surfaceBg = dark
     ? props.rendered.paper
-      ? '#0e1013'
-      : '#191919'
+      ? DARK_STAGE_PAPER
+      : DARK_STAGE_DEFAULT
     : props.rendered.paper
       ? props.rendered.stageBg
       : props.rendered.bg;
@@ -36,8 +37,8 @@ export function PreviewPane(props: PreviewPaneProps): ReactNode {
 
   usePreviewHtmlSurface(props.React, articleRef, {
     html: props.rendered.html,
-    bg: props.rendered.bg,
-    stageBg: props.rendered.stageBg,
+    surfaceBg,
+    darkFallbackBg: DARK_STAGE_DEFAULT,
     paper: props.rendered.paper,
     dark,
     empty: props.empty,

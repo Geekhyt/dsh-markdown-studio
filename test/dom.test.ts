@@ -494,6 +494,7 @@ check('prepareClipboardDom unwraps section blocks nested inside paragraphs with 
     lightHost.innerHTML =
       '<section id="mdstudio" style="background-color: rgb(255, 255, 255); color: rgb(20, 24, 30);">' +
       '<h2 style="color: rgb(15, 20, 30); background-color: rgb(245, 247, 252); background-image: linear-gradient(#fff, #eee);">Heading</h2>' +
+      '<div class="custom-note" style="background-color: rgb(63, 70, 84); color: rgb(150, 155, 166);">Custom low-contrast dark card</div>' +
       '<p style="color: rgb(220, 225, 235); background-color: transparent;">Bright text</p>' +
       '<span>   </span>' +
       '<span class="mdstudio-math"><svg><text style="color: rgb(0, 0, 0);">x</text></svg></span>' +
@@ -577,6 +578,17 @@ check('prepareClipboardDom unwraps section blocks nested inside paragraphs with 
       const outer = listHost.querySelector('ul')!;
       const tags = Array.from(outer.children).map((el) => el.tagName.toLowerCase());
       assert.deepEqual(tags, ['li', 'ul', 'ol'], 'multiple nested lists keep original order after <li>');
+
+      // v0.1.8: @layer statement, case-insensitive VAR(), cyclic var(), and Billion Laughs cap
+      const box4 = document.createElement('section');
+      box4.id = 'mdstudio';
+      box4.innerHTML = '<p>Hello</p>';
+      engine.inlineCss(
+        box4,
+        '@layer base;\n#mdstudio { --a: VAR(--b); --b: var(--a); --c: #123456; --x0: aaaaaaaaaa; --x1: var(--x0) var(--x0) var(--x0) var(--x0); --x2: var(--x1) var(--x1) var(--x1) var(--x1); --x3: var(--x2) var(--x2) var(--x2) var(--x2); }\n#mdstudio p { color: VAR(--c); background-color: var(--a, #ffffff); }',
+      );
+      assert.equal(q(box4, 'p').style.color, 'rgb(18, 52, 86)');
+      assert.equal(q(box4, 'p').style.backgroundColor, 'rgb(255, 255, 255)');
     });
   } finally {
     for (const [key, prev] of saved.entries()) {

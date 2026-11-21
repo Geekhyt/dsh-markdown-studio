@@ -143,8 +143,52 @@ export function parseDeclarations(body: string): Declaration[] {
   return decls;
 }
 
+function stripStatementAtRules(css: string): string {
+  let out = '';
+  let quote = '';
+  for (let i = 0; i < css.length; i++) {
+    const ch = css[i];
+    if (quote) {
+      out += ch;
+      if (ch === '\\' && i + 1 < css.length) out += css[++i];
+      else if (ch === quote) quote = '';
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      out += ch;
+      continue;
+    }
+    if (ch === '@' && (i === 0 || /[\s;{}]/.test(css[i - 1]))) {
+      const end = findStatementAtRuleEnd(css, i);
+      if (end !== -1) {
+        i = end;
+        continue;
+      }
+    }
+    out += ch;
+  }
+  return out;
+}
+
+function findStatementAtRuleEnd(css: string, start: number): number {
+  let quote = '';
+  for (let j = start + 1; j < css.length; j++) {
+    const ch = css[j];
+    if (quote) {
+      if (ch === '\\') j++;
+      else if (ch === quote) quote = '';
+      continue;
+    }
+    if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === '{') return -1;
+    else if (ch === ';') return j;
+  }
+  return -1;
+}
+
 export function parseRules(css: string): ParsedRule[] {
-  var clean = stripCssComments(css).replace(/@(?:import|charset|namespace)\b[^;{}]*;/gi, '');
+  var clean = stripStatementAtRules(stripCssComments(css));
   var rules: ParsedRule[] = [];
   var i = 0;
   var order = 0;
@@ -232,13 +276,19 @@ function extractBalancedPseudo(selector: string, pattern: RegExp, onInner: (inne
 export function selectorSpecificity(selector: string): number {
   let bonus = 0;
   var source = extractBalancedPseudo(selector, /:where\(/gi, function () {});
-  source = extractBalancedPseudo(source, /:(?:is|not)\(/gi, function (inner) {
+  source = extractBalancedPseudo(source, /:(?:is|not|has)\(/gi, function (inner) {
     bonus += maxBranchSpecificity(inner);
+  });
+  source = extractBalancedPseudo(source, /:nth-(?:last-)?child\(/gi, function (inner) {
+    bonus += 10;
+    const ofMatch = /\bof\s+([\s\S]+)$/i.exec(inner);
+    if (ofMatch) bonus += maxBranchSpecificity(ofMatch[1]);
   });
   var pseudoElements = (source.match(/::[\w-]+/g) || []).length;
   source = source.replace(/::[\w-]+/g, ' ').replace(/\[[^\]]*\]/g, ' .attr ');
   var ids = (source.match(/#[\w-]+/g) || []).length;
   var classes = (source.match(/\.[\w-]+|:[\w-]+(?:\([^)]*\))?/g) || []).length;
+  source = source.replace(/:[\w-]+\([^)]*\)/g, ' ');
   var types = (source.match(/(^|[\s>+~])([a-zA-Z][\w-]*)/g) || []).length;
   return bonus + ids * 100 + classes * 10 + types + pseudoElements;
 }
@@ -296,34 +346,64 @@ function findMatchingParen(input: string, from: number): number {
   return -1;
 }
 
-export function resolveVars(value: unknown, vars: Record<string, string>, depth?: number): string {
-  var input = String(value == null ? '' : value);
-  var level = depth || 0;
-  if (!vars || input.indexOf('var(') === -1 || level > 8) return input;
-  var out = '';
-  var i = 0;
+const MAX_VAR_EXPANSIONS = 64;
+const MAX_VAR_VALUE_LEN = 4096;
+
+interface VarBudget {
+  steps: number;
+}
+
+function findNextVarCall(input: string, from: number): number {
+  const re = /var\(/gi;
+  re.lastIndex = from;
+  const m = re.exec(input);
+  return m ? m.index : -1;
+}
+
+function resolveVarsInternal(
+  input: string,
+  vars: Record<string, string>,
+  level: number,
+  visiting: Set<string>,
+  budget: VarBudget,
+): string {
+  if (!vars || !/var\(/i.test(input) || level > 8 || budget.steps >= MAX_VAR_EXPANSIONS) return input;
+  let out = '';
+  let i = 0;
   while (i < input.length) {
-    var start = input.indexOf('var(', i);
+    const start = findNextVarCall(input, i);
     if (start === -1) {
       out += input.slice(i);
       break;
     }
     out += input.slice(i, start);
-    var end = findMatchingParen(input, start + 4);
+    const end = findMatchingParen(input, start + 4);
     if (end === -1) {
       out += input.slice(start);
       break;
     }
-    var inner = input.slice(start + 4, end);
-    var comma = findTopLevelComma(inner);
-    var name = (comma === -1 ? inner : inner.slice(0, comma)).trim();
-    var fallback = comma === -1 ? '' : inner.slice(comma + 1).trim();
-    var resolved = vars[name];
-    if (resolved == null || resolved === '') resolved = fallback;
-    out += resolveVars(resolved, vars, level + 1);
+    if (++budget.steps > MAX_VAR_EXPANSIONS) return out.slice(0, MAX_VAR_VALUE_LEN);
+    const inner = input.slice(start + 4, end);
+    const comma = findTopLevelComma(inner);
+    const name = (comma === -1 ? inner : inner.slice(0, comma)).trim();
+    const fallback = comma === -1 ? '' : inner.slice(comma + 1).trim();
+    const raw = vars[name];
+    if (raw != null && raw !== '' && !visiting.has(name)) {
+      visiting.add(name);
+      out += resolveVarsInternal(raw, vars, level + 1, visiting, budget);
+      visiting.delete(name);
+    } else if (fallback) {
+      out += resolveVarsInternal(fallback, vars, level + 1, visiting, budget);
+    }
+    if (out.length > MAX_VAR_VALUE_LEN) return out.slice(0, MAX_VAR_VALUE_LEN);
     i = end + 1;
   }
   return out;
+}
+
+export function resolveVars(value: unknown, vars: Record<string, string>, depth?: number): string {
+  var input = String(value == null ? '' : value);
+  return resolveVarsInternal(input, vars, depth || 0, new Set<string>(), { steps: 0 });
 }
 
 function decodeContentValue(value: string): string {
@@ -453,15 +533,25 @@ function buildElementVars(
   const cached = cache.get(element);
   if (cached) return cached;
   const parent = element !== root ? (element.parentElement as HTMLElement | null) : null;
-  const base = parent && root.contains(parent) ? { ...buildElementVars(parent, root, varMap, cache) } : {};
+  const parentVars = parent && root.contains(parent) ? buildElementVars(parent, root, varMap, cache) : {};
   const own = varMap.get(element);
-  if (own) {
-    for (const [name, decl] of own.entries()) {
-      base[name] = decl.value;
-    }
+  if (!own) {
+    cache.set(element, parentVars);
+    return parentVars;
   }
-  cache.set(element, base);
-  return base;
+  const combined: Record<string, string> = { ...parentVars };
+  const resolved: Record<string, string> = { ...parentVars };
+  for (const [name, decl] of own.entries()) combined[name] = decl.value;
+  for (const [name, decl] of own.entries()) {
+    // Allow `--x: var(--x, fallback)` to inherit the parent's resolved `--x` instead of self-cycling.
+    const lookup: Record<string, string> = { ...combined };
+    if (parentVars[name] !== undefined) lookup[name] = parentVars[name];
+    else delete lookup[name];
+    const nextVal = resolveVars(decl.value, lookup);
+    if (nextVal) resolved[name] = nextVal;
+  }
+  cache.set(element, resolved);
+  return resolved;
 }
 
 export function inlineCss<T extends HTMLElement>(root: T, css: string, options?: InlineCssOptions): T {

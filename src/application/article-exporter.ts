@@ -49,7 +49,7 @@ export function createArticleExporter(options: ArticleExportOptions): ArticleExp
   const t = options.t;
   const doc = options.doc;
   const settings = options.settings;
-  const base = String(options.localImageServerUrl || 'http://127.0.0.1:4010').replace(/\/+$/, '');
+  const base = String(options.localImageServerUrl || '').replace(/\/+$/, '');
   const title = doc.title || t('untitled');
 
   function exportTheme(): void {
@@ -111,7 +111,8 @@ export function createArticleExporter(options: ArticleExportOptions): ArticleExp
     try {
       const fetched = await Promise.all(
         files.map(async function (filename): Promise<ZipEntry> {
-          const response = await fetch(base + '/uploads/' + filename);
+          const url = base ? base + '/uploads/' + filename : '/api/markdown-studio/assets/' + filename;
+          const response = await fetch(url);
           if (!response.ok) throw new Error('HTTP ' + response.status);
           return { name: 'assets/' + filename, data: new Uint8Array(await response.arrayBuffer()) };
         }),
@@ -135,10 +136,10 @@ export function createArticleExporter(options: ArticleExportOptions): ArticleExp
   }
 
   async function exportHtml(): Promise<void> {
-    await Promise.all([options.mermaidAssets.ensure(doc.markdown), options.mathAssets.ensure()]);
+    await Promise.all([options.mermaidAssets.ensure(doc.markdown), options.mathAssets.ensure(doc.markdown)]);
     const article = renderArticle(doc.markdown, settings, {
       locale: options.locale,
-      imageBaseUrl: base,
+      imageBaseUrl: base || 'http://127.0.0.1:4010',
       mermaidAssets: options.mermaidAssets.cache,
       footnotesTitle: t('footnotes.title'),
       referencesTitle: t('references.title'),

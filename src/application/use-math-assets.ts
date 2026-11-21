@@ -1,5 +1,6 @@
 import type * as ReactNamespace from 'react';
-import { useDebouncedKeyTask } from '../runtime/react-lifecycle';
+import { containsMath } from '../engine';
+import { useDebouncedKeyTask, useMountDisposable } from '../runtime/react-lifecycle';
 
 export interface MathAssetsOptions {
   React: typeof ReactNamespace;
@@ -9,11 +10,43 @@ export interface MathAssetsOptions {
 export interface MathAssetsApi {
   css: string;
   version: number;
-  ensure: () => Promise<void>;
+  ensure: (markdown?: string) => Promise<void>;
 }
 
-function hasMath(markdown: string): boolean {
-  return /\$\$[\s\S]+?\$\$|\$[^$\n]+\$|\\\(|\\\[/.test(markdown);
+export function hasMath(markdown: string): boolean {
+  return containsMath(markdown);
+}
+
+let sharedMathLoadPromise: Promise<void> | null = null;
+
+function loadMathScript(): Promise<void> {
+  if (typeof window !== 'undefined' && window.__MDSTUDIO_MATH__) return Promise.resolve();
+  if (sharedMathLoadPromise) return sharedMathLoadPromise;
+  sharedMathLoadPromise = new Promise(function (resolve) {
+    if (typeof document === 'undefined') {
+      sharedMathLoadPromise = null;
+      resolve();
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = '/api/markdown-studio/math.js';
+    script.async = true;
+    script.setAttribute('data-plugin', 'dsh-markdown-studio');
+    script.onload = function () {
+      if (!window.__MDSTUDIO_MATH__) {
+        sharedMathLoadPromise = null;
+        script.remove();
+      }
+      resolve();
+    };
+    script.onerror = function () {
+      sharedMathLoadPromise = null;
+      script.remove();
+      resolve();
+    };
+    document.head.appendChild(script);
+  });
+  return sharedMathLoadPromise;
 }
 
 export function useMathAssets(options: MathAssetsOptions): MathAssetsApi {
@@ -22,52 +55,35 @@ export function useMathAssets(options: MathAssetsOptions): MathAssetsApi {
     return typeof window !== 'undefined' && window.__MDSTUDIO_MATH__ ? window.__MDSTUDIO_MATH__.cssText : '';
   });
   const [version, setVersion] = React.useState(0);
-  const promiseRef = React.useRef<Promise<void> | null>(null);
+  const mountedRef = React.useRef(true);
   const needsMath = hasMath(options.markdown);
 
-  function ensure(): Promise<void> {
+  useMountDisposable(React, function () {
+    mountedRef.current = true;
+    return function () {
+      mountedRef.current = false;
+    };
+  });
+
+  async function ensure(markdown?: string): Promise<void> {
+    if (markdown !== undefined && !hasMath(markdown)) return;
     if (window.__MDSTUDIO_MATH__) {
-      if (css !== window.__MDSTUDIO_MATH__.cssText) {
+      if (mountedRef.current && css !== window.__MDSTUDIO_MATH__.cssText) {
         setCss(window.__MDSTUDIO_MATH__.cssText);
-        setVersion(function (value) {
-          return value + 1;
-        });
+        setVersion((value) => value + 1);
       }
-      return Promise.resolve();
+      return;
     }
-    if (promiseRef.current) return promiseRef.current;
-    promiseRef.current = new Promise(function (resolve) {
-      if (typeof document === 'undefined') {
-        resolve();
-        return;
-      }
-      const script = document.createElement('script');
-      script.src = '/api/markdown-studio/math.js';
-      script.async = true;
-      script.onload = function () {
-        if (window.__MDSTUDIO_MATH__) {
-          setCss(window.__MDSTUDIO_MATH__.cssText);
-          setVersion(function (value) {
-            return value + 1;
-          });
-        } else {
-          promiseRef.current = null;
-          script.remove();
-        }
-        resolve();
-      };
-      script.onerror = function () {
-        promiseRef.current = null;
-        script.remove();
-        resolve();
-      };
-      document.head.appendChild(script);
-    });
-    return promiseRef.current;
+    await loadMathScript();
+    const loaded = (window as { __MDSTUDIO_MATH__?: { cssText: string } }).__MDSTUDIO_MATH__;
+    if (mountedRef.current && loaded) {
+      setCss(loaded.cssText);
+      setVersion((value) => value + 1);
+    }
   }
 
   useDebouncedKeyTask(React, needsMath ? 'math' : 'none', 0, needsMath, function () {
-    void ensure();
+    void ensure(options.markdown);
   });
 
   return { css, version, ensure };

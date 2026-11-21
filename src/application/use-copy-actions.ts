@@ -84,7 +84,7 @@ export function useCopyActions(options: CopyActionsOptions): CopyActionsApi {
     if (copying) return;
     setCopying(true);
     try {
-      await Promise.all([options.mermaidAssets.ensure(doc.markdown), options.mathAssets.ensure()]);
+      await Promise.all([options.mermaidAssets.ensure(doc.markdown), options.mathAssets.ensure(doc.markdown)]);
       const article = renderArticle(doc.markdown, settings, {
         locale: options.locale,
         imageBaseUrl: options.localImageServerUrl || 'http://127.0.0.1:4010',

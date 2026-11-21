@@ -1,5 +1,5 @@
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
-import { defaultKeymap } from '@codemirror/commands';
+import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { css } from '@codemirror/lang-css';
 import { markdown } from '@codemirror/lang-markdown';
 import { bracketMatching, HighlightStyle, indentOnInput, syntaxHighlighting, syntaxTree } from '@codemirror/language';
@@ -47,8 +47,10 @@ export interface EditorOptions {
   parent: HTMLElement;
   doc?: string;
   placeholder?: string;
+  ariaLabel?: string;
   language?: 'markdown' | 'css';
   dark?: boolean;
+  enableHistory?: boolean;
   onChange?: (value: string, selection: EditorSelection) => void;
   onSelection?: (selection: EditorSelection) => void;
   onBlur?: () => void;
@@ -220,7 +222,14 @@ function editorTheme(dark: boolean, isCss: boolean): Extension {
 const setInlineBlocksEffect = StateEffect.define<readonly EditorInlineBlock[]>();
 const setDiffTransitionEffect = StateEffect.define<EditorDiffTransition | null>();
 
-function makeActionBtn(label: string, cls: string, onClick: () => void): HTMLButtonElement {
+const inlineBlockSpecs = new WeakMap<HTMLElement, EditorInlineBlock>();
+
+function makeActionBtn(
+  label: string,
+  cls: string,
+  wrap: HTMLElement,
+  pick: (spec: EditorInlineBlock) => (() => void) | undefined,
+): HTMLButtonElement {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = cls;
@@ -228,7 +237,8 @@ function makeActionBtn(label: string, cls: string, onClick: () => void): HTMLBut
   btn.addEventListener('click', (event) => {
     event.preventDefault();
     event.stopPropagation();
-    onClick();
+    const current = inlineBlockSpecs.get(wrap);
+    if (current) pick(current)?.();
   });
   return btn;
 }
@@ -247,6 +257,7 @@ function appendDiffSpans(parent: HTMLElement, parts: readonly EditorDiffPart[], 
 }
 
 function appendProseContent(prose: HTMLElement, item: EditorInlineBlock): void {
+  prose.textContent = '';
   if (item.status === 'ready' && item.addParts && item.addParts.length > 0) {
     appendDiffSpans(prose, item.addParts, 'mdstudio-ai-add-word');
     return;
@@ -255,6 +266,7 @@ function appendProseContent(prose: HTMLElement, item: EditorInlineBlock): void {
   if (item.status === 'streaming') {
     const caret = document.createElement('span');
     caret.className = 'mdstudio-ai-stream-caret';
+    caret.setAttribute('aria-hidden', 'true');
     prose.appendChild(caret);
   }
 }
@@ -284,14 +296,33 @@ class AiInlineBlockWidget extends WidgetType {
     );
   }
 
+  updateDOM(dom: HTMLElement): boolean {
+    const item = this.spec;
+    if (dom.getAttribute('data-mdstudio-ai-patch') !== item.id) return false;
+    if (dom.getAttribute('data-mdstudio-ai-status') !== item.status) return false;
+    const existingWarn = dom.querySelector<HTMLElement>('.mdstudio-ai-inline-reason');
+    if (Boolean(item.warning) !== Boolean(existingWarn)) return false;
+    const prose = dom.querySelector<HTMLElement>('.mdstudio-ai-inline-prose');
+    if (!prose) return false;
+    inlineBlockSpecs.set(dom, item);
+    appendProseContent(prose, item);
+    if (existingWarn && item.warning) existingWarn.textContent = item.warning;
+    return true;
+  }
+
   toDOM(): HTMLElement {
     const item = this.spec;
     const wrap = document.createElement('div');
     wrap.className = 'mdstudio-ai-inline-card is-' + item.status;
     wrap.setAttribute('data-mdstudio-ai-patch', item.id);
+    wrap.setAttribute('data-mdstudio-ai-status', item.status);
+    wrap.setAttribute('role', item.status === 'error' ? 'alert' : 'region');
+    wrap.setAttribute('aria-label', item.warning || item.primaryLabel || item.secondaryLabel);
+    inlineBlockSpecs.set(wrap, item);
 
     const prose = document.createElement('div');
     prose.className = 'mdstudio-ai-inline-prose';
+    prose.setAttribute('aria-live', item.status === 'error' ? 'assertive' : 'polite');
     appendProseContent(prose, item);
     wrap.appendChild(prose);
 
@@ -310,16 +341,24 @@ class AiInlineBlockWidget extends WidgetType {
       makeActionBtn(
         item.secondaryLabel,
         'mdstudio-dsh-btn is-sm is-outline mdstudio-diff-outline-btn',
-        item.onSecondary,
+        wrap,
+        (spec) => spec.onSecondary,
       ),
     );
     if (item.status === 'error' && item.retryLabel && item.onRetry) {
       btns.appendChild(
-        makeActionBtn(item.retryLabel, 'mdstudio-dsh-btn is-sm is-outline mdstudio-diff-outline-btn', item.onRetry),
+        makeActionBtn(
+          item.retryLabel,
+          'mdstudio-dsh-btn is-sm is-outline mdstudio-diff-outline-btn',
+          wrap,
+          (spec) => spec.onRetry,
+        ),
       );
     }
     if (item.status === 'ready') {
-      btns.appendChild(makeActionBtn(item.primaryLabel, 'mdstudio-dsh-btn is-sm is-primary', item.onPrimary));
+      btns.appendChild(
+        makeActionBtn(item.primaryLabel, 'mdstudio-dsh-btn is-sm is-primary', wrap, (spec) => spec.onPrimary),
+      );
     }
     bar.appendChild(btns);
     wrap.appendChild(bar);
@@ -351,6 +390,7 @@ class AiDiffGhostWidget extends WidgetType {
     const showDel = this.spec.kind === 'accept' && !this.spec.inlinePhrase;
     const outer = document.createElement('div');
     outer.className = 'mdstudio-ai-ghost-collapse is-' + this.spec.kind;
+    outer.setAttribute('aria-hidden', 'true');
     const inner = document.createElement('div');
     inner.className = 'mdstudio-ai-ghost-inner';
     const box = document.createElement('div');
@@ -518,6 +558,7 @@ export function create(options: EditorOptions): EditorApi {
 
   const extensions: Extension[] = [
     ...(isCss ? [lineNumbers()] : [markdownMonoLines, inlineBlocksField, diffTransitionField]),
+    ...(opts.enableHistory ? [history()] : []),
     highlightSpecialChars(),
     drawSelection(),
     dropCursor(),
@@ -531,11 +572,11 @@ export function create(options: EditorOptions): EditorApi {
     isCss ? css() : markdown(),
     EditorView.lineWrapping,
     contentAttrsCompartment.of(
-      EditorView.contentAttributes.of({ 'aria-label': resolveAriaLabel(undefined, opts.placeholder) }),
+      EditorView.contentAttributes.of({ 'aria-label': resolveAriaLabel(opts.ariaLabel, opts.placeholder) }),
     ),
     placeholderCompartment.of(opts.placeholder ? placeholder(opts.placeholder) : []),
     themeCompartment.of(editorTheme(dark, isCss)),
-    keymap.of([...closeBracketsKeymap, ...defaultKeymap]),
+    keymap.of([...(opts.enableHistory ? historyKeymap : []), ...closeBracketsKeymap, ...defaultKeymap]),
     EditorView.updateListener.of(onUpdate),
     EditorView.domEventHandlers({
       blur: () => {
@@ -550,7 +591,7 @@ export function create(options: EditorOptions): EditorApi {
   let lastInlineBlockCount = 0;
   view.scrollDOM.tabIndex = 0;
   view.scrollDOM.setAttribute('role', 'region');
-  view.scrollDOM.setAttribute('aria-label', resolveAriaLabel(undefined, opts.placeholder));
+  view.scrollDOM.setAttribute('aria-label', resolveAriaLabel(opts.ariaLabel, opts.placeholder));
   const scrollElement = view.scrollDOM;
   const scrollListeners = new Set<(info: EditorScrollInfo) => void>();
   const scrollInfo = (): EditorScrollInfo => ({

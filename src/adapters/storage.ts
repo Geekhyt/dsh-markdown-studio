@@ -18,12 +18,20 @@ export class LibraryStorageError extends Error {
   }
 }
 
+function safeStorageGet(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
 export function rawLibrarySnapshot(): string {
   return JSON.stringify(
     Object.fromEntries(
       [LIBRARY_KEY_V2, LIBRARY_BACKUP_KEY, LIBRARY_UNREADABLE_KEY, WRITING_SKILLS_KEY].map((key) => [
         key,
-        window.localStorage.getItem(key),
+        safeStorageGet(key),
       ]),
     ),
     null,
@@ -68,13 +76,14 @@ function parseArticleRecord(entry: unknown): Article | null {
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
   const record = entry as Record<string, unknown>;
   if (typeof record.id !== 'string' || typeof record.markdown !== 'string') return null;
+  const rawUpdated = Number(record.updatedAt);
   return {
     id: record.id,
     title: typeof record.title === 'string' && record.title ? record.title : SAMPLE_TITLE,
     markdown: record.markdown,
     settings: sanitizeSettings(record.settings),
     view: parseView(record.view),
-    updatedAt: Number(record.updatedAt) || Date.now(),
+    updatedAt: Number.isFinite(rawUpdated) && rawUpdated > 0 ? rawUpdated : Date.now(),
   };
 }
 
@@ -116,17 +125,32 @@ function parsePersistedLibrary(raw: string | null): LibraryState | null {
 }
 
 export function loadPersistedLibrary(): LibraryState | null {
-  const primary = parsePersistedLibrary(window.localStorage.getItem(LIBRARY_KEY_V2));
+  const primary = parsePersistedLibrary(safeStorageGet(LIBRARY_KEY_V2));
   if (primary) return primary;
-  return parsePersistedLibrary(window.localStorage.getItem(LIBRARY_BACKUP_KEY));
+  return parsePersistedLibrary(safeStorageGet(LIBRARY_BACKUP_KEY));
+}
+
+function writePrimaryWithQuotaRetry(payload: string): void {
+  try {
+    window.localStorage.setItem(LIBRARY_KEY_V2, payload);
+  } catch (firstError) {
+    // Evict backup/unreadable snapshots on quota exhaustion so the active library can still persist.
+    try {
+      window.localStorage.removeItem(LIBRARY_BACKUP_KEY);
+      window.localStorage.removeItem(LIBRARY_UNREADABLE_KEY);
+    } catch {
+      /* ignore */
+    }
+    window.localStorage.setItem(LIBRARY_KEY_V2, payload);
+  }
 }
 
 export function savePersistedLibrary(value: LibraryState): boolean {
   try {
-    const previous = window.localStorage.getItem(LIBRARY_KEY_V2);
+    const previous = safeStorageGet(LIBRARY_KEY_V2);
     rejectFutureLibrary(previous);
     const parsedPrevious = parsePersistedLibrary(previous);
-    if (!parsedPrevious) rejectFutureLibrary(window.localStorage.getItem(LIBRARY_BACKUP_KEY));
+    if (!parsedPrevious) rejectFutureLibrary(safeStorageGet(LIBRARY_BACKUP_KEY));
     // Preserve unreadable bytes before a last-good recovery writes the primary.
     if (previous && !parsedPrevious) {
       try {
@@ -142,10 +166,26 @@ export function savePersistedLibrary(value: LibraryState): boolean {
         /* backup quota failure must not block primary library persistence */
       }
     }
-    window.localStorage.setItem(
-      LIBRARY_KEY_V2,
-      JSON.stringify({ version: 2, schemaVersion: LIBRARY_SCHEMA_VERSION, ...compactLibraryForStorage(value) }),
-    );
+    const serialized = JSON.stringify({
+      version: 2,
+      schemaVersion: LIBRARY_SCHEMA_VERSION,
+      ...compactLibraryForStorage(value),
+    });
+    writePrimaryWithQuotaRetry(serialized);
+    if (!previous && serialized.length <= 1_500_000 && !safeStorageGet(LIBRARY_BACKUP_KEY)) {
+      try {
+        window.localStorage.setItem(LIBRARY_BACKUP_KEY, serialized);
+      } catch {
+        /* backup quota failure must not block primary library persistence */
+      }
+    }
+    if (parsedPrevious) {
+      try {
+        window.localStorage.removeItem(LIBRARY_UNREADABLE_KEY);
+      } catch {
+        /* ignore */
+      }
+    }
     return true;
   } catch (error) {
     return false;
@@ -153,12 +193,12 @@ export function savePersistedLibrary(value: LibraryState): boolean {
 }
 
 export function loadInitialLibrary(locale?: string): LibraryState {
-  const primary = window.localStorage.getItem(LIBRARY_KEY_V2);
+  const primary = safeStorageGet(LIBRARY_KEY_V2);
   rejectFutureLibrary(primary);
-  if (!parsePersistedLibrary(primary)) rejectFutureLibrary(window.localStorage.getItem(LIBRARY_BACKUP_KEY));
+  if (!parsePersistedLibrary(primary)) rejectFutureLibrary(safeStorageGet(LIBRARY_BACKUP_KEY));
   const persisted = loadPersistedLibrary();
   if (persisted) return persisted;
-  if (primary || window.localStorage.getItem(LIBRARY_BACKUP_KEY)) throw new LibraryStorageError('corrupt');
+  if (primary || safeStorageGet(LIBRARY_BACKUP_KEY)) throw new LibraryStorageError('corrupt');
   const sample = sampleArticleFor(locale);
   const id = 'doc-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
   return {
@@ -186,22 +226,17 @@ export function storeDocumentRef(ref: DocumentRef): Promise<void> {
 async function writeDocumentRef(ref: DocumentRef): Promise<void> {
   try {
     const db = await openFileHandleDb();
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction('handles', 'readwrite');
-      tx.objectStore('handles').put({ ref }, 'document-ref');
-      tx.oncomplete = () => {
-        resolve();
-        db.close();
-      };
-      tx.onerror = () => {
-        reject(tx.error);
-        db.close();
-      };
-      tx.onabort = () => {
-        reject(tx.error || new Error('transaction aborted'));
-        db.close();
-      };
-    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction('handles', 'readwrite');
+        tx.objectStore('handles').put({ ref }, 'document-ref');
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error || new Error('transaction aborted'));
+      });
+    } finally {
+      db.close();
+    }
   } catch (error) {
     /* handles may not be cloneable or IDB unavailable */
   }
@@ -210,22 +245,18 @@ async function writeDocumentRef(ref: DocumentRef): Promise<void> {
 export async function loadDocumentRef(): Promise<DocumentRef | null> {
   try {
     const db = await openFileHandleDb();
-    const value = await new Promise<unknown>((resolve, reject) => {
-      const tx = db.transaction('handles', 'readonly');
-      const request = tx.objectStore('handles').get('document-ref');
-      request.onsuccess = () => {
-        resolve(request.result);
-        db.close();
-      };
-      request.onerror = () => {
-        reject(request.error);
-        db.close();
-      };
-      tx.onabort = () => {
-        reject(tx.error || new Error('transaction aborted'));
-        db.close();
-      };
-    });
+    let value: unknown;
+    try {
+      value = await new Promise<unknown>((resolve, reject) => {
+        const tx = db.transaction('handles', 'readonly');
+        const request = tx.objectStore('handles').get('document-ref');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+        tx.onabort = () => reject(tx.error || new Error('transaction aborted'));
+      });
+    } finally {
+      db.close();
+    }
     const record = value && typeof value === 'object' ? (value as { ref?: DocumentRef }) : null;
     if (
       record &&
@@ -242,22 +273,17 @@ export async function loadDocumentRef(): Promise<DocumentRef | null> {
 export async function storeWorkspaceHandle(handle: FileSystemDirectoryHandle): Promise<void> {
   try {
     const db = await openFileHandleDb();
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction('handles', 'readwrite');
-      tx.objectStore('handles').put({ handle }, 'workspace');
-      tx.oncomplete = () => {
-        resolve();
-        db.close();
-      };
-      tx.onerror = () => {
-        reject(tx.error);
-        db.close();
-      };
-      tx.onabort = () => {
-        reject(tx.error || new Error('transaction aborted'));
-        db.close();
-      };
-    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction('handles', 'readwrite');
+        tx.objectStore('handles').put({ handle }, 'workspace');
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error || new Error('transaction aborted'));
+      });
+    } finally {
+      db.close();
+    }
   } catch (error) {
     /* IDB may be unavailable */
   }
@@ -266,22 +292,18 @@ export async function storeWorkspaceHandle(handle: FileSystemDirectoryHandle): P
 export async function loadWorkspaceHandle(): Promise<FileSystemDirectoryHandle | null> {
   try {
     const db = await openFileHandleDb();
-    const value = await new Promise<unknown>((resolve, reject) => {
-      const tx = db.transaction('handles', 'readonly');
-      const request = tx.objectStore('handles').get('workspace');
-      request.onsuccess = () => {
-        resolve(request.result);
-        db.close();
-      };
-      request.onerror = () => {
-        reject(request.error);
-        db.close();
-      };
-      tx.onabort = () => {
-        reject(tx.error || new Error('transaction aborted'));
-        db.close();
-      };
-    });
+    let value: unknown;
+    try {
+      value = await new Promise<unknown>((resolve, reject) => {
+        const tx = db.transaction('handles', 'readonly');
+        const request = tx.objectStore('handles').get('workspace');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+        tx.onabort = () => reject(tx.error || new Error('transaction aborted'));
+      });
+    } finally {
+      db.close();
+    }
     const record = value && typeof value === 'object' ? (value as { handle?: unknown }) : null;
     return record && record.handle && typeof record.handle === 'object'
       ? (record.handle as FileSystemDirectoryHandle)
@@ -306,6 +328,9 @@ function openFileHandleDb(): Promise<IDBDatabase> {
     };
     request.onerror = function () {
       reject(request.error);
+    };
+    request.onblocked = function () {
+      reject(new Error('indexedDB blocked'));
     };
   });
 }

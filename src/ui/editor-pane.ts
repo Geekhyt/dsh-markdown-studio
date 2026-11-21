@@ -1,5 +1,6 @@
 import type * as ReactNamespace from 'react';
 import type { ReactNode } from 'react';
+import { disarmEscapeTab } from '../application/editor-shortcuts';
 import type { AiReviewSession } from '../application/use-writing-skills';
 import type { Heading } from '../domain/article';
 import type { EditorApi, EditorDiffTransition, EditorInlineBlock, EditorSelection } from '../domain/editor-types';
@@ -550,7 +551,12 @@ function hasOpenModal(): boolean {
 }
 
 function isUnhandledEscape(event: KeyboardEvent): boolean {
+  if (event.isComposing || event.keyCode === 229) return false;
   return event.key === 'Escape' && !event.defaultPrevented && !hasOpenModal();
+}
+
+function isImeEvent(event: ReactNamespace.KeyboardEvent<HTMLElement>): boolean {
+  return Boolean(event.nativeEvent.isComposing || event.keyCode === 229);
 }
 
 function focusAnchorButton(anchor: HTMLElement | null): void {
@@ -687,45 +693,52 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
           'div',
           {
             className: 'mdstudio-slash',
-            role: 'listbox',
-            'aria-label': t('slash.title'),
             onMouseDown: function (event: ReactNamespace.MouseEvent<HTMLDivElement>) {
               event.preventDefault();
             },
           },
-          h('div', { className: 'mdstudio-slash-head' }, t('slash.title')),
+          h('div', { className: 'mdstudio-slash-head', id: 'mdstudio-slash-title' }, t('slash.title')),
           slash.items.length
-            ? slash.items.map(function (item, index) {
-                return h(
-                  'button',
-                  {
-                    type: 'button',
-                    key: item.id,
-                    role: 'option',
-                    'aria-selected': index === slash.selected,
-                    className:
-                      'mdstudio-slash-item mdstudio-drop-item' + (index === slash.selected ? ' is-active' : ''),
-                    onMouseEnter: function () {
-                      slash.onSelect(index);
+            ? h(
+                'div',
+                {
+                  className: 'mdstudio-slash-list',
+                  role: 'listbox',
+                  'aria-labelledby': 'mdstudio-slash-title',
+                },
+                slash.items.map(function (item, index) {
+                  return h(
+                    'button',
+                    {
+                      type: 'button',
+                      key: item.id,
+                      id: 'mdstudio-slash-opt-' + item.id,
+                      role: 'option',
+                      'aria-selected': index === slash.selected,
+                      className:
+                        'mdstudio-slash-item mdstudio-drop-item' + (index === slash.selected ? ' is-active' : ''),
+                      onMouseEnter: function () {
+                        slash.onSelect(index);
+                      },
+                      onClick: function () {
+                        slash.onApply(index);
+                      },
                     },
-                    onClick: function () {
-                      slash.onApply(index);
-                    },
-                  },
-                  h(
-                    'span',
-                    { className: 'mdstudio-slash-icon', 'aria-hidden': 'true' },
-                    item.iconName ? h(icons.Icon, { name: item.iconName, size: 16 }) : item.icon,
-                  ),
-                  h(
-                    'span',
-                    { className: 'mdstudio-slash-copy' },
-                    h('span', { className: 'mdstudio-slash-label' }, item.label),
-                    h('span', { className: 'mdstudio-slash-hint' }, item.hint),
-                  ),
-                );
-              })
-            : h('div', { className: 'mdstudio-slash-empty' }, t('slash.empty')),
+                    h(
+                      'span',
+                      { className: 'mdstudio-slash-icon', 'aria-hidden': 'true' },
+                      item.iconName ? h(icons.Icon, { name: item.iconName, size: 16 }) : item.icon,
+                    ),
+                    h(
+                      'span',
+                      { className: 'mdstudio-slash-copy' },
+                      h('span', { className: 'mdstudio-slash-label' }, item.label),
+                      h('span', { className: 'mdstudio-slash-hint' }, item.hint),
+                    ),
+                  );
+                }),
+              )
+            : h('div', { className: 'mdstudio-slash-empty', role: 'status' }, t('slash.empty')),
           h('div', { className: 'mdstudio-slash-foot' }, t('slash.foot')),
         )
       : null,
@@ -735,6 +748,7 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
           {
             className: 'mdstudio-searchbar',
             onKeyDown: function (event: ReactNamespace.KeyboardEvent<HTMLDivElement>) {
+              if (isImeEvent(event)) return;
               if (event.key === 'Escape') {
                 event.preventDefault();
                 event.stopPropagation();
@@ -756,6 +770,7 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
               search.onQuery(event.target.value);
             },
             onKeyDown: function (event: ReactNamespace.KeyboardEvent<HTMLInputElement>) {
+              if (isImeEvent(event)) return;
               if (event.key === 'Enter') {
                 event.preventDefault();
                 search.onFind();
@@ -776,6 +791,7 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
               search.onReplacement(event.target.value);
             },
             onKeyDown: function (event: ReactNamespace.KeyboardEvent<HTMLInputElement>) {
+              if (isImeEvent(event)) return;
               if (event.key === 'Enter') {
                 event.preventDefault();
                 search.onReplaceOne();
@@ -834,7 +850,7 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
                   'button',
                   {
                     type: 'button',
-                    key: 'outline-' + index,
+                    key: 'outline-' + heading.start + '-' + index,
                     className: 'mdstudio-outline-item mdstudio-drop-item',
                     style: { paddingLeft: 8 + (heading.level - 1) * 10, fontWeight: heading.level <= 2 ? 600 : 400 },
                     onClick: function () {
@@ -851,12 +867,24 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
       : null,
     h(
       'div',
-      { className: 'mdstudio-editor-wrap', onMouseDownCapture: content.onPointerDown },
+      {
+        className: 'mdstudio-editor-wrap',
+        onMouseDownCapture: function (event: ReactNamespace.MouseEvent<HTMLDivElement>) {
+          disarmEscapeTab();
+          content.onPointerDown?.(event);
+        },
+        onBlurCapture: function () {
+          disarmEscapeTab();
+        },
+      },
       content.useCodeMirror
         ? h(CodeMirrorEditor, {
             React: props.React,
             value: content.markdown,
-            placeholder: content.placeholder,
+            config: {
+              placeholder: content.placeholder,
+              ariaLabel: t('editor.label'),
+            },
             inlineBlocks: props.ai?.inlineBlocks,
             diffTransition: props.ai?.diffTransition,
             onReady: content.onReady,

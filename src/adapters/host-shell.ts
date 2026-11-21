@@ -4,16 +4,24 @@
  * Keeps the plugin header clear of macOS traffic lights / DSH collapsed sidebar
  * controls without coupling layout measurement directly into StudioPage.
  */
-function readPublishedClearance(target: HTMLElement): number {
+function parseClearance(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const parsed = parseFloat(trimmed);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function readPublishedClearance(target: HTMLElement): number | null {
   const inlineVal = target.style ? target.style.getPropertyValue('--dsh-frame-leading-clearance') : '';
-  if (inlineVal) return parseFloat(inlineVal) || 0;
-  if (typeof window.getComputedStyle !== 'function') return 0;
-  return parseFloat(window.getComputedStyle(target).getPropertyValue('--dsh-frame-leading-clearance')) || 0;
+  const parsedInline = parseClearance(inlineVal);
+  if (parsedInline !== null) return parsedInline;
+  if (typeof window.getComputedStyle !== 'function') return null;
+  return parseClearance(window.getComputedStyle(target).getPropertyValue('--dsh-frame-leading-clearance'));
 }
 
 function resolveHostClearance(target: HTMLElement): number {
   const published = readPublishedClearance(target);
-  if (published > 0) return published;
+  if (published !== null) return published;
   const docEl = typeof document !== 'undefined' ? document.documentElement : null;
   const platform = docEl && typeof docEl.getAttribute === 'function' ? docEl.getAttribute('data-platform') : null;
   if (platform === 'darwin') {

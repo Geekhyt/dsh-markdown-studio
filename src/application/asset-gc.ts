@@ -9,18 +9,34 @@ const BUILTIN_SAMPLE_ASSETS = new Set([
   ...assetFilesInMarkdown(SAMPLE_MARKDOWN_EN),
 ]);
 
+const DEFAULT_MIN_ASSET_AGE_MS = 60_000;
+
 export interface AssetGarbageCollectorOptions {
   hostClient: Pick<HostClient, 'listAssets' | 'deleteAsset'>;
   getSnapshot: () => LibraryState;
   mermaidFilenames?: () => ReadonlySet<string>;
   extraFilenames?: () => Iterable<string>;
+  minAgeMs?: number;
+}
+
+export interface AssetPruneOptions {
+  bypassGraceFor?: Iterable<string>;
 }
 
 export interface AssetGarbageCollector {
-  prune: () => Promise<string[]>;
+  prune: (options?: AssetPruneOptions) => Promise<string[]>;
+}
+
+function isWithinGraceWindow(storedAt: string | undefined, minAgeMs: number, now: number): boolean {
+  if (!storedAt || minAgeMs <= 0) return false;
+  const parsed = Date.parse(storedAt);
+  return Number.isFinite(parsed) && now - parsed < minAgeMs;
 }
 
 export function createAssetGarbageCollector(options: AssetGarbageCollectorOptions): AssetGarbageCollector {
+  const minAgeMs = options.minAgeMs ?? DEFAULT_MIN_ASSET_AGE_MS;
+  let inFlight: Promise<string[]> | null = null;
+
   function liveReferences(): Set<string> {
     const kept = new Set<string>(BUILTIN_SAMPLE_ASSETS);
     for (const filename of collectReferencedAssets(options.getSnapshot())) {
@@ -39,7 +55,8 @@ export function createAssetGarbageCollector(options: AssetGarbageCollectorOption
     return kept;
   }
 
-  async function prune(): Promise<string[]> {
+  async function runPrune(pruneOptions?: AssetPruneOptions): Promise<string[]> {
+    const bypassGrace = new Set<string>(pruneOptions?.bypassGraceFor || []);
     const before = liveReferences();
     let stored: Awaited<ReturnType<typeof options.hostClient.listAssets>>;
     try {
@@ -48,12 +65,15 @@ export function createAssetGarbageCollector(options: AssetGarbageCollectorOption
       return [];
     }
     const after = liveReferences();
+    const now = Date.now();
     const orphans = stored
+      .filter(function (item) {
+        if (before.has(item.filename) || after.has(item.filename)) return false;
+        if (bypassGrace.has(item.filename)) return true;
+        return !isWithinGraceWindow(item.storedAt, minAgeMs, now);
+      })
       .map(function (item) {
         return item.filename;
-      })
-      .filter(function (filename) {
-        return !before.has(filename) && !after.has(filename);
       });
     const removed: string[] = [];
     await Promise.all(
@@ -67,6 +87,15 @@ export function createAssetGarbageCollector(options: AssetGarbageCollectorOption
       }),
     );
     return removed;
+  }
+
+  function prune(pruneOptions?: AssetPruneOptions): Promise<string[]> {
+    if (inFlight) return inFlight;
+    const task = runPrune(pruneOptions).finally(function () {
+      if (inFlight === task) inFlight = null;
+    });
+    inFlight = task;
+    return task;
   }
 
   return { prune };

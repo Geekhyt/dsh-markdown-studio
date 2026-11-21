@@ -146,10 +146,10 @@ export var LIST = {
   gallery: function () {
     return [
       rule('ul', 'list-style-type: square;'),
-      rule('li > ul, ul > ul', 'list-style-type: circle;'),
+      rule('li > ul, ul > ul, ol > ul, .mdstudio-task-list > ul', 'list-style-type: circle;'),
       rule('ul > ul > ul, li > ul > li > ul', 'list-style-type: disc;'),
       rule('ol', 'padding-left: 2.35em; list-style-type: decimal-leading-zero;'),
-      rule('li > ol, ol > ol, ul > ol', 'list-style-type: decimal; padding-left: 1.75em;'),
+      rule('li > ol, ol > ol, ul > ol, .mdstudio-task-list > ol', 'list-style-type: decimal; padding-left: 1.75em;'),
       rule('.mdstudio-task-box', 'border-radius: 0;'),
     ];
   },
@@ -157,7 +157,7 @@ export var LIST = {
   warm: function () {
     return [
       rule('ul', 'list-style-type: circle;'),
-      rule('li > ul, ul > ul', 'list-style-type: disc;'),
+      rule('li > ul, ul > ul, ol > ul, .mdstudio-task-list > ul', 'list-style-type: disc;'),
       rule('.mdstudio-task-box', 'border-radius: 50%;'),
     ];
   },
@@ -165,7 +165,7 @@ export var LIST = {
   ruby: function () {
     return [
       rule('ol', 'padding-left: 2.35em; list-style-type: decimal-leading-zero;'),
-      rule('li > ol, ol > ol, ul > ol', 'list-style-type: decimal; padding-left: 1.75em;'),
+      rule('li > ol, ol > ol, ul > ol, .mdstudio-task-list > ol', 'list-style-type: decimal; padding-left: 1.75em;'),
       rule('.mdstudio-task-box', 'border-radius: 2px;'),
     ];
   },
@@ -244,6 +244,10 @@ export var LEAD = {
           '; color: ' +
           v('onAccent2') +
           '; font-weight: 700;',
+      ),
+      rule(
+        '.mdstudio-lead a, .mdstudio-lead .mdstudio-link, .mdstudio-lead sup, .mdstudio-lead .mdstudio-ref, .mdstudio-lead .mdstudio-footnote-ref',
+        'color: ' + v('onAccent2') + '; border-bottom-color: ' + v('onAccent2') + ';',
       ),
     ];
   },

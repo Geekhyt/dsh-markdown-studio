@@ -22,6 +22,17 @@ export function rootRule(body: string): string {
   return ROOT + ' { ' + body + ' }';
 }
 
+/** Force high-contrast foreground for all inline elements inside an inverted/colored surface. */
+export function invertedInlineRules(container: string, fgToken: string): string {
+  var children = ['strong', 'em', 'a', '.mdstudio-link', 'del', 'sup', '.mdstudio-ref', '.mdstudio-footnote-ref'];
+  var selector = children
+    .map(function (child) {
+      return container + ' ' + child;
+    })
+    .join(', ');
+  return rule(selector, 'color: ' + fgToken + '; border-bottom-color: ' + fgToken + ';');
+}
+
 export function core(p: Palette): string {
   return (
     cssVariables(p) +
@@ -88,8 +99,8 @@ export function core(p: Palette): string {
           v('accentDeep') +
           '; text-align: left;',
       ),
-      rule('.mdstudio-tldr ul, .mdstudio-tldr ol', 'margin: 0;'),
-      rule('.mdstudio-tldr li', 'margin: 0.18em 0;'),
+      rule('.mdstudio-tldr ul, .mdstudio-tldr ol, .mdstudio-tldr .mdstudio-task-list', 'margin: 0;'),
+      rule('.mdstudio-tldr li, .mdstudio-tldr .mdstudio-task', 'margin: 0.18em 0;'),
       rule('strong', 'color: ' + v('strongColor') + '; font-weight: 700;'),
       rule('em', 'color: ' + v('emColor') + '; font-style: ' + v('emStyle') + ';'),
       rule('del', 'color: ' + v('delColor') + '; text-decoration: line-through;'),
@@ -156,8 +167,8 @@ export function core(p: Palette): string {
       ),
       rule('li > ol, ol > ol, ul > ol, .mdstudio-task-list > ol', 'margin: 0.2em 0 0.25em; padding-left: 1.75em;'),
       rule('ul > ul > ul, li > ul > li > ul', 'list-style-type: square;'),
-      rule('li > p', 'margin: 0 0 0.35em; text-align: left;'),
-      rule('li > p:last-child', 'margin-bottom: 0;'),
+      rule('li > p, .mdstudio-task > p', 'margin: 0 0 0.35em; text-align: left;'),
+      rule('li > p:last-child, .mdstudio-task > p:last-child', 'margin-bottom: 0;'),
       rule('.mdstudio-task-list', 'list-style: none; margin: 0 0 ' + v('paragraphSpacing') + '; padding-left: 0;'),
       rule(
         'li > .mdstudio-task-list, ul > .mdstudio-task-list, ol > .mdstudio-task-list, .mdstudio-task-list > .mdstudio-task-list',
@@ -276,6 +287,7 @@ export function core(p: Palette): string {
           '; border-radius: 12px; font-size: 0.95em;',
       ),
       rule('.mdstudio-alert p', 'margin: 0; text-align: left;'),
+      rule('.mdstudio-alert p.mdstudio-task', 'margin: 0.35em 0; text-align: left;'),
       rule('.mdstudio-alert p + p', 'margin-top: 0.45em;'),
       rule('.mdstudio-alert > :last-child', 'margin-bottom: 0;'),
       rule(

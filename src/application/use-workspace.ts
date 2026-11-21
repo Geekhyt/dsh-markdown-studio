@@ -15,7 +15,7 @@ export interface WorkspaceOptions {
   notify: Notify;
   fileContext: FileContextApi;
   onMenuClose: () => void;
-  onOpenFile: (directory: FileSystemDirectoryHandle, entry: WorkspaceFile, text: string) => Promise<void>;
+  onOpenFile: (directory: FileSystemDirectoryHandle, entry: WorkspaceFile, text: string, file?: File) => Promise<void>;
 }
 
 export interface WorkspaceApi {
@@ -145,6 +145,14 @@ async function isSameFileHandle(a: FileSystemFileHandle, b: FileSystemFileHandle
 async function entryMatchesOpenFile(entry: WorkspaceEntry, openFile: FileSystemFileHandle | null): Promise<boolean> {
   if (!openFile) return false;
   if (entry.kind === 'file') return await isSameFileHandle(entry.handle, openFile);
+  if (typeof entry.handle.resolve === 'function') {
+    try {
+      const resolved = await entry.handle.resolve(openFile);
+      if (resolved && resolved.length > 0) return true;
+    } catch {
+      /* fall back to tree walk */
+    }
+  }
   for (const child of entry.children) {
     if (await entryMatchesOpenFile(child, openFile)) return true;
   }
@@ -168,19 +176,30 @@ async function copyFileSafe(
   }
 }
 
-async function copyDirectory(source: FileSystemDirectoryHandle, target: FileSystemDirectoryHandle): Promise<void> {
+async function copyDirectory(
+  source: FileSystemDirectoryHandle,
+  target: FileSystemDirectoryHandle,
+  depth = 0,
+): Promise<void> {
+  if (depth > MAX_DEPTH) throw new Error('directory depth limit exceeded');
   for await (const entry of source.values()) {
     if (entry.kind === 'directory') {
       const child = await target.getDirectoryHandle(entry.name, { create: true });
-      await copyDirectory(entry as FileSystemDirectoryHandle, child);
+      await copyDirectory(entry as FileSystemDirectoryHandle, child, depth + 1);
     } else {
       const file = await (entry as FileSystemFileHandle).getFile();
-      const handle = await target.getFileHandle(entry.name, { create: true });
-      const writable = await handle.createWritable();
-      await writable.write(await file.arrayBuffer());
-      await writable.close();
+      await copyFileSafe(target, entry.name, await file.arrayBuffer());
     }
   }
+}
+
+function remapSelectedDir(current: string, oldPath: string, nextPath: string | null): string {
+  if (!current) return '';
+  if (current === oldPath) return nextPath ?? '';
+  if (current.startsWith(oldPath + '/')) {
+    return nextPath === null ? '' : nextPath + current.slice(oldPath.length);
+  }
+  return current;
 }
 
 export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
@@ -194,23 +213,28 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
     selectedDir: '',
   });
   const rootRef = React.useRef<FileSystemDirectoryHandle | null>(null);
+  const scanGenRef = React.useRef(0);
+  const openGenRef = React.useRef(0);
+  const dialogOpenRef = React.useRef(false);
+
+  function isStaleScan(gen: number): boolean {
+    return gen !== scanGenRef.current || !dialogOpenRef.current;
+  }
 
   async function loadRoot(directory: FileSystemDirectoryHandle): Promise<void> {
+    const gen = ++scanGenRef.current;
+    const name = directory.name || '';
     rootRef.current = directory;
+    dialogOpenRef.current = true;
     options.fileContext.workspacePickRef.current = directory;
-    setState({ open: true, loading: true, entries: [], error: '', name: directory.name || '', selectedDir: '' });
+    setState({ open: true, loading: true, entries: [], error: '', name, selectedDir: '' });
     try {
       const entries = await listTree(directory, '', 0, { value: 0 });
-      setState({ open: true, loading: false, entries, error: '', name: directory.name || '', selectedDir: '' });
+      if (isStaleScan(gen)) return;
+      setState({ open: true, loading: false, entries, error: '', name, selectedDir: '' });
     } catch (error) {
-      setState({
-        open: true,
-        loading: false,
-        entries: [],
-        error: errorMessage(error),
-        name: directory.name || '',
-        selectedDir: '',
-      });
+      if (isStaleScan(gen)) return;
+      setState({ open: true, loading: false, entries: [], error: errorMessage(error), name, selectedDir: '' });
     }
   }
 
@@ -257,15 +281,18 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
   async function refresh(): Promise<void> {
     const directory = rootRef.current;
     if (!directory) return;
+    const gen = ++scanGenRef.current;
     setState(function (prev) {
       return Object.assign({}, prev, { loading: true, error: '' });
     });
     try {
       const entries = await listTree(directory, '', 0, { value: 0 });
+      if (gen !== scanGenRef.current) return;
       setState(function (prev) {
         return Object.assign({}, prev, { loading: false, entries, error: '' });
       });
     } catch (error) {
+      if (gen !== scanGenRef.current) return;
       setState(function (prev) {
         return Object.assign({}, prev, { loading: false, error: errorMessage(error) });
       });
@@ -273,19 +300,25 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
   }
 
   async function openEntry(entry: WorkspaceFile): Promise<void> {
+    const req = ++openGenRef.current;
     try {
       const root = rootRef.current;
       if (!root) throw new Error('workspace directory is unavailable');
       const directory = await resolveDirectory(root, parentPath(entry.path));
       const file = await entry.handle.getFile();
       const text = await file.text();
-      await options.onOpenFile(directory, entry, text);
+      if (req !== openGenRef.current) return;
+      await options.onOpenFile(directory, entry, text, file);
+      if (req !== openGenRef.current) return;
+      dialogOpenRef.current = false;
       setState(function (prev) {
         return Object.assign({}, prev, { open: false });
       });
       options.notify(options.t('file.opened'));
     } catch (error) {
-      options.notify(options.t('file.openFailed') + ' · ' + errorMessage(error), 'error');
+      if (req === openGenRef.current) {
+        options.notify(options.t('file.openFailed') + ' · ' + errorMessage(error), 'error');
+      }
     }
   }
 
@@ -330,6 +363,10 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
     try {
       const directory = await resolveWritableDirectory(directoryPath);
       if (!directory) return;
+      if (await directoryExists(directory, dirname)) {
+        options.notify(options.t('workspace.exists'), 'error');
+        return;
+      }
       await directory.getDirectoryHandle(dirname, { create: true });
       await refresh();
       options.notify(options.t('workspace.created'));
@@ -402,6 +439,8 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
         throw error;
       }
       await parent.removeEntry(entry.name, { recursive: true });
+      const renamedPath = joinPath(parentPath(entry.path), dirname);
+      setState((prev) => ({ ...prev, selectedDir: remapSelectedDir(prev.selectedDir, entry.path, renamedPath) }));
       await refresh();
       options.notify(options.t('workspace.renamed'));
     } catch (error) {
@@ -443,6 +482,8 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
           throw error;
         }
         await source.removeEntry(entry.name, { recursive: true });
+        const movedPath = joinPath(targetPath, entry.name);
+        setState((prev) => ({ ...prev, selectedDir: remapSelectedDir(prev.selectedDir, entry.path, movedPath) }));
       } else {
         if (await fileExists(target, entry.name)) {
           options.notify(options.t('workspace.exists'), 'error');
@@ -473,6 +514,9 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
         return;
       }
       await directory.removeEntry(entry.name, { recursive: entry.kind === 'directory' });
+      if (entry.kind === 'directory') {
+        setState((prev) => ({ ...prev, selectedDir: remapSelectedDir(prev.selectedDir, entry.path, null) }));
+      }
       await refresh();
       options.notify(options.t('workspace.deleted'));
     } catch (error) {
@@ -496,6 +540,7 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
   }
 
   function close(): void {
+    dialogOpenRef.current = false;
     setState(function (prev) {
       return Object.assign({}, prev, { open: false });
     });

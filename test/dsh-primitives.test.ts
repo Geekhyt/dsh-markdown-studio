@@ -707,6 +707,31 @@ const h = React.createElement;
     assert.equal(aboveMenu.style.top, 'auto', 'fixed menu flips above when space below is tight');
     assert.equal(aboveMenu.style.bottom, '84px', 'flipped menu anchors 4px above trigger top');
     assert.equal(aboveMenu.style.left, '936px', 'end-aligned menu clamps inside right viewport edge');
+
+    // Respect explicit side='top' even when space below is ample, and live-reposition on window resize
+    rectMock = { left: 780, right: 880, top: 320, bottom: 352, width: 100, height: 32 };
+    await act(async () => {
+      root!.render(
+        h(kit.Menu, {
+          open: true,
+          align: 'end',
+          side: 'top',
+          ariaLabel: 'TopPreferredMenu',
+          items: [{ id: 'x', label: 'Action' }],
+          anchor: h('button', { type: 'button' }, 'Up'),
+          onSelect: () => {},
+          onClose: () => {},
+        }),
+      );
+    });
+    const topMenu = container.querySelector<HTMLElement>('[role="menu"]')!;
+    assert.equal(topMenu.style.top, 'auto', 'side="top" opens above trigger when space above is sufficient');
+    Object.defineProperty(win, 'innerWidth', { value: 640, configurable: true });
+    rectMock = { left: 520, right: 620, top: 320, bottom: 352, width: 100, height: 32 };
+    await act(async () => {
+      win.dispatchEvent(new win.Event('resize'));
+    });
+    assert.equal(topMenu.style.left, '376px', 'open FallbackMenu repositions cleanly on window resize');
   } finally {
     win.HTMLElement.prototype.getBoundingClientRect = origRect;
     Object.defineProperty(win, 'innerWidth', { value: origInnerWidth, configurable: true });

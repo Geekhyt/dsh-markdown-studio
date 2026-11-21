@@ -739,4 +739,63 @@ check('regression: apostrophe tables, currency $, intraword ++/==, nested scroll
   );
 });
 
+check('v0.1.8 CommonMark link-ref, task-list, blockquote lazy continuation and CSS var hardening', () => {
+  // CommonMark §4.7: prose labels like [Tip]: Use caution must NOT be deleted as link-ref definitions
+  const proseLabel = engine.renderMarkdown('[Tip]: Use caution\n\nNext paragraph.');
+  assert.ok(proseLabel.html.includes('[Tip]: Use caution'), 'prose [Tip]: label stays visible');
+
+  // Paragraph interruption: a link-ref definition cannot interrupt an open paragraph
+  const midPara = engine.renderMarkdown('Open paragraph\n[id]: https://example.com\n\n[id]', { linkFootnotes: false });
+  assert.ok(midPara.html.includes('[id]: '), 'link-ref cannot interrupt open paragraph');
+  assert.ok(midPara.html.includes('<p>[id]</p>'), 'unparsed link-ref does not resolve later [id]');
+
+  // Valid link-ref with angle-bracket destination and delimited titles ("", '', ())
+  const validRefs = engine.renderMarkdown(
+    '[a]: <https://example.com/a> "Double"\n[b]: https://example.com/b \'Single\'\n[c]: https://example.com/c (Paren)\n[bad]: https://example.com/d "unclosed\n\n[a] [b] [c]',
+    { linkFootnotes: false },
+  );
+  assert.ok(validRefs.html.includes('href="https://example.com/a"'));
+  assert.ok(validRefs.html.includes('href="https://example.com/b"'));
+  assert.ok(validRefs.html.includes('href="https://example.com/c"'));
+  assert.ok(validRefs.html.includes('[bad]:'), 'unclosed title leaves line as prose');
+
+  // Task lists: only unordered items followed by whitespace/EOL, not ordered lists or links - [x](url)
+  const taskEdge = engine.renderMarkdown(
+    '- [x](https://example.com) link\n- [x] Real task\n1. [x] Ordered non-task\n- [ ]   \n  ```js\n  1\n  ```',
+    { linkFootnotes: false },
+  );
+  assert.ok(taskEdge.html.includes('<a href="https://example.com">x</a>'), '- [x](url) renders as link, not checkbox');
+  assert.ok(taskEdge.html.includes('class="mdstudio-task is-checked"'), '- [x] renders as checked task');
+  assert.equal(taskEdge.html.includes('<ol><li class="mdstudio-task'), false, 'ordered list is never a task item');
+
+  // Blockquote lazy continuation stops after fence, list, heading, nested quote, hr, and continues only open paragraph
+  const bqFence = engine.renderMarkdown('> ```js\n> const a = 1;\n> ```\nOutside fence');
+  assert.match(bqFence.html, /<\/blockquote><p>Outside fence<\/p>/);
+  const bqList = engine.renderMarkdown('> - item\nOutside list');
+  assert.match(bqList.html, /<\/blockquote><p>Outside list<\/p>/);
+  const bqHead = engine.renderMarkdown('> # Heading\nOutside heading');
+  assert.match(bqHead.html, /<\/blockquote><p>Outside heading<\/p>/);
+  const bqNested = engine.renderMarkdown('> > # Nested heading\nOutside nested');
+  assert.match(bqNested.html, /<\/blockquote><p>Outside nested<\/p>/);
+  const bqHr = engine.renderMarkdown('> ---\nOutside hr');
+  assert.match(bqHr.html, /<\/blockquote><p>Outside hr<\/p>/);
+  const bqLazy = engine.renderMarkdown('> First line\nlazy second');
+  assert.ok(bqLazy.html.includes('First line') && bqLazy.html.includes('lazy second'));
+  assert.equal(/<\/blockquote><p>lazy second/.test(bqLazy.html), false);
+
+  // CSS inliner: :has() / :nth-child(... of ...) specificity
+  assert.equal(engine.selectorSpecificity('div:has(> p.lead)'), 12);
+  assert.equal(engine.selectorSpecificity('li:nth-child(2n of .item)'), 21);
+
+  // Parser-consistent containsMath: ignores currency, code fences, inline code, and escapes
+  assert.equal(engine.containsMath('价格从 $100 涨到 $200，同比上涨。'), false);
+  assert.equal(engine.containsMath('Price rose from $100 to $200 today.'), false);
+  assert.equal(engine.containsMath('```bash\necho $HOME $USER\n```'), false);
+  assert.equal(engine.containsMath('Inline code `$a + b$` and escaped \\$x\\$'), false);
+  assert.equal(engine.containsMath('Formula $E = mc^2$ here'), true);
+  assert.equal(engine.containsMath('$$\n\\int_0^1 x^2 dx\n$$'), true);
+  assert.equal(engine.containsMath('Inline TeX \\(a^2 + b^2\\)'), true);
+  assert.equal(engine.containsMath('\\[\n\\sum_{i=1}^n i\n\\]'), true);
+});
+
 console.log(`\n${checks} engine checks passed.`);

@@ -2,7 +2,7 @@
  * L1 — editorial & supporting atoms (v2): eyebrow meta, TL;DR summary cards,
  * pull quotes, sign-offs, block formulas, footnotes/references and h5/h6.
  */
-import { rule } from '../core';
+import { invertedInlineRules, rule } from '../core';
 import { v } from '../palette';
 
 var MATH = '.mdstudio-math[data-mdstudio-display="1"], .mdstudio-math-block';
@@ -126,6 +126,7 @@ export var PULL = {
           v('point') +
           ';',
       ),
+      invertedInlineRules('.mdstudio-pull', v('accent2')),
     ];
   },
 };

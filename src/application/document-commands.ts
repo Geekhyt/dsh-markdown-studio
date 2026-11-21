@@ -1,6 +1,6 @@
 import type * as ReactNamespace from 'react';
 import type { HostClient } from '../adapters/host-client';
-import { unzipEntries } from '../adapters/zip';
+import { unzipEntries, ZIP_LIMITS } from '../adapters/zip';
 import type { Article, SelectionRange } from '../domain/article';
 import { bytesToBase64 } from '../domain/base64';
 import type { ConfirmDialogFn } from '../domain/dialog';
@@ -27,6 +27,10 @@ export interface DocumentActionsOptions {
   deriveTitle: (markdown: string) => string;
   errorMessage: (error: unknown) => string;
   onPruneAssets?: () => void;
+  onTrackInFlight?: (filename: string, active: boolean) => void;
+  getActiveArticleId?: () => string;
+  isPageAlive?: () => boolean;
+  flushBeforeSwitch?: () => Promise<boolean>;
 }
 
 export interface DocumentActionsApi {
@@ -57,11 +61,19 @@ export function createDocumentCommands(options: DocumentActionsOptions): Documen
     options.focusRange(0, 0);
   }
 
+  function isStillActive(targetArticleId: string | undefined): boolean {
+    if (options.isPageAlive && !options.isPageAlive()) return false;
+    return !targetArticleId || !options.getActiveArticleId || options.getActiveArticleId() === targetArticleId;
+  }
+
   async function loadSample(force?: boolean): Promise<void> {
+    const targetArticleId = options.getActiveArticleId?.();
     if (!force && options.doc.markdown.trim()) {
       const ok = await options.confirm({ title: t('confirm.sample') });
-      if (!ok) return;
+      if (!ok || !isStillActive(targetArticleId)) return;
     }
+    if (options.flushBeforeSwitch && !(await options.flushBeforeSwitch())) return;
+    if (!isStillActive(targetArticleId)) return;
     const sample = sampleArticleFor(options.locale?.());
     options.detachFileContext();
     options.setMarkdown(sample.markdown, { boundary: true, title: sample.title, resetHistory: true });
@@ -71,9 +83,10 @@ export function createDocumentCommands(options: DocumentActionsOptions): Documen
   }
 
   async function clearArticle(): Promise<void> {
+    const targetArticleId = options.getActiveArticleId?.();
     if (options.doc.markdown.trim()) {
       const ok = await options.confirm({ title: t('confirm.clear'), danger: true });
-      if (!ok) return;
+      if (!ok || !isStillActive(targetArticleId)) return;
     }
     blankArticle();
     options.onPruneAssets?.();
@@ -86,6 +99,8 @@ export function createDocumentCommands(options: DocumentActionsOptions): Documen
   }
 
   async function importBundleBuffer(buffer: ArrayBuffer): Promise<void> {
+    const targetArticleId = options.getActiveArticleId?.();
+    const tracked: string[] = [];
     try {
       const entries = await unzipEntries(buffer);
       const markdownEntry =
@@ -99,18 +114,28 @@ export function createDocumentCommands(options: DocumentActionsOptions): Documen
       const text = new TextDecoder().decode(markdownEntry.data);
       const mapping = new Map<string, string>();
       let failed = 0;
-      for (const entry of entries) {
-        const match = /^assets\/([a-f0-9]{24}\.(png|jpg))$/i.exec(entry.name);
-        if (!match) continue;
-        try {
-          const mime = match[2].toLowerCase() === 'png' ? 'image/png' : 'image/jpeg';
-          const dataUrl = 'data:' + mime + ';base64,' + bytesToBase64(entry.data);
-          const stored = await options.hostClient.storeAsset(dataUrl, match[1].toLowerCase());
-          mapping.set('assets/' + match[1].toLowerCase(), stored.assetPath || 'assets/' + stored.filename);
-        } catch (error) {
-          failed++;
-        }
-      }
+      const assetEntries = entries
+        .map((entry) => ({ entry, match: /^assets\/([a-f0-9]{24}\.(png|jpg))$/i.exec(entry.name) }))
+        .filter((item): item is { entry: (typeof entries)[number]; match: RegExpExecArray } => Boolean(item.match));
+      await Promise.all(
+        assetEntries.map(async function ({ entry, match }) {
+          try {
+            const mime = match[2].toLowerCase() === 'png' ? 'image/png' : 'image/jpeg';
+            const dataUrl = 'data:' + mime + ';base64,' + bytesToBase64(entry.data);
+            const stored = await options.hostClient.storeAsset(dataUrl, match[1].toLowerCase());
+            if (stored.filename) {
+              options.onTrackInFlight?.(stored.filename, true);
+              tracked.push(stored.filename);
+            }
+            mapping.set('assets/' + match[1].toLowerCase(), stored.assetPath || 'assets/' + stored.filename);
+          } catch (error) {
+            failed++;
+          }
+        }),
+      );
+      if (!isStillActive(targetArticleId)) return;
+      if (options.flushBeforeSwitch && !(await options.flushBeforeSwitch())) return;
+      if (!isStillActive(targetArticleId)) return;
       const next = text.replace(/assets\/[a-f0-9]{24}\.(?:png|jpg)/gi, function (path: string) {
         return mapping.get(path.toLowerCase()) || path;
       });
@@ -120,11 +145,14 @@ export function createDocumentCommands(options: DocumentActionsOptions): Documen
       options.notify(t('toast.bundleImported') + (failed ? ' · ' + failed + ' ' + t('wechat.uploadFailed') : ''));
     } catch (error) {
       options.notify(t('toast.bundleImportFailed') + ' · ' + options.errorMessage(error), 'error');
+    } finally {
+      for (const filename of tracked) options.onTrackInFlight?.(filename, false);
     }
   }
 
   async function importBundle(file: File): Promise<void> {
     try {
+      if (file.size > ZIP_LIMITS.archiveBytes) throw new Error('ZIP_LIMIT_EXCEEDED');
       await importBundleBuffer(await readFileBytes(file));
     } catch (error) {
       options.notify(t('toast.bundleImportFailed') + ' · ' + options.errorMessage(error), 'error');
@@ -132,13 +160,18 @@ export function createDocumentCommands(options: DocumentActionsOptions): Documen
   }
 
   async function importSelectedFile(file: File): Promise<void> {
+    const targetArticleId = options.getActiveArticleId?.();
     try {
+      if (file.size > ZIP_LIMITS.archiveBytes) throw new Error('ZIP_LIMIT_EXCEEDED');
       const buffer = await readFileBytes(file);
       const bytes = new Uint8Array(buffer);
       if (isZipCandidate(file, bytes)) {
         await importBundleBuffer(buffer);
         return;
       }
+      if (!isStillActive(targetArticleId)) return;
+      if (options.flushBeforeSwitch && !(await options.flushBeforeSwitch())) return;
+      if (!isStillActive(targetArticleId)) return;
       const text = new TextDecoder().decode(bytes);
       options.detachFileContext();
       options.setMarkdown(text, { boundary: true, title: options.deriveTitle(text), resetHistory: true });

@@ -13,25 +13,32 @@ export function prepareClipboardDom(root: HTMLElement): void {
   markHorizontalScrollExemptions(root);
 }
 
-function normalizeTaskLists(root: HTMLElement): void {
+function convertTaskListToSection(list: HTMLElement): void {
   const blockChild = 'p,pre,blockquote,ul,ol,table,section,div,hr,h1,h2,h3,h4,h5,h6';
-  Array.from(root.querySelectorAll<HTMLElement>('ul.mdstudio-task-list')).forEach(function (list) {
+  const container = list.ownerDocument.createElement('section');
+  container.className = list.className || 'mdstudio-task-list';
+  Array.from(list.children).forEach(function (child) {
+    if (child.tagName.toLowerCase() !== 'li') {
+      container.appendChild(child);
+      return;
+    }
+    const tag = child.querySelector(blockChild) ? 'section' : 'p';
+    const row = list.ownerDocument.createElement(tag);
+    row.className = (child as HTMLElement).className;
+    while (child.firstChild) row.appendChild(child.firstChild);
+    container.appendChild(row);
+  });
+  list.replaceWith(container);
+}
+
+function normalizeTaskLists(root: HTMLElement): void {
+  Array.from(root.querySelectorAll<HTMLElement>('ul')).forEach(function (list) {
     const parent = list.parentElement;
     if (parent && /^(UL|OL)$/i.test(parent.tagName)) return;
-    const container = list.ownerDocument.createElement('section');
-    container.className = list.className;
-    Array.from(list.children).forEach(function (child) {
-      if (child.tagName.toLowerCase() !== 'li') {
-        container.appendChild(child);
-        return;
-      }
-      const tag = child.querySelector(blockChild) ? 'section' : 'p';
-      const row = list.ownerDocument.createElement(tag);
-      row.className = (child as HTMLElement).className;
-      while (child.firstChild) row.appendChild(child.firstChild);
-      container.appendChild(row);
-    });
-    list.replaceWith(container);
+    const isTask =
+      list.classList.contains('mdstudio-task-list') || Boolean(list.querySelector(':scope > li.mdstudio-task'));
+    if (!isTask) return;
+    convertTaskListToSection(list);
   });
 }
 
@@ -66,9 +73,9 @@ function unwrapParagraphSections(root: HTMLElement): void {
 
 function moveNestedLists(root: HTMLElement): void {
   const anchors = new Map<HTMLElement, HTMLElement>();
-  Array.from(root.querySelectorAll<HTMLElement>('li > ul, li > ol')).forEach(function (list) {
-    const item = list.parentElement;
-    if (!item) return;
+  Array.from(root.querySelectorAll<HTMLElement>('li ul, li ol')).forEach(function (list) {
+    const item = list.closest<HTMLElement>('li');
+    if (!item || !root.contains(item)) return;
     const anchor = anchors.get(item) || item;
     anchor.insertAdjacentElement('afterend', list);
     anchors.set(item, list);
@@ -100,10 +107,29 @@ function inheritedSvgFill(element: SVGElement, stopAt: Element): string {
   let cursor: Element | null = element;
   while (cursor && cursor !== stopAt) {
     const fill = (cursor.getAttribute('fill') || '').trim();
+    if (fill && /url\s*\(/i.test(fill)) return '';
     if (fill && fill.toLowerCase() !== 'currentcolor' && fill.toLowerCase() !== 'none') return fill;
     cursor = cursor.parentElement;
   }
   return '';
+}
+
+function sanitizeSvgPathElement(element: SVGElement, svg: SVGSVGElement): void {
+  const ownFill = (element.getAttribute('fill') || '').trim().toLowerCase();
+  const inlineStrokeWidth = element.style?.strokeWidth || '';
+  if (ownFill === 'none') {
+    element.setAttribute('fill', 'none');
+    if (!element.getAttribute('stroke') || /url\s*\(/i.test(element.getAttribute('stroke') || '')) {
+      element.setAttribute('stroke', 'currentColor');
+    }
+    if (inlineStrokeWidth && !element.getAttribute('stroke-width')) {
+      element.setAttribute('stroke-width', inlineStrokeWidth);
+    }
+    return;
+  }
+  const explicitFill = inheritedSvgFill(element, svg);
+  element.setAttribute('fill', explicitFill || 'currentColor');
+  element.setAttribute('stroke', 'none');
 }
 
 function sanitizeMathSvgs(root: HTMLElement): void {
@@ -111,6 +137,9 @@ function sanitizeMathSvgs(root: HTMLElement): void {
     const display = node.getAttribute('data-mdstudio-display') === '1';
     const svg = node.querySelector('svg');
     if (svg) {
+      Array.from(svg.querySelectorAll('foreignObject')).forEach(function (fo) {
+        fo.remove();
+      });
       const width = svg.getAttribute('width');
       const height = svg.getAttribute('height');
       if (width) {
@@ -128,13 +157,15 @@ function sanitizeMathSvgs(root: HTMLElement): void {
       Array.from(svg.querySelectorAll<SVGElement>('*')).forEach(function (element) {
         Array.from(element.attributes).forEach(function (attribute) {
           if (attribute.name.indexOf('data-') === 0) element.removeAttribute(attribute.name);
+          else if (
+            /^(?:fill|stroke|filter|clip-path|mask)$/i.test(attribute.name) &&
+            /url\s*\(/i.test(attribute.value)
+          ) {
+            element.removeAttribute(attribute.name);
+          }
         });
+        if (element.tagName.toLowerCase() === 'path') sanitizeSvgPathElement(element, svg);
         if (element.tagName.toLowerCase() !== 'svg') element.removeAttribute('style');
-        if (element.tagName.toLowerCase() === 'path') {
-          const explicitFill = inheritedSvgFill(element, svg);
-          element.setAttribute('fill', explicitFill || 'currentColor');
-          element.setAttribute('stroke', 'none');
-        }
       });
     }
     const replacement = node.ownerDocument.createElement(display ? 'section' : 'span');
@@ -162,13 +193,15 @@ export function stripFontFamilies(root: HTMLElement): void {
  */
 export function removeEmptyHeadingDecorations(root: HTMLElement): void {
   root.querySelectorAll<HTMLElement>('.mdstudio-heading-prefix, .mdstudio-heading-suffix').forEach(function (element) {
-    if (!(element.textContent || '').trim()) element.remove();
+    if ((element.textContent || '').trim()) return;
+    if (element.style.display !== 'none' && hasNonZeroBoxStyle(element)) return;
+    element.remove();
   });
 }
 
 function isPositiveCssLength(value: string): boolean {
   const trimmed = String(value || '').trim();
-  if (!/^[0-9]*\.?[0-9]+(?:px|em|rem|%|vh|vw|pt|cm|mm|in)?$/i.test(trimmed)) return false;
+  if (!/^[0-9]*\.?[0-9]+(?:px|em|rem|ex|ch|%|vh|vw|pt|cm|mm|in)?$/i.test(trimmed)) return false;
   return parseFloat(trimmed) > 0;
 }
 
@@ -192,7 +225,7 @@ function hasNonZeroBoxStyle(element: HTMLElement): boolean {
 
 /**
  * Final safety net for WeChat's height:0 check. Empty presentational nodes
- * that do not contain text or media have no useful mobile layout.
+ * without text, media, or explicit vertical box sizing are removed statically.
  */
 export function removeEmptyZeroHeightContainers(root: HTMLElement): void {
   const media = 'img,svg,video,iframe,canvas,hr,br';
@@ -203,7 +236,6 @@ export function removeEmptyZeroHeightContainers(root: HTMLElement): void {
     if ((element.textContent || '').length) return;
     if (element.querySelector(media)) return;
     if (hasNonZeroBoxStyle(element)) return;
-    const rect = element.getBoundingClientRect();
-    if (rect.height === 0) element.remove();
+    element.remove();
   });
 }

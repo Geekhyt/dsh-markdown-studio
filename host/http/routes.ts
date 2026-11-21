@@ -9,19 +9,38 @@ import { ImageHostError, type ImageHostService } from '../application/image-stor
 
 export const ROUTE_PATH = '/api/markdown-studio/wechat';
 export const ASSET_PREFIX = '/api/markdown-studio/assets/';
-export const MAX_BODY_BYTES = 8 * 1024 * 1024;
+export const MAX_BODY_BYTES = 2 * 1024 * 1024;
+
+function contentLengthExceeds(req: IncomingMessage, limit: number): boolean {
+  const raw = headerValue(req.headers['content-length']).trim();
+  if (!raw) return false;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > limit;
+}
 
 async function readJsonBody(req: IncomingMessage, limit: number): Promise<Record<string, unknown>> {
+  if (contentLengthExceeds(req, limit)) {
+    throw new ImageHostError('BODY_TOO_LARGE', '请求内容过大', '请减少一次上传的图片数量。');
+  }
   return await new Promise(function (resolve, reject) {
     const chunks: Buffer[] = [];
     let size = 0;
     let settled = false;
+    function cleanup(): void {
+      req.removeListener('data', onData);
+      req.removeListener('end', onEnd);
+      req.removeListener('error', onError);
+      req.removeListener('aborted', onAborted);
+      req.removeListener('close', onClose);
+    }
     function fail(error: Error): void {
       if (settled) return;
       settled = true;
+      chunks.length = 0;
+      cleanup();
       reject(error);
     }
-    req.on('data', function (chunk: unknown) {
+    function onData(chunk: unknown): void {
       if (settled) return;
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
       size += buffer.length;
@@ -31,12 +50,14 @@ async function readJsonBody(req: IncomingMessage, limit: number): Promise<Record
         return;
       }
       chunks.push(buffer);
-    });
-    req.on('end', function () {
+    }
+    function onEnd(): void {
       if (settled) return;
       settled = true;
+      cleanup();
       try {
         const text = Buffer.concat(chunks).toString('utf8');
+        chunks.length = 0;
         const parsed: unknown = text ? JSON.parse(text) : {};
         if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
           reject(new ImageHostError('BAD_JSON', '请求 JSON 必须是对象'));
@@ -46,10 +67,21 @@ async function readJsonBody(req: IncomingMessage, limit: number): Promise<Record
       } catch (error) {
         reject(new ImageHostError('BAD_JSON', '请求 JSON 无法解析'));
       }
-    });
-    req.on('error', function (error: Error) {
+    }
+    function onError(error: Error): void {
       fail(error);
-    });
+    }
+    function onAborted(): void {
+      fail(new ImageHostError('BAD_JSON', '请求连接已提前断开'));
+    }
+    function onClose(): void {
+      if (!req.complete) fail(new ImageHostError('BAD_JSON', '请求连接已提前断开'));
+    }
+    req.on('data', onData);
+    req.on('end', onEnd);
+    req.on('error', onError);
+    req.on('aborted', onAborted);
+    req.on('close', onClose);
   });
 }
 
@@ -76,8 +108,19 @@ function isJsonContentType(value: string): boolean {
 const ALLOWED_DESKTOP_PROTOCOLS = new Set(['dsh-app:', 'dsh:', 'app:', 'file:']);
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
 
+export function isLoopbackHostHeader(host: string): boolean {
+  if (!host) return true;
+  try {
+    const parsed = new URL('http://' + host.trim());
+    return LOOPBACK_HOSTS.has(parsed.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 function isAllowedOrigin(origin: string, host: string, site: string): boolean {
-  if (!origin) return true;
+  if (!isLoopbackHostHeader(host)) return false;
+  if (!origin) return site !== 'cross-site';
   // An opaque `null` origin is only trusted when the browser vouches for it via Sec-Fetch-Site.
   if (origin === 'null') return site === 'same-origin' || site === 'none';
   let parsed: URL;
@@ -89,7 +132,7 @@ function isAllowedOrigin(origin: string, host: string, site: string): boolean {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     return ALLOWED_DESKTOP_PROTOCOLS.has(parsed.protocol);
   }
-  return parsed.host === host && LOOPBACK_HOSTS.has(parsed.hostname.toLowerCase());
+  return parsed.host.toLowerCase() === host.toLowerCase() && LOOPBACK_HOSTS.has(parsed.hostname.toLowerCase());
 }
 
 function isLoopbackRequest(req: IncomingMessage): boolean {
@@ -216,8 +259,8 @@ export function createAssetRoute(options: {
 
   return async function assetRoute(req, res) {
     try {
-      if (!isLoopbackReq(req)) {
-        sendAssetText(res, 403, 'loopback only');
+      if (!isLoopbackReq(req) || !isLoopbackHostHeader(headerValue(req.headers.host))) {
+        sendAssetText(res, 403, 'loopback only', req.method === 'HEAD');
         return;
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') {

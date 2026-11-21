@@ -13,6 +13,7 @@ export interface AssetItem {
   url: string;
   bytes: number;
   mime: string;
+  storedAt?: string;
 }
 
 export interface HostHealth {
@@ -45,15 +46,17 @@ export function resolveArticleImageSrc(src: string, imageBaseUrl: string): strin
 export function portableizeAssetUrls(text: unknown): string {
   return String(text || '')
     .replace(/https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):\d+\/uploads\/([a-f0-9]{24}\.(?:png|jpg))/gi, 'assets/$1')
-    .replace(/\/api\/markdown-studio\/assets\/([a-f0-9]{24}\.(?:png|jpg))/g, 'assets/$1');
+    .replace(/\/api\/markdown-studio\/assets\/([a-f0-9]{24}\.(?:png|jpg))/gi, 'assets/$1');
 }
+
+const LOCAL_IMAGE_PATTERN = /!\[([^\]]*)\]\((?:<([^>\n]+)>|([^)\s]+))(\s+(?:"[^"]*"|'[^']*'))?\)/g;
 
 export function collectLocalImages(text: unknown): Map<string, AssetEntry> {
   const images = new Map<string, AssetEntry>();
-  const pattern = /!\[([^\]]*)\]\(([^)\s]+)\)/g;
+  const pattern = new RegExp(LOCAL_IMAGE_PATTERN.source, 'g');
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(String(text || '')))) {
-    const url = match[2];
+    const url = match[2] || match[3];
     if (/^data:image\//i.test(url)) images.set(url, { alt: match[1], kind: 'data' });
     else if (assetFilenameFromSrc(url)) images.set(url, { alt: match[1], kind: 'asset' });
   }
@@ -61,11 +64,15 @@ export function collectLocalImages(text: unknown): Map<string, AssetEntry> {
 }
 
 export function replaceLocalImages(text: unknown, mapping: Map<string, string>): string {
-  const pattern = /!\[([^\]]*)\]\(([^)\s]+)\)/g;
-  return String(text || '').replace(pattern, (match, alt: string, url: string) => {
-    const hosted = mapping.get(url);
-    return hosted ? `![${alt}](${hosted})` : match;
-  });
+  return String(text || '').replace(
+    LOCAL_IMAGE_PATTERN,
+    (match, alt: string, angled?: string, plain?: string, title = '') => {
+      const url = angled || plain || '';
+      const hosted = mapping.get(url);
+      if (!hosted) return match;
+      return `![${alt}](${angled ? `<${hosted}>` : hosted}${title})`;
+    },
+  );
 }
 
 export function approximateDataBytes(dataUrl: unknown): number {

@@ -216,7 +216,7 @@ const SELECTION_SYSTEM_GUARD = [
   '你是内嵌在 Markdown Studio 写作器中的精准文本编辑引擎。',
   '严格执行下方 <skill_instructions> 处理 <target_text>，并遵守以下输出协议：',
   '1. 直接输出修改后的 <target_text> Markdown 正文，严禁包裹在 ```markdown 代码块中，严禁输出问候、解释或修改说明。',
-  '2. 必须 100% 保留原文中的代码块、行内代码 `...`、数学公式 $...$ / $$...$$、链接地址、脚注与本地图片路径 assets/...。',
+  '2. 必须 100% 保留原文中的代码块（``` / ~~~）、行内代码 `...`、数学公式 $...$ / $$...$$ / \\(...\\) / \\[...\\]、链接地址、脚注与本地图片路径 assets/...。',
   '3. 若原文表达已自然清晰无需修改，原样输出 <target_text> 即可。',
 ].join('\n');
 
@@ -265,20 +265,152 @@ export function applySkillPatches(markdown: string, patches: readonly SkillPatch
   return result;
 }
 
+function isFenceLineStart(text: string, index: number): boolean {
+  const lineStart = index > 0 ? text.lastIndexOf('\n', index - 1) + 1 : 0;
+  const indent = text.slice(lineStart, index);
+  return indent.length <= 3 && /^[ \t]*$/.test(indent);
+}
+
+function matchFencedBlock(text: string, index: number): number {
+  if (!isFenceLineStart(text, index)) return -1;
+  const open = /^(`{3,}|~{3,})/.exec(text.slice(index));
+  if (!open) return -1;
+  const fenceChar = open[1][0];
+  const fenceLen = open[1].length;
+  const lineEnd = text.indexOf('\n', index);
+  if (lineEnd < 0) return -1;
+  const closeRe = new RegExp(`^[ \\t]{0,3}${fenceChar}{${fenceLen},}[ \\t]*(?:\\r?\\n|$)`, 'gm');
+  closeRe.lastIndex = lineEnd + 1;
+  const closed = closeRe.exec(text);
+  return closed ? closed.index + closed[0].replace(/\r?\n$/, '').length : text.length;
+}
+
+function matchBacktickCode(text: string, index: number): number {
+  if (text[index] !== '`') return -1;
+  let ticks = 0;
+  while (index + ticks < text.length && text[index + ticks] === '`') ticks++;
+  const closer = '`'.repeat(ticks);
+  let cursor = index + ticks;
+  while (cursor < text.length) {
+    const found = text.indexOf(closer, cursor);
+    if (found < 0) return -1;
+    const before = found > 0 && text[found - 1] === '`';
+    const after = text[found + ticks] === '`';
+    if (!before && !after) return found + ticks;
+    cursor = found + 1;
+  }
+  return -1;
+}
+
+function isEscaped(text: string, index: number): boolean {
+  let slashes = 0;
+  for (let i = index - 1; i >= 0 && text[i] === '\\'; i--) slashes++;
+  return slashes % 2 === 1;
+}
+
+function matchDelimited(text: string, index: number, open: string, close: string, multiline: boolean): number {
+  if (!text.startsWith(open, index) || isEscaped(text, index)) return -1;
+  let cursor = index + open.length;
+  while (cursor < text.length) {
+    const found = text.indexOf(close, cursor);
+    if (found < 0) return -1;
+    if (!multiline && text.slice(index + open.length, found).includes('\n')) return -1;
+    if (!isEscaped(text, found)) return found + close.length;
+    cursor = found + 1;
+  }
+  return -1;
+}
+
+function isLikelyCurrencySpan(text: string, openIndex: number, closeIndex: number): boolean {
+  const inner = text.slice(openIndex + 1, closeIndex);
+  if (!inner || /^\s|\s$/.test(inner)) return true;
+  const nextChar = text[closeIndex + 1] || '';
+  if (/\d/.test(nextChar)) return true;
+  return /^\d[\d,.]*(?:[ \t]*[/\-–—][ \t]*|[ \t]+(?:to|or|and|至|到|或)[ \t]+)?$/i.test(inner);
+}
+
+function matchInlineDollarMath(text: string, index: number): number {
+  if (text[index] !== '$' || text[index + 1] === '$' || isEscaped(text, index)) return -1;
+  let cursor = index + 1;
+  while (cursor < text.length) {
+    const ch = text[cursor];
+    if (ch === '\n') return -1;
+    if (ch === '$' && text[cursor + 1] !== '$' && !isEscaped(text, cursor)) {
+      if (isLikelyCurrencySpan(text, index, cursor)) return -1;
+      return cursor + 1;
+    }
+    cursor++;
+  }
+  return -1;
+}
+
+function matchLinkOrAsset(text: string, index: number): { token: string; next: number } | null {
+  if (text[index] === ']') {
+    const m = /^\]\((https?:\/\/[^)\s]+|assets\/[a-zA-Z0-9._-]+)\)/.exec(text.slice(index));
+    if (m) return { token: m[1], next: index + m[0].length };
+  }
+  if (text.startsWith('assets/', index)) {
+    const m = /^assets\/[a-zA-Z0-9._-]+/.exec(text.slice(index));
+    if (m) return { token: m[0], next: index + m[0].length };
+  }
+  if (text.startsWith('[^', index)) {
+    const m = /^\[\^[^\s\]]+\]/.exec(text.slice(index));
+    if (m) return { token: m[0], next: index + m[0].length };
+  }
+  return null;
+}
+
+function matchProtectedSpanEnd(text: string, index: number): number {
+  const ch = text[index];
+  if (ch === '`' || ch === '~') {
+    const fenceEnd = matchFencedBlock(text, index);
+    if (fenceEnd > index) return fenceEnd;
+    return matchBacktickCode(text, index);
+  }
+  if (ch === '$') {
+    const displayEnd = matchDelimited(text, index, '$$', '$$', true);
+    return displayEnd > index ? displayEnd : matchInlineDollarMath(text, index);
+  }
+  if (ch === '\\') {
+    const blockTex = matchDelimited(text, index, '\\[', '\\]', true);
+    return blockTex > index ? blockTex : matchDelimited(text, index, '\\(', '\\)', false);
+  }
+  return -1;
+}
+
 export function extractProtectedTokens(text: string): string[] {
   const tokens: string[] = [];
-  const patterns = [/`[^`\n]+`/g, /\$[^$\n]+\$/g, /assets\/[a-zA-Z0-9._-]+/g];
-  for (const re of patterns) {
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(text))) tokens.push(m[0]);
+  let i = 0;
+  while (i < text.length) {
+    const spanEnd = matchProtectedSpanEnd(text, i);
+    if (spanEnd > i) {
+      tokens.push(text.slice(i, spanEnd));
+      i = spanEnd;
+      continue;
+    }
+    const ref = matchLinkOrAsset(text, i);
+    if (ref) {
+      tokens.push(ref.token);
+      i = ref.next;
+      continue;
+    }
+    i++;
   }
   return tokens;
 }
 
 export function hasMissingProtectedTokens(original: string, candidate: string): boolean {
-  const required = extractProtectedTokens(original);
-  for (const token of required) {
-    if (!candidate.includes(token)) return true;
+  const counts = new Map<string, number>();
+  for (const token of extractProtectedTokens(original)) {
+    counts.set(token, (counts.get(token) || 0) + 1);
+  }
+  const candCounts = new Map<string, number>();
+  for (const token of extractProtectedTokens(candidate)) {
+    candCounts.set(token, (candCounts.get(token) || 0) + 1);
+  }
+  for (const [token, needed] of counts.entries()) {
+    if ((candCounts.get(token) || 0) < needed && !candidate.includes(token)) return true;
+    if (needed > 1 && (candCounts.get(token) || 0) < needed) return true;
   }
   return false;
 }

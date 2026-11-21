@@ -25,28 +25,33 @@ const PATTERN_RULES: ReadonlyArray<readonly ['html' | 'style', RegExp, WechatHtm
   ['style', /calc\(/i, 'css-calc', '复制 HTML 仍包含 calc()，微信可能丢弃'],
   [
     'html',
-    /src\s*=\s*["']https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?\//i,
+    /src\s*=\s*["']https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?\//i,
     'local-image',
     '复制 HTML 包含仅本机可访问的图片地址',
   ],
-  ['html', /class\s*=\s*["'][^"']*\bkatex\b/i, 'katex-html', '复制 HTML 仍包含 KaTeX HTML，而不是公式 SVG'],
+  [
+    'html',
+    /class\s*=\s*["'](?:[^"']*\s)?katex(?:-(?:display|html|mathml))?(?:\s|["'])/i,
+    'katex-html',
+    '复制 HTML 仍包含 KaTeX HTML，而不是公式 SVG',
+  ],
   ['html', /<li\b[^>]*>(?:(?!<\/li>)[\s\S])*?<(?:ul|ol)\b/i, 'nested-list', '复制 HTML 可能包含嵌套列表'],
   ['html', /href\s*=\s*["']#/i, 'fragment-link', '复制 HTML 包含页内锚点链接'],
   [
     'style',
-    /(?:^|[;\s])line-height\s*:\s*0(?:\.0+)?(?:px|em|rem|%)?(?=\s*[;]|$)/i,
+    /(?:^|[;\s])line-height\s*:\s*0(?:\.0+)?(?:px|em|rem|%)?(?:\s*!\s*important)?(?=\s*[;]|$)/i,
     'line-height-zero',
     '复制 HTML 包含 line-height:0',
   ],
   [
     'style',
-    /(?:^|[;\s])height\s*:\s*0(?:\.0+)?(?:px|em|rem|%)?(?=\s*[;]|$)/i,
+    /(?:^|[;\s])height\s*:\s*0(?:\.0+)?(?:px|em|rem|%)?(?:\s*!\s*important)?(?=\s*[;]|$)/i,
     'height-zero',
     '复制 HTML 包含 height:0',
   ],
   [
     'style',
-    /(?:^|[;\s])font-size\s*:\s*0(?:\.0+)?(?:px|em|rem|%)?(?=\s*[;]|$)/i,
+    /(?:^|[;\s])font-size\s*:\s*0(?:\.0+)?(?:px|em|rem|%)?(?:\s*!\s*important)?(?=\s*[;]|$)/i,
     'font-size-zero',
     '复制 HTML 包含 font-size:0',
   ],
@@ -59,7 +64,7 @@ const PATTERN_RULES: ReadonlyArray<readonly ['html' | 'style', RegExp, WechatHtm
   ],
   [
     'style',
-    /(?:linear|radial)-gradient\s*\(/i,
+    /(?:linear|radial|conic)-gradient\s*\(/i,
     'gradient-background',
     '复制 HTML 包含渐变背景，微信暗色模式下可能导致反色异常',
   ],
@@ -75,6 +80,10 @@ function collectInlineStyles(html: string): string {
   return styles.join(';');
 }
 
+function stripCodeElementBodies(html: string): string {
+  return html.replace(/(<code\b[^>]*>)[\s\S]*?(<\/code>)/gi, '$1$2');
+}
+
 /**
  * Checks the clipboard HTML only. It intentionally does not reject local images:
  * the local showcase server is a supported product choice, but the user should
@@ -87,8 +96,9 @@ export function inspectWechatHtml(html: string): WechatHtmlIssue[] {
     issues.push({ code: 'root-not-section', message: '文章根节点不是 section#mdstudio' });
   }
   const inlineStyles = collectInlineStyles(text);
+  const markupOutsideCode = stripCodeElementBodies(text);
   for (const [scope, pattern, code, message] of PATTERN_RULES) {
-    const target = scope === 'style' ? inlineStyles : text;
+    const target = scope === 'style' ? inlineStyles : markupOutsideCode;
     if (pattern.test(target)) issues.push({ code, message });
   }
   return issues;

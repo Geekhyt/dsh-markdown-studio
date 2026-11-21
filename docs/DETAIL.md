@@ -4,7 +4,7 @@
 
 ## Core capabilities
 
-1. **Split-pane live preview and immersive mode**: Switch across Split, Edit, and Preview views, toggle Mobile and Desktop widths with bidirectional scroll sync, and use `/` slash commands, Notion-style shortcuts (**Settings → Help** cheat sheet), document outline jump, find & replace, full English/Chinese localization, and distraction-free immersive mode (`⌘/Ctrl + Shift + F` to enter, `Esc` to exit).
+1. **Split-pane live preview and immersive mode**: Switch across Split, Write, and Preview views, toggle Mobile and Desktop widths with bidirectional scroll sync, and use `/` slash commands, Notion-style shortcuts (**Settings → Help** cheat sheet), document outline jump, find & replace, full English/Chinese localization, and distraction-free immersive mode (`⌘/Ctrl + Shift + F` to enter, `Esc` to exit).
 2. **One-click WeChat rich-HTML copy**: Press **Copy for WeChat** (`⌘/Ctrl + Enter`) to compile self-contained inline styles automatically, supporting editorial blocks (`:::lead`, `:::tldr`, `:::pull`, `:::meta`, `:::sign`) and `:::scroll` / `:::scroll-x` containers, automatic single-image captions, bottom link footnotes, and preserved code indentation.
 3. **8 full-spectrum themes and Custom CSS Workbench**: Switch across 8 built-in themes or click **New theme** in the Theme presets drawer to open the left-pane CSS editor with live right-pane preview, automatically extracting color swatches into the **Theme presets** grid.
 4. **Custom Writing Skills with inline red/green diff**: Create or import standard `SKILL.md` Writing Skills (with an open-source `Humanize` / `去 AI 味` preset included out of the box), streaming word-level red/green inline diffs from your configured host model (`Tab` to accept, `Esc` to reject).

@@ -22,22 +22,22 @@ function ensureInitialized(): void {
 }
 
 let renderSeq = 0;
+let renderQueue: Promise<unknown> = Promise.resolve();
 
-function removeBodyNode(nodeId: string): void {
+function removeTempNode(nodeId: string): void {
   const node = document.getElementById(nodeId);
-  if (node && node.parentNode === document.body) node.remove();
+  if (node) node.remove();
 }
 
-/** Mermaid mounts a temporary `#d<id>` (or sandbox `#i<id>`) node on <body> and leaves it behind when parsing fails. */
+/** Mermaid mounts a temporary `#d<id>` (or sandbox `#i<id>`) node and leaves it behind when parsing fails. */
 function removeTempNodes(id: string): void {
   if (typeof document === 'undefined') return;
-  removeBodyNode('d' + id);
-  removeBodyNode('i' + id);
+  removeTempNode('d' + id);
+  removeTempNode('i' + id);
 }
 
-export async function render(code: unknown, id?: string): Promise<string> {
+async function renderSerialized(source: string, id?: string): Promise<string> {
   ensureInitialized();
-  const source = String(code || '');
   renderSeq += 1;
   const renderId = (id || 'mdstudio-mermaid') + '-r' + renderSeq;
   try {
@@ -46,6 +46,19 @@ export async function render(code: unknown, id?: string): Promise<string> {
   } finally {
     removeTempNodes(renderId);
   }
+}
+
+export function render(code: unknown, id?: string): Promise<string> {
+  const source = String(code || '');
+  const task = renderQueue.then(
+    () => renderSerialized(source, id),
+    () => renderSerialized(source, id),
+  );
+  renderQueue = task.then(
+    () => undefined,
+    () => undefined,
+  );
+  return task;
 }
 
 if (typeof window !== 'undefined') {

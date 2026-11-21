@@ -24,6 +24,18 @@ export interface LocalServerHandle {
   stop(): Promise<void>;
 }
 
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
+
+function isLoopbackHost(req: IncomingMessage): boolean {
+  const raw = Array.isArray(req.headers.host) ? req.headers.host[0] : req.headers.host;
+  if (!raw) return true;
+  try {
+    return LOOPBACK_HOSTS.has(new URL('http://' + raw.trim()).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 function cors(headers: Record<string, string> = {}): Record<string, string> {
   return {
     'access-control-allow-origin': '*',
@@ -34,18 +46,23 @@ function cors(headers: Record<string, string> = {}): Record<string, string> {
   };
 }
 
-function sendText(res: ServerResponse, status: number, text: string): void {
-  res.writeHead(status, cors({ 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' }));
-  res.end(text);
+function sendText(res: ServerResponse, status: number, text: string, headOnly = false): void {
+  res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+  res.end(headOnly ? undefined : text);
 }
 
 export function createLocalImageServer(options: { service: LocalAssetReader }): http.Server {
   const service = options.service;
   return http.createServer(async function (req: IncomingMessage, res: ServerResponse) {
+    const headOnly = req.method === 'HEAD';
     try {
+      if (!isLoopbackHost(req)) {
+        sendText(res, 403, 'loopback only', headOnly);
+        return;
+      }
       const pathname = new URL(req.url || '/', 'http://127.0.0.1').pathname;
       if (req.method === 'OPTIONS') {
-        res.writeHead(204, cors());
+        res.writeHead(204, pathname.indexOf('/uploads/') === 0 ? cors() : { 'cache-control': 'no-store' });
         res.end();
         return;
       }
@@ -55,18 +72,18 @@ export function createLocalImageServer(options: { service: LocalAssetReader }): 
       }
       if (pathname === '/health') {
         const body = JSON.stringify({ ok: true, service: 'markdown-studio-images' });
-        res.writeHead(200, cors({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }));
-        res.end(body);
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+        res.end(headOnly ? undefined : body);
         return;
       }
       if (pathname.indexOf('/uploads/') !== 0) {
-        sendText(res, 404, 'not found');
+        sendText(res, 404, 'not found', headOnly);
         return;
       }
       const filename = pathname.slice('/uploads/'.length);
       const asset = await service.readAsset(filename);
       if (!asset) {
-        sendText(res, 404, 'not found');
+        sendText(res, 404, 'not found', headOnly);
         return;
       }
       res.writeHead(
@@ -78,10 +95,10 @@ export function createLocalImageServer(options: { service: LocalAssetReader }): 
           'x-content-type-options': 'nosniff',
         }),
       );
-      if (req.method === 'HEAD') res.end();
+      if (headOnly) res.end();
       else res.end(asset.buffer);
     } catch (error) {
-      if (!res.headersSent) sendText(res, 500, 'internal error');
+      if (!res.headersSent) sendText(res, 500, 'internal error', headOnly);
       else res.end();
     }
   });
@@ -92,7 +109,7 @@ export function startLocalImageServer(options: {
   ports?: number[];
 }): Promise<LocalServerHandle | null> {
   const service = options.service;
-  const ports = options.ports && options.ports.length ? options.ports : LOCAL_SERVER_PORTS;
+  const ports = options.ports && options.ports.length ? options.ports : [...LOCAL_SERVER_PORTS, 0];
   const server = createLocalImageServer({ service });
   let index = 0;
 
@@ -116,6 +133,9 @@ export function startLocalImageServer(options: {
       }
       function onListening(): void {
         server.removeListener('error', onError);
+        server.on('error', function (runtimeError: Error) {
+          service.localServerError = String(runtimeError?.message || runtimeError);
+        });
         const address = server.address();
         const actualPort = address && typeof address === 'object' ? address.port : port;
         const info: LocalServerInfo = { port: actualPort, url: 'http://127.0.0.1:' + actualPort };
@@ -135,6 +155,7 @@ export function startLocalImageServer(options: {
       server: result.server,
       info: result.info,
       stop: function (): Promise<void> {
+        service.localServerInfo = null;
         return new Promise(function (resolve) {
           try {
             result.server.close(function () {

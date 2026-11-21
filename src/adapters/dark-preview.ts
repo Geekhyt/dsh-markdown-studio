@@ -1,3 +1,7 @@
+import { contrast, DARK_STAGE_DEFAULT, ensureContrast, rgbToHex } from '../theme-system/color';
+
+const DARK_TEXT_MIN_CONTRAST = 4.5;
+
 function rgbTuple(color: string): [number, number, number] | null {
   const rgb = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i.exec(color);
   if (rgb) return [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])];
@@ -26,29 +30,44 @@ function luminance(color: string): number {
   return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
 }
 
-function nearestOpaqueBgLuminance(element: HTMLElement, stopAt: HTMLElement): number {
+function nearestOpaqueBgHex(element: HTMLElement, stopAt: HTMLElement): { hex: string; lum: number } {
   let cursor: HTMLElement | null = element;
   while (cursor) {
     const bg = window.getComputedStyle(cursor).backgroundColor;
-    if (alphaOf(bg) >= 0.08) return luminance(bg);
+    if (alphaOf(bg) >= 0.08) {
+      const rgb = rgbTuple(bg);
+      if (rgb) return { hex: rgbToHex(rgb[0], rgb[1], rgb[2]), lum: luminance(bg) };
+    }
     if (cursor === stopAt) break;
     cursor = cursor.parentElement;
   }
-  return 0.05;
+  return { hex: DARK_STAGE_DEFAULT, lum: 0.05 };
 }
 
-/** Keep dark-preview headings readable even when a theme accent is very dark. */
+function hasDirectTextOrMath(element: HTMLElement): boolean {
+  if (element.classList.contains('mdstudio-math')) return true;
+  for (let node = element.firstChild; node; node = node.nextSibling) {
+    if (node.nodeType === 3 && (node.nodeValue || '').trim()) return true;
+  }
+  return false;
+}
+
+/**
+ * Guarantee WCAG AA (>= 4.5:1) legibility on dark surfaces across every
+ * text-bearing element rather than relying on a fixed tag allowlist.
+ */
 function liftDarkText(root: HTMLElement): void {
   if (typeof window === 'undefined') return;
-  const selector =
-    'h1,h2,h3,h4,h5,h6,strong,b,em,a,.mdstudio-link,blockquote,p,li,td,th,.mdstudio-alert-title,.mdstudio-math,code,span,mark,u,del,sup,.mdstudio-img-placeholder,.mdstudio-pull';
-  root.querySelectorAll<HTMLElement>(selector).forEach(function (element) {
-    if (!(element.textContent || '').trim() && !element.classList.contains('mdstudio-math')) return;
-    if (element.closest('svg')) return;
-    if (nearestOpaqueBgLuminance(element, root) >= 0.25) return;
+  root.querySelectorAll<HTMLElement>('*').forEach(function (element) {
+    if (element.closest('svg') || !hasDirectTextOrMath(element)) return;
+    const bg = nearestOpaqueBgHex(element, root);
+    if (bg.lum >= 0.25) return;
     const color = window.getComputedStyle(element).color;
-    if (luminance(color) >= 0.3) return;
-    element.style.setProperty('color', 'color-mix(in srgb, ' + color + ' 35%, #f2f2f2)', 'important');
+    const fgRgb = rgbTuple(color);
+    if (!fgRgb) return;
+    const fgHex = rgbToHex(fgRgb[0], fgRgb[1], fgRgb[2]);
+    if (contrast(fgHex, bg.hex) >= DARK_TEXT_MIN_CONTRAST) return;
+    element.style.setProperty('color', ensureContrast(fgHex, bg.hex, DARK_TEXT_MIN_CONTRAST), 'important');
   });
 }
 
@@ -110,8 +129,9 @@ export async function applyDarkPreview(article: HTMLElement, isCancelled?: () =>
     loadedDarkmode = Darkmode;
     if (typeof Darkmode.reset === 'function') Darkmode.reset([]);
     if (root) {
-      root.style.setProperty('background-color', '#ffffff');
-      root.style.setProperty('color', '#1f2328');
+      const initialBg = window.getComputedStyle(root).backgroundColor;
+      if (alphaOf(initialBg) < 0.1) root.style.setProperty('background-color', '#ffffff');
+      if (!root.style.color) root.style.setProperty('color', '#1f2328');
     }
     const target = root || article;
     const nodes = [target, ...Array.from(target.querySelectorAll<HTMLElement>('*'))];

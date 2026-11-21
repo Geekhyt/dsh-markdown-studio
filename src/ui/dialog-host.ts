@@ -138,6 +138,7 @@ export function useDialogHost(
               setValue(event.target.value);
             },
             onKeyDown: function (event: ReactNamespace.KeyboardEvent<HTMLInputElement>) {
+              if (event.nativeEvent.isComposing || event.keyCode === 229) return;
               if (event.key === 'Enter') {
                 event.preventDefault();
                 submit();

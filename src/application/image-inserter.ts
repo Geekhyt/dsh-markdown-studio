@@ -11,6 +11,8 @@ export interface ImageInsertOptions {
   describeHostError: (error: unknown) => string;
   insertBlock: (block: string, blockOptions?: { collapseToEnd?: boolean }) => void;
   onTrackInFlight?: (filename: string, active: boolean) => void;
+  getActiveArticleId?: () => string;
+  isPageAlive?: () => boolean;
 }
 
 export interface ImageInsertApi {
@@ -47,23 +49,32 @@ export function createImageInserter(options: ImageInsertOptions): ImageInsertApi
       options.notify(options.t('toast.imageTooLarge'), 'error');
       return;
     }
+    const targetArticleId = options.getActiveArticleId?.();
     const items: Array<{ file: File; url: string; filename: string }> = [];
     let failed = 0;
     let lastError: unknown = null;
     try {
-      for (const file of accepted) {
-        try {
-          const dataUrl = await fileToDataUrl(file);
-          const prepared = await prepareImageForWechat(dataUrl);
-          const stored = await options.hostClient.storeAsset(prepared.dataUrl, prepared.filename);
-          const itemUrl = stored.assetPath || stored.localUrl || stored.url;
-          if (stored.filename) options.onTrackInFlight?.(stored.filename, true);
-          if (itemUrl) items.push({ file, url: itemUrl, filename: stored.filename || '' });
-        } catch (error) {
-          failed++;
-          lastError = error;
-        }
+      const settled = await Promise.all(
+        accepted.map(async function (file) {
+          try {
+            const dataUrl = await fileToDataUrl(file);
+            const prepared = await prepareImageForWechat(dataUrl);
+            const stored = await options.hostClient.storeAsset(prepared.dataUrl, prepared.filename);
+            const itemUrl = stored.assetPath || stored.localUrl || stored.url;
+            if (stored.filename) options.onTrackInFlight?.(stored.filename, true);
+            return itemUrl ? { file, url: itemUrl, filename: stored.filename || '' } : null;
+          } catch (error) {
+            failed++;
+            lastError = error;
+            return null;
+          }
+        }),
+      );
+      for (const entry of settled) {
+        if (entry) items.push(entry);
       }
+      if (options.isPageAlive && !options.isPageAlive()) return;
+      if (targetArticleId && options.getActiveArticleId && options.getActiveArticleId() !== targetArticleId) return;
       if (!items.length) {
         options.notify(lastError ? options.describeHostError(lastError) : options.t('toast.imageTooLarge'), 'error');
         return;

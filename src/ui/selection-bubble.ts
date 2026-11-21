@@ -119,8 +119,20 @@ export function useSelectionBubble(options: SelectionBubbleOptions): SelectionBu
     pointerSelectingRef.current = true;
     pointerPointRef.current = null;
     setPos(null);
-    const onUp = function (upEvent: MouseEvent): void {
+    const detachListeners = function (): void {
       window.removeEventListener('mouseup', onUp, true);
+      window.removeEventListener('pointercancel', onCancel, true);
+      window.removeEventListener('dragstart', onCancel, true);
+      window.removeEventListener('blur', onCancel);
+    };
+    const onCancel = function (): void {
+      detachListeners();
+      pointerCleanupRef.current = null;
+      pointerSelectingRef.current = false;
+      pointerPointRef.current = null;
+    };
+    const onUp = function (upEvent: MouseEvent): void {
+      detachListeners();
       pointerCleanupRef.current = null;
       pointerSelectingRef.current = false;
       pointerPointRef.current =
@@ -135,10 +147,13 @@ export function useSelectionBubble(options: SelectionBubbleOptions): SelectionBu
     };
     pointerCleanupRef.current = function () {
       cancelPendingRaf();
-      window.removeEventListener('mouseup', onUp, true);
+      detachListeners();
       pointerCleanupRef.current = null;
     };
     window.addEventListener('mouseup', onUp, true);
+    window.addEventListener('pointercancel', onCancel, true);
+    window.addEventListener('dragstart', onCancel, true);
+    window.addEventListener('blur', onCancel);
   }
 
   return { pos, clear, clearPointer, sync, onPointerDown };

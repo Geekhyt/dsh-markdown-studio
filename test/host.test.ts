@@ -374,6 +374,84 @@ try {
     assert.equal(getErr.status, 500);
     assetServer.server.close();
   });
+
+  await check(
+    'math, mermaid, and local server enforce loopback Host, HEAD semantics, and 8-byte PNG signature',
+    async () => {
+      const truncatedPng = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x00, 0x00, 0x00]).toString('base64');
+      assert.throws(() => parseDataUrl(`data:image/png;base64,${truncatedPng}`), ImageHostError);
+
+      const requestWithHost = (port: number, reqPath: string, method: string, hostHeader: string) =>
+        new Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }>((resolve, reject) => {
+          const req = http.request(
+            { host: '127.0.0.1', port, path: reqPath, method, headers: { host: hostHeader } },
+            (res) => {
+              const chunks: Buffer[] = [];
+              res.on('data', (c) => chunks.push(Buffer.from(c)));
+              res.on('end', () =>
+                resolve({
+                  status: res.statusCode || 0,
+                  body: Buffer.concat(chunks).toString('utf8'),
+                  headers: res.headers,
+                }),
+              );
+            },
+          );
+          req.on('error', reject);
+          req.end();
+        });
+
+      const mathServer = await listen((req, res) => {
+        void mathRoute(req, res);
+      });
+      const mermaidServer = await listen((req, res) => {
+        void mermaidRoute(req, res);
+      });
+      try {
+        assert.equal(
+          (await requestWithHost(mathServer.port, MATH_PATH, 'HEAD', `127.0.0.1:${mathServer.port}`)).status,
+          200,
+        );
+        assert.equal(
+          (await requestWithHost(mathServer.port, MATH_PATH, 'POST', `127.0.0.1:${mathServer.port}`)).status,
+          405,
+        );
+        assert.equal((await requestWithHost(mathServer.port, MATH_PATH, 'GET', 'evil.example:80')).status, 403);
+
+        assert.equal(
+          (await requestWithHost(mermaidServer.port, MERMAID_PATH, 'HEAD', `127.0.0.1:${mermaidServer.port}`)).status,
+          200,
+        );
+        assert.equal(
+          (await requestWithHost(mermaidServer.port, MERMAID_PATH, 'POST', `127.0.0.1:${mermaidServer.port}`)).status,
+          405,
+        );
+        assert.equal((await requestWithHost(mermaidServer.port, MERMAID_PATH, 'GET', 'evil.example:80')).status, 403);
+
+        assert.ok(local, 'local server is active');
+        const localPort = local.info.port;
+        const healthGet = await requestWithHost(localPort, '/health', 'GET', `127.0.0.1:${localPort}`);
+        assert.equal(healthGet.status, 200);
+        assert.equal(healthGet.headers['access-control-allow-origin'], undefined, '/health omits wildcard ACAO');
+        const healthHead = await requestWithHost(localPort, '/health', 'HEAD', `127.0.0.1:${localPort}`);
+        assert.equal(healthHead.status, 200);
+        assert.equal(healthHead.body, '');
+        const localRebind = await requestWithHost(localPort, '/health', 'GET', 'evil.example:80');
+        assert.equal(localRebind.status, 403, 'local server rejects non-loopback Host header');
+        const missingHead = await requestWithHost(
+          localPort,
+          '/uploads/not-found.png',
+          'HEAD',
+          `127.0.0.1:${localPort}`,
+        );
+        assert.equal(missingHead.status, 404);
+        assert.equal(missingHead.body, '');
+      } finally {
+        mathServer.server.close();
+        mermaidServer.server.close();
+      }
+    },
+  );
 } finally {
   routeServer.server.close();
   if (local) await local.stop();

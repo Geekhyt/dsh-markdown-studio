@@ -3,7 +3,11 @@ import type { ReactNode } from 'react';
 import type { DshPrimitivesModule } from '../types/dsh-primitives';
 import { createDshBridge } from './dsh-primitives';
 
-export function createUiKit(React: typeof ReactNamespace, primitives?: DshPrimitivesModule | null) {
+export function createUiKit(
+  React: typeof ReactNamespace,
+  primitives?: DshPrimitivesModule | null,
+  getLocale?: () => string,
+) {
   const h = React.createElement;
   const bridge = createDshBridge(React, primitives);
 
@@ -78,6 +82,7 @@ export function createUiKit(React: typeof ReactNamespace, primitives?: DshPrimit
 
   return {
     bridge,
+    locale: getLocale,
     Icon: bridge.Icon,
     ToolButton,
     Switch,

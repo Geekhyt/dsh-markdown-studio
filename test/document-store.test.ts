@@ -124,4 +124,86 @@ assert.equal(customStore.getActive().settings.theme, 'classic', 'deleting custom
   assert.equal(liveStore.getSnapshot().docs.length, 2, 'both copies remain in the library');
 }
 
-console.log('29 document-store checks passed.');
+{
+  // Clean store skips unsolicited flush() writes and syncExternal() merges cross-tab updates without writing back.
+  let writes = 0;
+  const tabStore = new DocumentStore({ activeId: 'a', docs: [article('a', 'Initial')], trash: [] }, () => {
+    writes += 1;
+    return true;
+  });
+  assert.equal(tabStore.flush(), true, 'clean flush returns true');
+  assert.equal(writes, 0, 'clean flush does not overwrite storage');
+  let notified = 0;
+  tabStore.subscribe(() => {
+    notified += 1;
+  });
+  tabStore.syncExternal({ activeId: 'a', docs: [article('a', 'From Tab B')], trash: [] });
+  assert.equal(tabStore.getActive().markdown, 'From Tab B', 'syncExternal adopts external tab snapshot');
+  assert.equal(notified, 1, 'syncExternal notifies subscribers');
+  assert.equal(writes, 0, 'syncExternal does not echo write back to storage');
+  tabStore.updateActive({ markdown: 'Local edit' });
+  assert.equal(tabStore.flush(), true);
+  assert.equal(writes, 1, 'dirty flush persists local edits');
+}
+
+{
+  // Document-level concurrent cross-tab merge preserves dirty local article + absorbs remote article edits.
+  let disk: LibraryState = {
+    activeId: 'a',
+    docs: [
+      { ...article('a', 'A0'), updatedAt: 100 },
+      { ...article('b', 'B0'), updatedAt: 100 },
+    ],
+    trash: [],
+  };
+  const tabA = new DocumentStore(
+    structuredClone(disk),
+    (next) => {
+      disk = structuredClone(next);
+      return true;
+    },
+    () => structuredClone(disk),
+  );
+  const tabB = new DocumentStore(
+    structuredClone(disk),
+    (next) => {
+      disk = structuredClone(next);
+      return true;
+    },
+    () => structuredClone(disk),
+  );
+  // Tab A edits doc 'a' (unsaved dirty); Tab B switches to doc 'b', edits it, and flushes to disk.
+  tabA.updateActive({ markdown: 'A-from-TabA' });
+  tabB.switchTo('b');
+  tabB.updateActive({ markdown: 'B-from-TabB' });
+  assert.equal(tabB.flush(), true);
+
+  // Sync event hits Tab A while Tab A still has unsaved edits in 'a': keeps Tab A's 'a' & activeId, absorbs 'b'.
+  tabA.syncExternal(structuredClone(disk));
+  assert.equal(tabA.getActive().id, 'a', 'syncExternal does not hijack active tab');
+  assert.equal(tabA.getActive().markdown, 'A-from-TabA', 'syncExternal preserves unsaved local dirty doc');
+  assert.equal(
+    tabA.getSnapshot().docs.find((d) => d.id === 'b')?.markdown,
+    'B-from-TabB',
+    'syncExternal absorbs remote edit to another doc',
+  );
+
+  // Even without a prior storage event, flushing Tab A merges newer disk changes from Tab B on other docs!
+  tabB.updateActive({ markdown: 'B-from-TabB-v2' });
+  tabB.flush();
+  tabA.updateActive({ markdown: 'A-from-TabA-v2' });
+  assert.equal(tabA.flush(), true);
+  assert.equal(disk.docs.find((d) => d.id === 'a')?.markdown, 'A-from-TabA-v2', 'disk retains Tab A edit');
+  assert.equal(disk.docs.find((d) => d.id === 'b')?.markdown, 'B-from-TabB-v2', 'disk retains Tab B edit');
+
+  // Explicit delete is authoritative and is not resurrected from disk on flush.
+  tabA.delete('b', 'Untitled');
+  assert.equal(tabA.flush(), true);
+  assert.equal(
+    disk.docs.some((d) => d.id === 'b'),
+    false,
+    'deleted doc is not resurrected by pre-write disk merge',
+  );
+}
+
+console.log('41 document-store checks passed.');

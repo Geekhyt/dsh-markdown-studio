@@ -10,14 +10,14 @@ This guide is written for plugin contributors, architecture reviewers, and maint
 
 `dsh-markdown-studio` cleanly separates into a **cold-boot client shell**, an **on-demand Studio runtime chunk**, and a **self-contained Node.js / Cordis Host image & chunk service**:
 
-1. **Ultra-Light Cold-Boot Shell (`dist/client.js`, `4.8 KiB`)** — On DSH startup, only a minimal entry loads to register the left-sidebar icon (`sidebar.panellist`), base locale labels, and a lazy `main` view container. Normal AI chat sessions pay **zero editor parse or execution cost**.
+1. **Ultra-Light Cold-Boot Shell (`dist/client.js`, `4.9 KiB`)** — On DSH startup, only a minimal entry loads to register the left-sidebar icon (`sidebar.panellist`), base locale labels, and a lazy `main` view container. Normal AI chat sessions pay **zero editor parse or execution cost**.
 2. **On-Demand Studio & Cascade Compiler (`dist/client.studio.js`)** — Clicking **Markdown Studio** triggers DSH's official `require.async("./client.studio.js")` loader, bringing in CodeMirror 6, `DocumentStore`, the `Tone × Rhythm × Atoms` recipe engine, and the deterministic `#mdstudio` inline-CSS compiler.
 3. **On-Demand Heavy Renderers (`dist/math.js` & `dist/mermaid.js`)** — Loaded only when an article contains TeX math (`$...$` / `$$...$$` or `\(...\)` / `\[...\]`) or ```` ```mermaid ```` fences, producing self-contained vector `<path>` SVGs (MathJax 3) and `strict`-sandbox rasterized diagrams (Mermaid 11 + `DOMPurify`).
 4. **Dual-Channel Local Image Host & Loopback AI Route (`dist/index.js`)** — Image writes go through the host-authenticated, same-origin `POST /api/markdown-studio/wechat` endpoint (deduplicated by SHA-256 on disk) while previews read from a `127.0.0.1`-bound read-only server; selection-triggered AI Writing Skills stream over same-origin `POST /api/markdown-studio/ai` via the host's configured `llm` service.
 
 ```mermaid
 flowchart TB
-  subgraph S1["Stage 1 · Cold-Boot Client Shell (dist/client.js · 4.8 KiB)"]
+  subgraph S1["Stage 1 · Cold-Boot Client Shell (dist/client.js · 4.9 KiB)"]
     ICON["Sidebar Entry Slot (sidebar.panellist)"]
     LAZY["Lazy Main Panel Wrapper (LazyStudioView)"]
     LIFE["Reversible Style & Locale Lifecycle (style-lifecycle)"]
@@ -75,10 +75,10 @@ flowchart TB
 
 | Artifact | Raw Size | Gzip Size | Hard Budget Gate | Responsibility & Load Trigger |
 | :--- | :--- | :--- | :--- | :--- |
-| `dist/client.js` | **`4.8 KiB`** | **`2.3 KiB`** | `<= 50 KiB` | Cold-boot shell: registers sidebar entry, base locale, and lazy container. |
-| `dist/client.studio.js` | `1223.2 KiB` | `382.5 KiB` | `<= 1280 KiB` | Loaded on demand when opening Markdown Studio (CodeMirror 6, 8 themes, inline AI diff, `mp-darkmode`). |
-| `dist/index.js` | `103.1 KiB` | `54.0 KiB` | `<= 150 KiB` | Self-contained Host ESM bundle (SHA-256 image store + loopback server + AI route), zero runtime npm deps. |
-| `dist/math.js` | `1761.7 KiB` | `593.2 KiB` | `<= 2048 KiB` | Loaded on demand when TeX math appears (MathJax 3 vector `<path>` SVGs). |
+| `dist/client.js` | **`4.9 KiB`** | **`2.3 KiB`** | `<= 50 KiB` | Cold-boot shell: registers sidebar entry, base locale, and lazy container. |
+| `dist/client.studio.js` | `1257.8 KiB` | `393.1 KiB` | `<= 1280 KiB` | Loaded on demand when opening Markdown Studio (CodeMirror 6, 8 themes, inline AI diff, `mp-darkmode`). |
+| `dist/index.js` | `111.1 KiB` | `55.3 KiB` | `<= 150 KiB` | Self-contained Host ESM bundle (SHA-256 image store + loopback server + AI route), zero runtime npm deps. |
+| `dist/math.js` | `1762.1 KiB` | `593.3 KiB` | `<= 2048 KiB` | Loaded on demand when TeX math appears (MathJax 3 vector `<path>` SVGs). |
 | `dist/mermaid.js` | `3413.6 KiB` | `955.5 KiB` | `<= 4096 KiB` | Loaded on demand when `mermaid` code fences appear (Mermaid 11 `strict` + `DOMPurify`). |
 
 ---
@@ -89,12 +89,12 @@ flowchart TB
 - **Tone**: Derives background, surface, quote, border, and per-theme code colors from a seed accent with automatic WCAG 2 AA contrast convergence (`>= 4.5:1` body and code text).
 - **Rhythm**: Controls body font size (`14px–20px`), line height (`1.40–2.40`, `1.75` standard editorial default), heading proximity (`1.65em / 0.65em` H2, `0.75em` consecutive headings), paragraph spacing, and letter spacing.
 - **Atoms**: Composes section heading ornaments (`01` overline, hairline `01` top rule, `01 /` violet index, `●` dotted rule, centered champagne-gold rule, `「」` bookleaf brackets, `[01]` square seal, `NO.01` poster underline), editorial blocks (`:::lead`, `:::tldr`, `:::pull`, `:::meta`, `:::sign`), standalone figure captions, blockquotes, tables, five GitHub Alert types, and footnotes.
-- **Named Custom CSS Themes**: Users can author multiple named CSS themes that automatically extract color swatches into the **Theme Presets** grid, share across articles, and export/import as JSON.
+- **Named Custom CSS Themes**: Users can author multiple named CSS themes (optionally declaring `/* @base: standalone | classic */`) that automatically extract color swatches into the **Theme Presets** grid, share across articles, and export/import as JSON.
 
 ### Security Model & Hard Limits
 - **Raw HTML & Protocol Filtering**: Escapes raw inline HTML (`<script>`, `<img onerror>`) by default and blocks `javascript:`, `vbscript:`, and `data:text/html` URIs (schemes are checked after stripping whitespace/control characters); TeX never loads MathJax's `html` extension (`\href`, `\style`).
 - **Dual-Channel Local Image & Loopback AI Isolation**: Image write requests enforce loopback client IP (`127.0.0.1` / `::1`), an exact `application/json` MIME type, and origin checks (http(s) `Origin` must match `Host`; missing origins and trusted desktop schemes `dsh-app:`, `dsh:`, `app:`, `file:` pass; `null` passes only with `Sec-Fetch-Site: same-origin/none`), PNG/JPEG magic-byte inspection, and a `1 MB` per-image cap; the loopback preview server binds exclusively to `127.0.0.1`, accepts only `GET / HEAD / OPTIONS`, and matches `^[a-f0-9]{24}\.(png|jpg)$` with `X-Content-Type-Options: nosniff`. The selection-triggered AI route (`POST /api/markdown-studio/ai`) applies the same loopback, origin, and MIME checks with a `512 KiB` body cap, rejects interrupted or length-truncated model output, forwarding only user-selected snippets to the host `llm` service.
-- **External CSS Resource Stripping**: External `url(...)`, `image-set(...)`, and `@import` rules inside custom CSS (including comment-split, newline-escaped, and post-`var()` resolved variants) are stripped by default to prevent outbound tracking beacons.
+- **External CSS Resource Stripping**: External `url(...)`, `image-set(...)`, `src(...)`, `cross-fade(...)`, and `@import` rules inside custom CSS (including comment-split, newline-escaped, CSS-escaped, and post-`var()` resolved variants) are stripped by default to prevent outbound tracking beacons.
 
 ---
 

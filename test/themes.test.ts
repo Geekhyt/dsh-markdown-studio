@@ -218,4 +218,55 @@ assert.ok(
   'comment mentioning tag names does not misclassify partial custom CSS as standalone',
 );
 
-console.log('27 theme checks passed.');
+// Explicit @base pragma & relaxed structural standalone detection
+const pragmaStandalone = buildCss({
+  ...DEFAULT_SETTINGS,
+  theme: 'custom:minimal-warm',
+  customThemes: [
+    {
+      id: 'custom:minimal-warm',
+      name: '暖纸极简',
+      css: '/* @base: standalone */\n#mdstudio { background: #fbf7ef; color: #2f2419; }\n#mdstudio h2 { color: #8c3b1b; }\n#mdstudio p { margin: 0 0 12px; }',
+    },
+  ],
+});
+assert.equal(
+  pragmaStandalone.includes('mdstudio-heading-prefix::before'),
+  false,
+  '/* @base: standalone */ skips Classic base even without h1/pre/blockquote',
+);
+
+const pragmaClassic = buildCss({
+  ...DEFAULT_SETTINGS,
+  theme: 'custom:force-classic',
+  customThemes: [
+    {
+      id: 'custom:force-classic',
+      name: '继承 Classic',
+      css: '/* @base: classic */\n' + exampleCss(),
+    },
+  ],
+});
+assert.ok(
+  pragmaClassic.includes('--mdstudio-font-size'),
+  '/* @base: classic */ forces inheriting the built-in Classic base',
+);
+
+const structuralWithoutPre = buildCss({
+  ...DEFAULT_SETTINGS,
+  theme: 'custom:editorial',
+  customThemes: [
+    {
+      id: 'custom:editorial',
+      name: '极简专栏',
+      css: '#mdstudio { background: #fffdf8; color: #222; } #mdstudio h1, #mdstudio h2 { color: #111; } #mdstudio p { line-height: 1.8; }',
+    },
+  ],
+});
+assert.equal(
+  structuralWithoutPre.includes('--mdstudio-font-size'),
+  false,
+  'standalone custom theme with root+surface+text+prose+h1+h2 no longer requires pre/blockquote',
+);
+
+console.log('30 theme checks passed.');

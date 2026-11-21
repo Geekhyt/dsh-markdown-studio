@@ -51,6 +51,8 @@ export function buildShortcutRows(
     [modKey + 'S', t('shortcuts.save')],
     [modKey + '↵', t('shortcuts.copy')],
     ['Tab', t('shortcuts.tab')],
+    [shiftKey + 'Tab', t('shortcuts.outdent')],
+    ['Esc → Tab', t('shortcuts.escapeTab')],
     [t('shortcuts.slashKey'), t('shortcuts.slash')],
   ];
 }

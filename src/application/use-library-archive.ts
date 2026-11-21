@@ -29,8 +29,9 @@ import {
   mergeWritingSkillStates,
   parseLibraryBackup,
 } from '../domain/library-backup';
-import { ARCHIVE_SCHEMA_VERSION } from '../domain/schema';
+import { ARCHIVE_SCHEMA_VERSION, supportedSchemaVersion } from '../domain/schema';
 import type { WritingSkillState } from '../domain/writing-skills';
+import { useLatest, useMountDisposable } from '../runtime/react-lifecycle';
 import type { DocumentStore } from './document-store';
 
 const IMPORT_RECOVERY_KEY = 'dsh.markdown-studio.library.import-recovery.v1';
@@ -76,6 +77,7 @@ export interface LibraryArchiveOptions {
   ) => Promise<Record<string, MergeDecision> | null>;
   writingSkills?: WritingSkillState;
   onWritingSkills?: (next: WritingSkillState) => void;
+  onTrackInFlight?: (filename: string, active: boolean) => void;
 }
 
 export interface LibraryArchiveApi {
@@ -162,13 +164,13 @@ function buildArchiveConfirmTitle(
 
 function remapLibraryAssetPaths(library: LibraryState, mapping: Map<string, string>): LibraryState {
   if (!mapping.size) return library;
-  const rewrite = (md: string): string => {
-    let out = md;
-    for (const [oldPath, newPath] of mapping.entries()) {
-      if (oldPath !== newPath) out = out.split(oldPath).join(newPath);
-    }
-    return out;
-  };
+  const lowerMap = new Map<string, string>();
+  for (const [oldPath, newPath] of mapping.entries()) {
+    if (oldPath.toLowerCase() !== newPath.toLowerCase()) lowerMap.set(oldPath.toLowerCase(), newPath);
+  }
+  if (!lowerMap.size) return library;
+  const rewrite = (md: string): string =>
+    md.replace(/assets\/[a-f0-9]{24}\.(?:png|jpg)/gi, (match) => lowerMap.get(match.toLowerCase()) || match);
   return {
     activeId: library.activeId,
     docs: library.docs.map((doc) => ({ ...doc, markdown: rewrite(doc.markdown) })),
@@ -176,11 +178,40 @@ function remapLibraryAssetPaths(library: LibraryState, mapping: Map<string, stri
   };
 }
 
+function assetFetchUrl(base: string, filename: string): string {
+  return base ? base + '/uploads/' + filename : '/api/markdown-studio/assets/' + filename;
+}
+
+async function runWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const idx = cursor++;
+      results[idx] = await worker(items[idx]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiveApi {
   const React = options.React;
   const t = options.t;
   const store = options.store;
   const hostClient = options.hostClient;
+  const writingSkillsRef = useLatest(React, options.writingSkills);
+  const mountedRef = React.useRef(true);
+  useMountDisposable(React, () => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  });
   const [recoveryAvailable, setRecoveryAvailable] = React.useState(function () {
     try {
       return !!window.localStorage.getItem(IMPORT_RECOVERY_KEY);
@@ -189,15 +220,27 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
     }
   });
 
-  async function saveImportRecovery(): Promise<boolean> {
+  function snapshotImportRecovery(): { ok: boolean; previous: string | null } {
+    let previous: string | null = null;
     try {
-      const backup = createLibraryBackup(compactLibraryForStorage(store.getSnapshot()), options.writingSkills);
+      previous = window.localStorage.getItem(IMPORT_RECOVERY_KEY);
+      const backup = createLibraryBackup(compactLibraryForStorage(store.getSnapshot()), writingSkillsRef.current);
       window.localStorage.setItem(IMPORT_RECOVERY_KEY, JSON.stringify(backup));
       setRecoveryAvailable(true);
-      return true;
+      return { ok: true, previous };
     } catch (error) {
       options.notify(t('library.recoveryFailed'), 'error');
-      return false;
+      return { ok: false, previous };
+    }
+  }
+
+  function restoreImportRecovery(previous: string | null): void {
+    try {
+      if (previous === null) window.localStorage.removeItem(IMPORT_RECOVERY_KEY);
+      else window.localStorage.setItem(IMPORT_RECOVERY_KEY, previous);
+      setRecoveryAvailable(Boolean(previous));
+    } catch {
+      /* best effort */
     }
   }
 
@@ -205,8 +248,8 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
     if (!options.onWritingSkills) return;
     const incoming = extractBackupWritingSkills(rawPayload);
     if (!incoming) return;
-    const nextSkills =
-      merge && options.writingSkills ? mergeWritingSkillStates(options.writingSkills, incoming, prefer) : incoming;
+    const liveSkills = writingSkillsRef.current;
+    const nextSkills = merge && liveSkills ? mergeWritingSkillStates(liveSkills, incoming, prefer) : incoming;
     options.onWritingSkills(nextSkills);
   }
 
@@ -248,7 +291,7 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
     const currentLib = store.getSnapshot();
     const files = collectReferencedAssets(currentLib);
     assertZipBudget(files.length + 2, 0);
-    const base = String(options.localImageServerUrl || 'http://127.0.0.1:4010').replace(/\/+$/, '');
+    const base = String(options.localImageServerUrl || '').replace(/\/+$/, '');
     const stamp = new Date().toISOString().slice(0, 10);
     const archiveName = 'mdstudio-library-' + stamp + '.zip';
     const encoder = new TextEncoder();
@@ -273,25 +316,27 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
         );
         const missing: string[] = [];
         try {
-          for (const filename of files) {
-            let data: Uint8Array;
+          const fetched = await runWithConcurrency(files, 4, async (filename) => {
             try {
-              const response = await fetch(base + '/uploads/' + filename);
-              if (!response.ok) {
-                missing.push(filename);
-                continue;
-              }
-              data = new Uint8Array(await response.arrayBuffer());
-            } catch (error) {
-              missing.push(filename);
-              continue;
+              const response = await fetch(assetFetchUrl(base, filename));
+              if (!response.ok) return { filename, data: null as Uint8Array | null };
+              return { filename, data: new Uint8Array(await response.arrayBuffer()) };
+            } catch {
+              return { filename, data: null as Uint8Array | null };
             }
-            await writer.add('assets/' + filename, data);
+          });
+          for (const item of fetched) {
+            if (!item.data) missing.push(item.filename);
+            else await writer.add('assets/' + item.filename, item.data);
           }
           await writer.add(
             LIBRARY_ARCHIVE_BACKUP,
             encoder.encode(
-              JSON.stringify(createLibraryBackup(compactLibraryForStorage(currentLib), options.writingSkills), null, 2),
+              JSON.stringify(
+                createLibraryBackup(compactLibraryForStorage(currentLib), writingSkillsRef.current),
+                null,
+                2,
+              ),
             ),
           );
           await writer.add(
@@ -312,8 +357,10 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
             ),
           );
           await writer.close();
-          options.notify(t('library.archiveExported'));
-          if (missing.length) options.notify(missing.length + ' ' + t('library.archiveMissing'), 'error');
+          const msg = missing.length
+            ? t('library.archiveExported') + ' · ' + missing.length + ' ' + t('library.archiveMissing')
+            : t('library.archiveExported');
+          options.notify(msg, missing.length ? 'error' : 'success');
         } catch (error) {
           try {
             await writable.abort();
@@ -336,26 +383,28 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
     const entries: ZipEntry[] = [];
     let total = 0;
     const missing: string[] = [];
-    for (const filename of files) {
+    const fetched = await runWithConcurrency(files, 4, async (filename) => {
       try {
-        const response = await fetch(base + '/uploads/' + filename);
-        if (!response.ok) {
-          missing.push(filename);
-          continue;
-        }
-        const data = new Uint8Array(await response.arrayBuffer());
-        total += data.length;
-        assertZipBudget(files.length + 2, total, data.length);
-        entries.push({ name: 'assets/' + filename, data });
-      } catch (error) {
-        if (error instanceof Error && error.message === 'ZIP_LIMIT_EXCEEDED') throw error;
-        missing.push(filename);
+        const response = await fetch(assetFetchUrl(base, filename));
+        if (!response.ok) return { filename, data: null as Uint8Array | null };
+        return { filename, data: new Uint8Array(await response.arrayBuffer()) };
+      } catch {
+        return { filename, data: null as Uint8Array | null };
       }
+    });
+    for (const item of fetched) {
+      if (!item.data) {
+        missing.push(item.filename);
+        continue;
+      }
+      total += item.data.length;
+      assertZipBudget(files.length + 2, total, item.data.length);
+      entries.push({ name: 'assets/' + item.filename, data: item.data });
     }
     entries.push({
       name: LIBRARY_ARCHIVE_BACKUP,
       data: encoder.encode(
-        JSON.stringify(createLibraryBackup(compactLibraryForStorage(currentLib), options.writingSkills), null, 2),
+        JSON.stringify(createLibraryBackup(compactLibraryForStorage(currentLib), writingSkillsRef.current), null, 2),
       ),
     });
     entries.push({
@@ -376,9 +425,11 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
       ),
     });
     if (options.download(archiveName, zipStore(entries), 'application/zip')) {
-      options.notify(t('library.archiveExported'));
+      const msg = missing.length
+        ? t('library.archiveExported') + ' · ' + missing.length + ' ' + t('library.archiveMissing')
+        : t('library.archiveExported');
+      options.notify(msg, missing.length ? 'error' : 'success');
     }
-    if (missing.length) options.notify(missing.length + ' ' + t('library.archiveMissing'), 'error');
   }
 
   async function importArchive(
@@ -404,7 +455,7 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
       if (
         manifest.format !== LIBRARY_ARCHIVE_FORMAT ||
         manifest.version !== LIBRARY_ARCHIVE_VERSION ||
-        (manifest.schemaVersion !== undefined && Number(manifest.schemaVersion) > ARCHIVE_SCHEMA_VERSION)
+        supportedSchemaVersion(manifest.schemaVersion, ARCHIVE_SCHEMA_VERSION, ARCHIVE_SCHEMA_VERSION) === null
       ) {
         throw new Error('unsupported library archive');
       }
@@ -427,31 +478,51 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
       explicitMerge,
       prefer,
     );
-    if (!plan) return;
-    if (!(await saveImportRecovery())) return;
+    if (!plan || !mountedRef.current) return;
+    const recovery = snapshotImportRecovery();
+    if (!recovery.ok) return;
     const remapped = new Map<string, string>();
     let failedAssets = 0;
-    for (const entry of assets) {
-      const filename = entry.name.slice(7);
-      const mime = /\.png$/i.test(filename) ? 'image/png' : 'image/jpeg';
-      try {
-        const stored = await hostClient.storeAsset('data:' + mime + ';base64,' + bytesToBase64(entry.data), filename);
-        const nextPath = stored.assetPath || (stored.filename ? 'assets/' + stored.filename : '');
-        if (nextPath && nextPath !== 'assets/' + filename) remapped.set('assets/' + filename, nextPath);
-      } catch {
-        failedAssets++;
+    const tracked: string[] = [];
+    try {
+      await runWithConcurrency(assets, 4, async (entry) => {
+        const filename = entry.name.slice(7);
+        const mime = /\.png$/i.test(filename) ? 'image/png' : 'image/jpeg';
+        try {
+          const stored = await hostClient.storeAsset('data:' + mime + ';base64,' + bytesToBase64(entry.data), filename);
+          if (stored.filename) {
+            options.onTrackInFlight?.(stored.filename, true);
+            tracked.push(stored.filename);
+          }
+          const nextPath = stored.assetPath || (stored.filename ? 'assets/' + stored.filename : '');
+          if (nextPath && nextPath !== 'assets/' + filename) remapped.set('assets/' + filename, nextPath);
+        } catch {
+          failedAssets++;
+        }
+      });
+      if (!mountedRef.current) {
+        restoreImportRecovery(recovery.previous);
+        return;
       }
+      const preparedParsed = remapLibraryAssetPaths(parsed, remapped);
+      const nextLibrary = plan.merge
+        ? mergeLibraryBackup(store.getSnapshot(), preparedParsed, prefer, plan.decisions)
+        : preparedParsed;
+      const nextActive = store.replaceAll(nextLibrary, true);
+      applyImportedSkills(rawPayload, plan.merge, prefer);
+      replace(nextActive);
+      const totalMissing = missing.length + failedAssets;
+      const baseMsg = t(plan.merge ? 'library.merged' : 'library.archiveImported');
+      options.notify(
+        totalMissing ? baseMsg + ' · ' + totalMissing + ' ' + t('library.archiveMissing') : baseMsg,
+        totalMissing ? 'error' : 'success',
+      );
+    } catch (error) {
+      restoreImportRecovery(recovery.previous);
+      throw error;
+    } finally {
+      for (const filename of tracked) options.onTrackInFlight?.(filename, false);
     }
-    const preparedParsed = remapLibraryAssetPaths(parsed, remapped);
-    const nextLibrary = plan.merge
-      ? mergeLibraryBackup(store.getSnapshot(), preparedParsed, prefer, plan.decisions)
-      : preparedParsed;
-    const nextActive = store.replaceAll(nextLibrary, true);
-    applyImportedSkills(rawPayload, plan.merge, prefer);
-    replace(nextActive);
-    options.notify(t(plan.merge ? 'library.merged' : 'library.archiveImported'));
-    const totalMissing = missing.length + failedAssets;
-    if (totalMissing) options.notify(totalMissing + ' ' + t('library.archiveMissing'), 'error');
   }
 
   async function importFile(
@@ -479,13 +550,21 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
         merge,
         prefer,
       );
-      if (!plan) return;
-      if (!(await saveImportRecovery())) return;
-      const nextLibrary = plan.merge ? mergeLibraryBackup(store.getSnapshot(), parsed, prefer, plan.decisions) : parsed;
-      const nextActive = store.replaceAll(nextLibrary, true);
-      applyImportedSkills(rawPayload, plan.merge, prefer);
-      replace(nextActive);
-      options.notify(t(plan.merge ? 'library.merged' : 'library.imported'));
+      if (!plan || !mountedRef.current) return;
+      const recovery = snapshotImportRecovery();
+      if (!recovery.ok) return;
+      try {
+        const nextLibrary = plan.merge
+          ? mergeLibraryBackup(store.getSnapshot(), parsed, prefer, plan.decisions)
+          : parsed;
+        const nextActive = store.replaceAll(nextLibrary, true);
+        applyImportedSkills(rawPayload, plan.merge, prefer);
+        replace(nextActive);
+        options.notify(t(plan.merge ? 'library.merged' : 'library.imported'));
+      } catch (error) {
+        restoreImportRecovery(recovery.previous);
+        throw error;
+      }
     } catch (error) {
       options.notify(
         t(

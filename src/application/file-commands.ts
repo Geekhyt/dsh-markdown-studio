@@ -26,7 +26,9 @@ export interface FileActionsOptions {
   setFileName: (name: string) => void;
   resetEditorTo: (entry: DocumentSeed) => void;
   setDocumentRef: (ref: DocumentRef) => void;
-  stampFile: (handle: FileSystemFileHandle, file: File) => Promise<void>;
+  stampFile: (handle: FileSystemFileHandle, file: File, text?: string) => Promise<void>;
+  flushBeforeSwitch?: () => Promise<boolean>;
+  isPageAlive?: () => boolean;
   download: (name: string, content: Blob | string, mime: string) => boolean;
   isAbortError: (error: unknown) => boolean;
   errorMessage: (error: unknown) => string;
@@ -53,16 +55,21 @@ export function createFileCommands(options: FileActionsOptions): FileActionsApi 
         multiple: false,
         types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md', '.markdown', '.txt'] } }],
       });
+      if (options.isPageAlive && !options.isPageAlive()) return;
+      if (options.flushBeforeSwitch && !(await options.flushBeforeSwitch())) return;
+      const targetArticleId = options.store.getActive().id;
       const handle = handles[0];
       const file = await handle.getFile();
       const text = await file.text();
+      if ((options.isPageAlive && !options.isPageAlive()) || options.store.getActive().id !== targetArticleId) return;
       options.resetEditorTo({
         title: options.deriveTitle(text),
         markdown: text,
         settings: options.settings,
         view: options.view,
       });
-      await options.stampFile(handle, file);
+      await options.stampFile(handle, file, text);
+      if ((options.isPageAlive && !options.isPageAlive()) || options.store.getActive().id !== targetArticleId) return;
       options.setDocumentRef({ kind: 'file', handle });
       options.setFileName(file.name);
       options.notify(t('file.opened'));

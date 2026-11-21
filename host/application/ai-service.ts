@@ -95,10 +95,13 @@ function appendProviderModels(out: HostLlmModelEntry[], provider: string, entrie
 
 async function collectCatalogModels(llm: HostLlmRuntime): Promise<HostLlmModelEntry[]> {
   if (typeof llm.listProviders !== 'function' || typeof llm.listModels !== 'function') return [];
+  const providers = (await llm.listProviders()).map(providerIdOf).filter(Boolean);
+  const settled = await Promise.allSettled(
+    providers.map(async (provider) => ({ provider, entries: await llm.listModels!(provider) })),
+  );
   const out: HostLlmModelEntry[] = [];
-  for (const rawProvider of await llm.listProviders()) {
-    const provider = providerIdOf(rawProvider);
-    if (provider) appendProviderModels(out, provider, await llm.listModels(provider));
+  for (const item of settled) {
+    if (item.status === 'fulfilled') appendProviderModels(out, item.value.provider, item.value.entries);
   }
   return out;
 }
@@ -219,6 +222,7 @@ export class AiHostService {
     if (!llm) {
       throw new AiHostError('LLM_UNAVAILABLE', '宿主模型服务不可用', '请确认在 DeepSeek Harness 宿主环境中运行。');
     }
+    if (signal?.aborted) throw new AiHostError('ABORTED', '已停止生成');
     const { system, prompt } = validateStreamTexts(input.system, input.prompt);
     const route = await this.resolveRoute(input.provider, input.model);
     const reasoningEffort = await resolveFastReasoningEffort(llm, route.provider, route.model, signal);
@@ -237,12 +241,19 @@ export class AiHostService {
     };
     if (system) streamOptions.system = system;
     if (reasoningEffort) streamOptions.reasoningEffort = reasoningEffort;
+    let finished = false;
     for await (const chunk of llm.stream(streamOptions)) {
+      if (signal?.aborted) throw new AiHostError('ABORTED', '已停止生成');
       if (chunk.type === 'text-delta' && 'text' in chunk && chunk.text) {
         onDelta(chunk.text);
       } else if (chunk.type === 'finish' && 'reason' in chunk && chunk.reason) {
         checkTerminalChunk(chunk.reason);
+        finished = true;
       }
+    }
+    if (signal?.aborted) throw new AiHostError('ABORTED', '已停止生成');
+    if (!finished) {
+      throw new AiHostError('STREAM_INTERRUPTED', '模型流意外中断，输出可能不完整', '请重试生成。');
     }
     return route;
   }
