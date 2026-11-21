@@ -64,6 +64,8 @@ export interface DocumentLibraryOptions {
   view: ViewMode;
   onActivate: (entry: Article) => void;
   onPruneAssets?: (bypassGraceFor?: Iterable<string>) => void;
+  needsFlushBeforeSwitch?: () => boolean;
+  flushBeforeSwitch?: () => Promise<boolean>;
 }
 
 export interface DocumentLibraryApi extends TrashCommandsApi {
@@ -71,8 +73,8 @@ export interface DocumentLibraryApi extends TrashCommandsApi {
   openSeq: number;
   openLibrary: () => void;
   closeLibrary: () => void;
-  switchDocument: (id: string) => void;
-  newDocument: () => void;
+  switchDocument: (id: string) => Promise<void> | void;
+  newDocument: () => Promise<void> | void;
   deleteDocument: (id: string) => Promise<void>;
 }
 
@@ -97,30 +99,49 @@ export function useDocumentLibrary(options: DocumentLibraryOptions): DocumentLib
     setOpen(false);
   }
 
-  function switchDocument(id: string): void {
-    const target = options.store.switchTo(id);
-    if (!target) return;
-    options.onActivate(target);
-    options.onPruneAssets?.();
-    setOpen(false);
+  function runAfterFlush(action: () => void): Promise<void> | void {
+    if (!options.flushBeforeSwitch || (options.needsFlushBeforeSwitch && !options.needsFlushBeforeSwitch())) {
+      action();
+      return;
+    }
+    return options.flushBeforeSwitch().then(function (ok) {
+      if (ok) action();
+    });
   }
 
-  function newDocument(): void {
-    const entry = options.store.create({
-      title: options.t('untitled'),
-      markdown: '',
-      settings: options.settings,
-      view: 'split',
+  function switchDocument(id: string): Promise<void> | void {
+    if (id === options.store.getActive().id) {
+      setOpen(false);
+      return;
+    }
+    return runAfterFlush(function () {
+      const target = options.store.switchTo(id);
+      if (!target) return;
+      options.onActivate(target);
+      options.onPruneAssets?.();
+      setOpen(false);
     });
-    options.onActivate(entry);
-    options.onPruneAssets?.();
-    setOpen(false);
+  }
+
+  function newDocument(): Promise<void> | void {
+    return runAfterFlush(function () {
+      const entry = options.store.create({
+        title: options.t('untitled'),
+        markdown: '',
+        settings: options.settings,
+        view: 'split',
+      });
+      options.onActivate(entry);
+      options.onPruneAssets?.();
+      setOpen(false);
+    });
   }
 
   async function deleteDocument(id: string): Promise<void> {
     const ok = await options.confirm({ title: options.t('library.deleteConfirm'), danger: true });
     if (!ok) return;
     const previousActive = options.store.getActive().id;
+    if (previousActive === id && options.flushBeforeSwitch && !(await options.flushBeforeSwitch())) return;
     const next = options.store.delete(id, options.t('untitled'));
     if (previousActive === id) {
       options.onActivate(next);

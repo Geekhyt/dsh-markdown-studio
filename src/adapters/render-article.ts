@@ -77,21 +77,22 @@ function applyThemeTldrTitles(root: HTMLElement, themeId: string, locale?: 'zh' 
   );
 }
 
+function labelScrollRegions(nodes: HTMLElement[], baseLabel: string): void {
+  const multi = nodes.length > 1;
+  nodes.forEach(function (node, index) {
+    node.setAttribute('tabindex', '0');
+    node.setAttribute('role', 'region');
+    node.setAttribute('aria-label', multi ? `${baseLabel} ${index + 1}` : baseLabel);
+  });
+}
+
 function markPreviewScrollRegions(root: HTMLElement, options: RenderArticleOptions): void {
   if (!options.forPreview) return;
   const isEn = options.locale === 'en';
   const vLabel = options.scrollVerticalHint || (isEn ? 'Vertical scroll region' : '上下滑动区域');
   const hLabel = options.scrollHorizontalHint || (isEn ? 'Horizontal scroll region' : '左右滑动区域');
-  Array.from(root.querySelectorAll<HTMLElement>('.mdstudio-scroll-body')).forEach(function (node) {
-    node.setAttribute('tabindex', '0');
-    node.setAttribute('role', 'region');
-    node.setAttribute('aria-label', vLabel);
-  });
-  Array.from(root.querySelectorAll<HTMLElement>('.mdstudio-scroll-track')).forEach(function (node) {
-    node.setAttribute('tabindex', '0');
-    node.setAttribute('role', 'region');
-    node.setAttribute('aria-label', hLabel);
-  });
+  labelScrollRegions(Array.from(root.querySelectorAll<HTMLElement>('.mdstudio-scroll-body')), vLabel);
+  labelScrollRegions(Array.from(root.querySelectorAll<HTMLElement>('.mdstudio-scroll-track')), hLabel);
 }
 
 export function renderArticle(
@@ -137,11 +138,13 @@ export function renderArticle(
   var mathNodes = Array.from(root.querySelectorAll<HTMLElement>('.mdstudio-math'));
   const math = typeof window !== 'undefined' ? window.__MDSTUDIO_MATH__ : undefined;
   if (mathNodes.length && math) {
+    const mathLabelPrefix = options.locale === 'en' ? 'Formula: ' : '公式：';
     mathNodes.forEach(function (node) {
       try {
         node.innerHTML = math.render(
           node.getAttribute('data-mdstudio-tex'),
           node.getAttribute('data-mdstudio-display') === '1',
+          mathLabelPrefix,
         );
         node.setAttribute('data-mdstudio-math', 'true');
       } catch (error) {
@@ -224,14 +227,13 @@ export function renderArticle(
     stripFontFamilies(root);
   }
   var codeBlockAria = options.codeBlockAriaLabel || (options.locale === 'en' ? 'Code block' : '代码块');
-  Array.from(root.querySelectorAll<HTMLPreElement>('pre')).forEach(function (pre) {
+  const preNodes = Array.from(root.querySelectorAll<HTMLPreElement>('pre'));
+  preNodes.forEach(function (pre) {
     if (!pre.style.getPropertyValue('overflow-x')) pre.style.setProperty('overflow-x', 'auto');
     if (!pre.style.getPropertyValue('white-space')) pre.style.setProperty('white-space', 'pre');
     if (!pre.style.getPropertyValue('word-break')) pre.style.setProperty('word-break', 'normal');
-    pre.setAttribute('tabindex', '0');
-    pre.setAttribute('role', 'region');
-    pre.setAttribute('aria-label', codeBlockAria);
   });
+  labelScrollRegions(preNodes, codeBlockAria);
   markPreviewScrollRegions(root, options);
   if (settings.codeNbsp && document.createTreeWalker) {
     Array.from(root.querySelectorAll<HTMLPreElement>('pre')).forEach(function (pre) {

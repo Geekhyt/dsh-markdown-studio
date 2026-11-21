@@ -1,4 +1,4 @@
-import { contrast, DARK_STAGE_DEFAULT, ensureContrast, rgbToHex } from '../theme-system/color';
+import { contrast, DARK_STAGE_DEFAULT, ensureContrast, parseHex, rgbToHex } from '../theme-system/color';
 
 const DARK_TEXT_MIN_CONTRAST = 4.5;
 
@@ -30,18 +30,41 @@ function luminance(color: string): number {
   return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
 }
 
+function compositeOver(
+  fg: [number, number, number],
+  alpha: number,
+  bg: [number, number, number],
+): [number, number, number] {
+  const a = Math.max(0, Math.min(1, alpha));
+  return [fg[0] * a + bg[0] * (1 - a), fg[1] * a + bg[1] * (1 - a), fg[2] * a + bg[2] * (1 - a)];
+}
+
 function nearestOpaqueBgHex(element: HTMLElement, stopAt: HTMLElement): { hex: string; lum: number } {
+  const layers: Array<{ rgb: [number, number, number]; alpha: number }> = [];
+  let baseRgb: [number, number, number] = parseHex(DARK_STAGE_DEFAULT);
   let cursor: HTMLElement | null = element;
   while (cursor) {
     const bg = window.getComputedStyle(cursor).backgroundColor;
-    if (alphaOf(bg) >= 0.08) {
+    const alpha = alphaOf(bg);
+    if (alpha > 0.01) {
       const rgb = rgbTuple(bg);
-      if (rgb) return { hex: rgbToHex(rgb[0], rgb[1], rgb[2]), lum: luminance(bg) };
+      if (rgb) {
+        if (alpha >= 0.99) {
+          baseRgb = rgb;
+          break;
+        }
+        layers.push({ rgb, alpha });
+      }
     }
     if (cursor === stopAt) break;
     cursor = cursor.parentElement;
   }
-  return { hex: DARK_STAGE_DEFAULT, lum: 0.05 };
+  let blended = baseRgb;
+  for (let i = layers.length - 1; i >= 0; i--) {
+    blended = compositeOver(layers[i].rgb, layers[i].alpha, blended);
+  }
+  const hex = rgbToHex(blended[0], blended[1], blended[2]);
+  return { hex, lum: luminance(`rgb(${blended[0]}, ${blended[1]}, ${blended[2]})`) };
 }
 
 function hasDirectTextOrMath(element: HTMLElement): boolean {

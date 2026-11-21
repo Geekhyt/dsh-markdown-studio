@@ -14,6 +14,7 @@ import { observeHostTitlebarInset } from './adapters/host-shell';
 import { prepareImageForWechat } from './adapters/image-encode';
 import { renderArticle } from './adapters/render-article';
 import {
+  hasFuturePersistedLibrary,
   LIBRARY_KEY_V2,
   LibraryStorageError,
   loadInitialLibrary,
@@ -349,6 +350,23 @@ export function createClientPlugin(
     });
     const { markdownRef, lastSelectionRef, setMarkdown } = docHistory;
 
+    function revealRange(start: number, end: number): void {
+      lastSelectionRef.current = { start, end };
+      window.requestAnimationFrame(() => {
+        if (codeMirrorApiRef.current?.revealRange) {
+          codeMirrorApiRef.current.revealRange(start, end);
+          return;
+        }
+        const ta = textareaRef.current;
+        if (!ta) return;
+        try {
+          ta.setSelectionRange(start, end);
+        } catch {
+          /* ignore */
+        }
+      });
+    }
+
     function focusRange(start: number, end: number): void {
       window.requestAnimationFrame(() => {
         if (codeMirrorApiRef.current) {
@@ -428,11 +446,21 @@ export function createClientPlugin(
       },
     });
 
+    const openTransitionSeqRef = React.useRef(0);
+    function claimOpenTransition(): () => boolean {
+      const seq = ++openTransitionSeqRef.current;
+      return () => pageAliveRef.current && openTransitionSeqRef.current === seq;
+    }
+
     function detachFileContext(): void {
       cancelAutosaveRef.current();
       dirtyDiskRef.current = false;
       fileContext.reset(store.getActive().id);
       fileContext.setFileName('');
+    }
+
+    function needsLinkedFileFlush(): boolean {
+      return Boolean(fileContext.linkedFile() && dirtyDiskRef.current && !fileContext.conflictRef.current);
     }
 
     async function flushLinkedFileBeforeSwitch(): Promise<boolean> {
@@ -449,15 +477,20 @@ export function createClientPlugin(
           }
           return true;
         }
+        notify(t(result === 'denied' ? 'file.permission' : 'file.saveFailed'), 'error');
         return false;
       } catch {
+        notify(t('file.saveFailed'), 'error');
         return false;
       }
     }
 
+    const activeLang = lang();
+
     const writingSkills = useWritingSkills({
       React,
       t,
+      locale: activeLang,
       notify,
       aiClient,
       markdown: doc.markdown,
@@ -492,9 +525,21 @@ export function createClientPlugin(
       window.setTimeout(() => focusRange(0, 0), 30);
     }
 
+    const deferredCssDraft = useDeferredText(liveCssDraft);
+    const previewSettings = React.useMemo(
+      () => resolvePreviewSettings(settings, cssWorkbench.open, deferredCssDraft),
+      [settings, cssWorkbench.open, deferredCssDraft],
+    );
+
     const mermaidTheme = React.useMemo(
-      () => themes.mermaidThemeFor(settings),
-      [settings.theme, settings.accent, settings.fontSize, settings.lineHeight, settings.customThemes],
+      () => themes.mermaidThemeFor(previewSettings),
+      [
+        previewSettings.theme,
+        previewSettings.accent,
+        previewSettings.fontSize,
+        previewSettings.lineHeight,
+        previewSettings.customThemes,
+      ],
     );
     const mermaidAssets = useMermaidAssets({
       React,
@@ -525,6 +570,7 @@ export function createClientPlugin(
       }),
     );
     const pruneOrphanAssets = (bypassGraceFor?: Iterable<string>) => {
+      if (hasFuturePersistedLibrary()) return;
       void assetGc.prune(bypassGraceFor ? { bypassGraceFor } : undefined);
     };
 
@@ -536,7 +582,12 @@ export function createClientPlugin(
       confirm: dialogHost.confirm,
       settings,
       view,
-      onActivate: (entry) => resetEditorTo(entry, true),
+      needsFlushBeforeSwitch: needsLinkedFileFlush,
+      flushBeforeSwitch: flushLinkedFileBeforeSwitch,
+      onActivate: (entry) => {
+        openTransitionSeqRef.current++;
+        resetEditorTo(entry, true);
+      },
       onPruneAssets: pruneOrphanAssets,
     });
 
@@ -569,17 +620,20 @@ export function createClientPlugin(
       fileContext,
       onMenuClose: () => setMenuOpen(false),
       onOpenFile: async (directory, entry, text, openedFile) => {
-        if (!(await flushLinkedFileBeforeSwitch())) return;
-        const isStaleOpen = (): boolean => !pageAliveRef.current || fileContext.linkedFile() !== entry.handle;
+        const isCurrentOpen = claimOpenTransition();
+        if (!(await flushLinkedFileBeforeSwitch())) return false;
+        if (!isCurrentOpen()) return false;
         const fileObj = openedFile || (await entry.handle.getFile());
+        if (!isCurrentOpen()) return false;
         resetEditorTo({ title: deriveTitleWithFallback(text), markdown: text, settings, view });
         await fileContext.stampFile(entry.handle, fileObj, text);
-        if (!pageAliveRef.current) return;
+        if (!isCurrentOpen()) return false;
         fileContext.applyDocumentRef({ kind: 'folder', directory, file: entry.handle });
-        if (isStaleOpen()) return;
+        const isStaleOpen = (): boolean => !isCurrentOpen() || fileContext.linkedFile() !== entry.handle;
+        if (isStaleOpen()) return false;
         fileContext.setFileName(entry.name);
         const imported = await importFolderAssets(directory, text, hostClient, trackInFlightAsset);
-        if (isStaleOpen() || store.getActive().markdown !== text) return;
+        if (isStaleOpen() || store.getActive().markdown !== text) return true;
         if (imported.text !== text) {
           setMarkdown(imported.text, {
             boundary: true,
@@ -587,6 +641,7 @@ export function createClientPlugin(
             prevSelection: selection(),
           });
         }
+        return true;
       },
     });
     const workspace = workspaceTools.state;
@@ -629,6 +684,11 @@ export function createClientPlugin(
       setDocumentRef: fileContext.applyDocumentRef,
       stampFile: fileContext.stampFile,
       flushBeforeSwitch: flushLinkedFileBeforeSwitch,
+      claimOpenTransition,
+      onSaved: (writtenContent) => {
+        cancelAutosaveRef.current();
+        if (markdownRef.current === writtenContent) dirtyDiskRef.current = false;
+      },
       isPageAlive: () => pageAliveRef.current,
       download: downloadFile,
       isAbortError,
@@ -646,7 +706,9 @@ export function createClientPlugin(
       hostClient,
       localImageServerUrl,
       download: downloadFile,
+      flushBeforeSwitch: flushLinkedFileBeforeSwitch,
       onReplace: (entry) => {
+        openTransitionSeqRef.current++;
         resetEditorTo(entry, true);
         pruneOrphanAssets();
       },
@@ -667,6 +729,7 @@ export function createClientPlugin(
       selection,
       setMarkdown,
       focusRange,
+      revealRange,
       notify,
       t,
       searchPanel,
@@ -696,8 +759,6 @@ export function createClientPlugin(
     function resetStyles(): void {
       store.updateActive({ settings: { ...themes.DEFAULT_SETTINGS, customThemes: settings.customThemes || [] } });
     }
-
-    const activeLang = lang();
 
     const articleExport = createArticleExporter({
       React,
@@ -863,7 +924,22 @@ export function createClientPlugin(
     useWindowEvent(React, 'storage', (event: StorageEvent) => {
       if (event.key !== LIBRARY_KEY_V2 || store.getStatus() !== 'saved') return;
       const external = loadPersistedLibrary();
-      if (external) store.syncExternal(external);
+      if (!external) return;
+      const prevActive = store.getActive();
+      store.syncExternal(external);
+      const nextActive = store.getActive();
+      if (nextActive.id !== prevActive.id) {
+        openTransitionSeqRef.current++;
+        detachFileContext();
+        docHistory.reset(nextActive.markdown);
+      } else if (nextActive.markdown !== prevActive.markdown) {
+        docHistory.reset(nextActive.markdown);
+      }
+    });
+
+    useWindowEvent(React, 'resize', () => {
+      selectionBubble.clear();
+      selectionBubble.clearPointer();
     });
 
     useWindowEvent(
@@ -882,8 +958,14 @@ export function createClientPlugin(
           writingSkills.managerOpen,
         ].some(Boolean);
         if (blocked) return;
-        setMenuOpen(false);
-        if (!menuOpen) setDrawerOpen(false);
+        if (menuOpen) {
+          setMenuOpen(false);
+          return;
+        }
+        // Keep the docked desktop inspector open when pressing Esc inside the editor (CodeMirror Esc->Tab escape).
+        const targetEl = event.target instanceof Element ? event.target : null;
+        if (targetEl?.closest('.mdstudio-editor-pane')) return;
+        setDrawerOpen(false);
       },
       menuOpen || drawerOpen,
     );
@@ -988,6 +1070,7 @@ export function createClientPlugin(
       return () => {
         alive = false;
         pageAliveRef.current = false;
+        store.flush();
         window.clearTimeout(migrateTimer);
         clearAutosaveTimer();
         cancelAutosaveRef.current = () => {};
@@ -1109,11 +1192,6 @@ export function createClientPlugin(
       () => writingSkills.previewMarkdown(deferredMarkdown),
       [deferredMarkdown, writingSkills.session],
     );
-    const deferredCssDraft = useDeferredText(liveCssDraft);
-    const previewSettings = React.useMemo(
-      () => resolvePreviewSettings(settings, cssWorkbench.open, deferredCssDraft),
-      [settings, cssWorkbench.open, deferredCssDraft],
-    );
     const headings = React.useMemo(
       () => (outlineOpen ? markdownHeadings(doc.markdown) : []),
       [outlineOpen, doc.markdown],
@@ -1219,6 +1297,8 @@ export function createClientPlugin(
           },
           onToggleDrawer: () => {
             if (!drawerOpen) setDrawerTab('theme');
+            selectionBubble.clear();
+            selectionBubble.clearPointer();
             setDrawerOpen(!drawerOpen);
             setMenuOpen(false);
           },

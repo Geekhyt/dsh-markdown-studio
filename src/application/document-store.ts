@@ -326,10 +326,12 @@ export class DocumentStore {
   }
 
   private write(): boolean {
-    if (this.loadLatest && !this.structuralDirty && this.dirtyDocIds.size > 0) {
+    let mergedFromDisk = false;
+    if (this.loadLatest && !this.structuralDirty) {
       const disk = this.loadLatest();
       if (disk && disk.docs.length > 0) {
         this.state = mergeExternalLibrary(this.state, disk, this.dirtyDocIds);
+        mergedFromDisk = true;
       }
     }
     const ok = this.persist(this.state);
@@ -339,6 +341,11 @@ export class DocumentStore {
       this.dirtyDocIds.clear();
     }
     this.setStatus(ok ? 'saved' : 'error');
+    if (mergedFromDisk) {
+      this.listeners.forEach((listener) => {
+        listener();
+      });
+    }
     return ok;
   }
 

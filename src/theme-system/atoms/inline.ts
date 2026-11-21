@@ -246,7 +246,7 @@ export var LEAD = {
           '; font-weight: 700;',
       ),
       rule(
-        '.mdstudio-lead a, .mdstudio-lead .mdstudio-link, .mdstudio-lead sup, .mdstudio-lead .mdstudio-ref, .mdstudio-lead .mdstudio-footnote-ref',
+        '.mdstudio-lead a, .mdstudio-lead .mdstudio-link, .mdstudio-lead sup, .mdstudio-lead .mdstudio-ref, .mdstudio-lead .mdstudio-footnote-ref, .mdstudio-lead del, .mdstudio-lead strong, .mdstudio-lead b',
         'color: ' + v('onAccent2') + '; border-bottom-color: ' + v('onAccent2') + ';',
       ),
     ];

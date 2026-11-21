@@ -109,17 +109,24 @@ const ALLOWED_DESKTOP_PROTOCOLS = new Set(['dsh-app:', 'dsh:', 'app:', 'file:'])
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
 
 export function isLoopbackHostHeader(host: string): boolean {
-  if (!host) return true;
+  const trimmed = host.trim();
+  if (!trimmed) return false;
   try {
-    const parsed = new URL('http://' + host.trim());
+    const parsed = new URL('http://' + trimmed);
+    if (parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) return false;
     return LOOPBACK_HOSTS.has(parsed.hostname.toLowerCase());
   } catch {
     return false;
   }
 }
 
+export function isLoopbackReq(req: IncomingMessage): boolean {
+  const remote = req.socket?.remoteAddress ? String(req.socket.remoteAddress) : '';
+  return remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
+}
+
 function isAllowedOrigin(origin: string, host: string, site: string): boolean {
-  if (!isLoopbackHostHeader(host)) return false;
+  if (host && !isLoopbackHostHeader(host)) return false;
   if (!origin) return site !== 'cross-site';
   // An opaque `null` origin is only trusted when the browser vouches for it via Sec-Fetch-Site.
   if (origin === 'null') return site === 'same-origin' || site === 'none';
@@ -132,12 +139,11 @@ function isAllowedOrigin(origin: string, host: string, site: string): boolean {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     return ALLOWED_DESKTOP_PROTOCOLS.has(parsed.protocol);
   }
-  return parsed.host.toLowerCase() === host.toLowerCase() && LOOPBACK_HOSTS.has(parsed.hostname.toLowerCase());
-}
-
-function isLoopbackRequest(req: IncomingMessage): boolean {
-  const remote = req.socket && req.socket.remoteAddress ? String(req.socket.remoteAddress) : '';
-  return remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
+  return (
+    Boolean(host) &&
+    parsed.host.toLowerCase() === host.toLowerCase() &&
+    LOOPBACK_HOSTS.has(parsed.hostname.toLowerCase())
+  );
 }
 
 function validateImageRequest(req: IncomingMessage, res: ServerResponse): boolean {
@@ -145,7 +151,7 @@ function validateImageRequest(req: IncomingMessage, res: ServerResponse): boolea
     sendJson(res, 405, { ok: false, error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed' } });
     return false;
   }
-  if (!isLoopbackRequest(req)) {
+  if (!isLoopbackReq(req)) {
     sendJson(res, 403, { ok: false, error: { code: 'LOOPBACK_ONLY', message: '图片接口仅允许本机访问' } });
     return false;
   }
@@ -239,11 +245,6 @@ export function createImageRoute(options: {
       });
     }
   };
-}
-
-function isLoopbackReq(req: IncomingMessage): boolean {
-  const remote = req.socket?.remoteAddress ? String(req.socket.remoteAddress) : '';
-  return remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
 }
 
 function sendAssetText(res: ServerResponse, status: number, text: string, headOnly = false): void {

@@ -1,4 +1,5 @@
 import { isDark, mix } from '../theme-system/color';
+import { isRootThemeSelector, parseCssRules } from './custom-css';
 
 export const CUSTOM_THEME_PREFIX = 'custom:';
 export const MAX_CUSTOM_THEMES = 24;
@@ -128,41 +129,40 @@ export function normalizeHexColor(value: string): string {
   return '';
 }
 
-function lastCssHex(cleanCss: string, variableName: string): string {
-  const pattern = new RegExp(variableName + '\\s*:\\s*(#[0-9a-f]{3}(?:[0-9a-f]{3})?)\\b', 'gi');
-  let found = '';
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(cleanCss))) {
-    found = normalizeHexColor(match[1]) || found;
-  }
-  return found;
-}
-
-function rootPropertyHex(cleanCss: string, prop: string): string {
-  const blockRe = /(?:#mdstudio|\.mdstudio-content)\s*\{([^}]*)\}/gi;
-  const propRe = new RegExp(`(?:^|;|\\s)${prop}\\s*:\\s*(#[0-9a-fA-F]{3,6})\\b`, 'g');
-  let found = '';
-  let blockMatch: RegExpExecArray | null;
-  while ((blockMatch = blockRe.exec(cleanCss))) {
-    propRe.lastIndex = 0;
-    let propMatch: RegExpExecArray | null;
-    while ((propMatch = propRe.exec(blockMatch[1]))) {
-      found = normalizeHexColor(propMatch[1]) || found;
-    }
-  }
-  return found;
+function extractSolidHex(value: string): string {
+  // Remove parenthesized functions (e.g. `linear-gradient(...)`, `url(...)`) so gradient stops aren't mistaken for solid bg.
+  const outsideParens = String(value || '')
+    .replace(/\([^()]*\)/g, ' ')
+    .replace(/\([^()]*\)/g, ' ');
+  const match = /(?:^|\s)(#[0-9a-f]{3}(?:[0-9a-f]{3})?)(?=$|[\s;!])/i.exec(outsideParens);
+  return match ? normalizeHexColor(match[1]) : '';
 }
 
 export function extractCustomThemePreview(css: string, fallbackAccent = '#3d57e6'): CustomThemePreview {
-  const clean = String(css || '').replace(/\/\*[\s\S]*?\*\//g, '');
-  const bg = lastCssHex(clean, '--mdstudio-bg') || rootPropertyHex(clean, 'background-color') || '#ffffff';
-  const accent = lastCssHex(clean, '--mdstudio-accent') || normalizeHexColor(fallbackAccent) || '#3d57e6';
+  const rules = parseCssRules(css);
+  let varBg = '';
+  let varAccent = '';
+  let varHeading = '';
+  let varText = '';
+  let rootBg = '';
+  let rootColor = '';
+  for (const rule of rules) {
+    const isRoot = rule.selectors.some(isRootThemeSelector);
+    for (const decl of rule.declarations) {
+      const hex = extractSolidHex(decl.value);
+      if (!hex) continue;
+      if (decl.prop === '--mdstudio-bg') varBg = hex;
+      else if (decl.prop === '--mdstudio-accent') varAccent = hex;
+      else if (decl.prop === '--mdstudio-heading') varHeading = hex;
+      else if (decl.prop === '--mdstudio-text') varText = hex;
+      else if (isRoot && (decl.prop === 'background-color' || decl.prop === 'background')) rootBg = hex;
+      else if (isRoot && decl.prop === 'color') rootColor = hex;
+    }
+  }
+  const bg = varBg || rootBg || '#ffffff';
+  const accent = varAccent || normalizeHexColor(fallbackAccent) || '#3d57e6';
   const dark = isDark(bg);
-  const fg =
-    lastCssHex(clean, '--mdstudio-heading') ||
-    lastCssHex(clean, '--mdstudio-text') ||
-    rootPropertyHex(clean, 'color') ||
-    (dark ? '#f3f4f6' : '#1f2328');
+  const fg = varHeading || varText || rootColor || (dark ? '#f3f4f6' : '#1f2328');
   return {
     bg,
     fg,

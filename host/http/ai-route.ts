@@ -154,6 +154,7 @@ async function handleStreamAction(
   body: Record<string, unknown>,
   res: ServerResponse,
 ): Promise<void> {
+  if (res.destroyed || res.closed || res.socket?.destroyed) return;
   const controller = new AbortController();
   res.on('close', () => {
     if (!res.writableEnded) controller.abort();

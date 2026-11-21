@@ -1947,58 +1947,14 @@ function disambiguateFootnoteMarkers(html: string, ctx: RenderContext, locale?: 
     .replace(/(<p class="mdstudio-footnote-item" id="mdstudio-fn-\d+">)\[(\d+)\]/g, '$1[' + prefix + '$2]');
 }
 
-function lineHasInlineMath(line: string): boolean {
-  let i = 0;
-  while (i < line.length) {
-    const ch = line.charAt(i);
-    if (ch === '`') {
-      let ticks = 1;
-      while (line.charAt(i + ticks) === '`') ticks++;
-      const close = findCodeSpanClose(line, i + ticks, ticks);
-      i = close === -1 ? i + ticks : close + ticks;
-      continue;
-    }
-    if (ch === '\\') {
-      if (inlineTeXMath(line, i)) return true;
-      i += 2;
-      continue;
-    }
-    if (ch === '$' && inlineMath(line, i)) return true;
-    i++;
-  }
-  return false;
-}
-
-/** Parser-consistent math syntax detector: ignores code fences, inline code, escapes, and currency `$`. */
+/**
+ * Single-source math syntax detector: delegates directly to `renderMarkdown` when `$` or `\`
+ * appears, guaranteeing 100% parity across multiline `$$` blocks, blockquotes, lists, code
+ * fences, escapes, and currency prose.
+ */
 export function containsMath(source: string): boolean {
   if (!source || !/[$\\]/.test(source)) return false;
-  const normalized = source.replace(/\r\n?/g, '\n');
-  const fm = parseFrontmatter(normalized);
-  const lines = (fm ? fm.rest : normalized).split('\n');
-  let fence: FenceOpening | null = null;
-  let openBlockDelim: '$$' | '\\]' | null = null;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const nextFence = stepFenceState(fence, line);
-    if (fence || nextFence) {
-      fence = nextFence;
-      continue;
-    }
-    if (openBlockDelim) {
-      if (line.includes(openBlockDelim)) return true;
-      continue;
-    }
-    if (/^\s*\$\$\s*$/.test(line)) {
-      openBlockDelim = '$$';
-      continue;
-    }
-    if (/^\s*\\\[\s*$/.test(line)) {
-      openBlockDelim = '\\]';
-      continue;
-    }
-    if (lineHasInlineMath(line)) return true;
-  }
-  return false;
+  return renderMarkdown(source).html.includes('class="mdstudio-math"');
 }
 
 export function renderMarkdown(source: unknown, options?: RenderOptions): RenderResult {

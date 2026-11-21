@@ -33,8 +33,17 @@ export function useDialogHost(
 ): DialogHostApi {
   const h = React.createElement;
   const [dialog, setDialog] = React.useState<ActiveDialog | null>(null);
+  const activeRef = React.useRef<ActiveDialog | null>(null);
   const [value, setValue] = React.useState('');
   const focusedPromptRef = React.useRef(false);
+
+  function settlePrevious(): void {
+    const prev = activeRef.current;
+    activeRef.current = null;
+    if (!prev) return;
+    if (prev.kind === 'confirm') prev.resolve(false);
+    else prev.resolve(null);
+  }
 
   function bindPromptInput(el: HTMLInputElement | null): void {
     if (!el || focusedPromptRef.current) return;
@@ -50,21 +59,28 @@ export function useDialogHost(
   }
 
   function confirm(options: ConfirmDialogOptions): Promise<boolean> {
+    settlePrevious();
     return new Promise(function (resolve) {
-      setDialog({ kind: 'confirm', ...options, resolve });
+      const next: ActiveDialog = { kind: 'confirm', ...options, resolve };
+      activeRef.current = next;
+      setDialog(next);
     });
   }
 
   function prompt(options: PromptDialogOptions): Promise<string | null> {
+    settlePrevious();
     focusedPromptRef.current = false;
     setValue(options.defaultValue || '');
     return new Promise(function (resolve) {
-      setDialog({ kind: 'prompt', ...options, resolve });
+      const next: ActiveDialog = { kind: 'prompt', ...options, resolve };
+      activeRef.current = next;
+      setDialog(next);
     });
   }
 
   function cancel(): void {
-    const active = dialog;
+    const active = activeRef.current || dialog;
+    activeRef.current = null;
     setDialog(null);
     if (!active) return;
     if (active.kind === 'confirm') active.resolve(false);
@@ -72,14 +88,16 @@ export function useDialogHost(
   }
 
   function submit(): void {
-    const active = dialog;
+    const active = activeRef.current || dialog;
     if (!active) return;
     if (active.kind === 'confirm') {
+      activeRef.current = null;
       setDialog(null);
       active.resolve(true);
       return;
     }
     if (!active.allowEmpty && !value.trim()) return;
+    activeRef.current = null;
     setDialog(null);
     active.resolve(value);
   }

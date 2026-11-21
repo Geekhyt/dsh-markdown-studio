@@ -193,4 +193,52 @@ await assert.rejects(
   /ZIP_LIMIT_EXCEEDED/,
 );
 
+// Split-entry aggregate compression ratio bomb rejection (2 entries × 1 MiB <= single-entry threshold)
+const splitChunk = Buffer.alloc(1024 * 1024);
+const deflatedChunk = deflateRawSync(splitChunk);
+const splitCrc = crc32(splitChunk);
+const splitParts: Buffer[] = [];
+const splitCentral: Buffer[] = [];
+let splitOffset = 0;
+for (let idx = 0; idx < 2; idx++) {
+  const nameBuf = Buffer.from(`chunk-${idx}.bin`);
+  const lfh = Buffer.alloc(30);
+  lfh.writeUInt32LE(0x04034b50, 0);
+  lfh.writeUInt16LE(20, 4);
+  lfh.writeUInt16LE(8, 8);
+  lfh.writeUInt32LE(splitCrc, 14);
+  lfh.writeUInt32LE(deflatedChunk.length, 18);
+  lfh.writeUInt32LE(splitChunk.length, 22);
+  lfh.writeUInt16LE(nameBuf.length, 26);
+  const cdh = Buffer.alloc(46);
+  cdh.writeUInt32LE(0x02014b50, 0);
+  cdh.writeUInt16LE(20, 4);
+  cdh.writeUInt16LE(20, 6);
+  cdh.writeUInt16LE(8, 10);
+  cdh.writeUInt32LE(splitCrc, 16);
+  cdh.writeUInt32LE(deflatedChunk.length, 20);
+  cdh.writeUInt32LE(splitChunk.length, 24);
+  cdh.writeUInt16LE(nameBuf.length, 28);
+  cdh.writeUInt32LE(splitOffset, 42);
+  splitParts.push(lfh, nameBuf, deflatedChunk);
+  splitCentral.push(cdh, nameBuf);
+  splitOffset += lfh.length + nameBuf.length + deflatedChunk.length;
+}
+const splitCentralBuf = Buffer.concat(splitCentral);
+const splitEocd = Buffer.alloc(22);
+splitEocd.writeUInt32LE(0x06054b50, 0);
+splitEocd.writeUInt16LE(2, 8);
+splitEocd.writeUInt16LE(2, 10);
+splitEocd.writeUInt32LE(splitCentralBuf.length, 12);
+splitEocd.writeUInt32LE(splitOffset, 16);
+const splitBomb = Buffer.concat([...splitParts, splitCentralBuf, splitEocd]);
+await assert.rejects(
+  () =>
+    unzipEntries(
+      splitBomb.buffer.slice(splitBomb.byteOffset, splitBomb.byteOffset + splitBomb.byteLength) as ArrayBuffer,
+    ),
+  /ZIP_LIMIT_EXCEEDED/,
+  'aggregate archive compression ratio guard rejects split <=1 MiB zip bombs',
+);
+
 console.log('ok - ZIP large round trips, shared budgets and bounded decompression');

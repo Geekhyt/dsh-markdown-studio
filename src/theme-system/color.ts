@@ -76,7 +76,7 @@ export function isDark(hex: string): boolean {
  * while guaranteeing readable text.
  */
 export function ensureContrast(color: string, background: string, minimum: number): string {
-  var target = isDark(background) ? '#ffffff' : '#000000';
+  var target = readableOn(background, '#000000', '#ffffff');
   var current = color;
   for (var step = 1; step <= 20 && contrast(current, background) < minimum; step++) {
     current = mix(color, target, step * 0.05);

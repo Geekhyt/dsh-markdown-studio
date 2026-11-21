@@ -42,9 +42,31 @@ export function parseView(value: unknown): ViewMode {
   return value === 'edit' || value === 'preview' ? value : 'split';
 }
 
+const FRONTMATTER_RE = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/;
+
+/** Strip leading YAML frontmatter block, returning remaining text and its starting char offset. */
+export function stripLeadingFrontmatter(text: string): { body: string; offset: number } {
+  const match = FRONTMATTER_RE.exec(text);
+  if (!match) return { body: text, offset: 0 };
+  return { body: text.slice(match[0].length), offset: match[0].length };
+}
+
+function stripFencedCodeLines(text: string): string {
+  const lines = text.split('\n');
+  const kept: string[] = [];
+  let fence = '';
+  for (const line of lines) {
+    const clean = line.endsWith('\r') ? line.slice(0, -1) : line;
+    const prev = fence;
+    fence = advanceHeadingFence(fence, clean);
+    if (!prev && !fence) kept.push(line);
+  }
+  return kept.join('\n');
+}
+
 export function deriveTitle(markdown: unknown, fallback: string): string {
   const text = String(markdown || '');
-  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
   if (frontmatter) {
     const titleLine = /^title\s*:\s*(.+)$/m.exec(frontmatter[1]);
     if (titleLine) return titleLine[1].trim().replace(/^["']|["']$/g, '') || fallback;
@@ -54,15 +76,19 @@ export function deriveTitle(markdown: unknown, fallback: string): string {
 }
 
 export function markdownToPlain(markdown: unknown): string {
-  return String(markdown || '')
-    .replace(/(?:`{3,}|~{3,})[\s\S]*?(?:`{3,}|~{3,})/g, '')
+  const withoutFrontmatter = stripLeadingFrontmatter(String(markdown || '')).body;
+  return stripFencedCodeLines(withoutFrontmatter)
     .replace(/^ {0,3}:::(?:scroll(?:-x)?(?:\s+\d+(?:px)?)?|\s*)$/gim, '')
+    .replace(/^ {0,3}:::(?:meta|lead|tldr|pull|sign|callout)[ \t]*/gim, '')
+    .replace(/^>\s*\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*$/gim, '')
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/^#{1,6}\s+/gm, '')
     .replace(/^>\s?/gm, '')
     .replace(/^[-*+]\s+/gm, '')
     .replace(/^\d+[.)]\s+/gm, '')
+    .replace(/==([^=\n]+)==/g, '$1')
+    .replace(/\+\+([^+\n]+)\+\+/g, '$1')
     .replace(/[*~`]/g, '')
     .replace(/(^|[^A-Za-z0-9])_+|_+($|[^A-Za-z0-9])/g, '$1$2')
     .replace(/\n{3,}/g, '\n\n')
@@ -90,9 +116,10 @@ function advanceHeadingFence(active: string, line: string): string {
 }
 
 export function markdownHeadings(text: string): Heading[] {
-  const lines = String(text || '').split('\n');
+  const { body, offset: startOffset } = stripLeadingFrontmatter(String(text || ''));
+  const lines = body.split('\n');
   const headings: Heading[] = [];
-  let offset = 0;
+  let offset = startOffset;
   let fence = '';
   for (const line of lines) {
     const clean = line.endsWith('\r') ? line.slice(0, -1) : line;

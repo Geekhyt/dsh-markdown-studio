@@ -87,6 +87,7 @@ function normalizePastedDraft(form: DraftForm, defaultName: string): SaveSkillIn
 
 function renderInstructionsSurface(
   React: typeof ReactNamespace,
+  editorKey: string,
   value: string,
   readOnly: boolean,
   placeholderText: string,
@@ -104,6 +105,7 @@ function renderInstructionsSurface(
       'div',
       { className: 'mdstudio-skill-cm-box' },
       h(CodeMirrorEditor, {
+        key: editorKey,
         React,
         value,
         config: {
@@ -496,6 +498,7 @@ function SkillManagerDialogContent(props: SkillManagerDialogProps): ReactNode {
         : null,
       renderInstructionsSurface(
         React,
+        form.selectedId || 'draft',
         form.instructions,
         isBuiltin,
         t('ai.skillBodyPlaceholder'),

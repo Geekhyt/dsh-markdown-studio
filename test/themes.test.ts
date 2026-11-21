@@ -269,4 +269,27 @@ assert.equal(
   'standalone custom theme with root+surface+text+prose+h1+h2 no longer requires pre/blockquote',
 );
 
-console.log('30 theme checks passed.');
+// Comment-only or non-root background/color declarations must NOT trigger false standalone mode
+const commentAndQuoteOnly = buildCss({
+  ...DEFAULT_SETTINGS,
+  theme: 'custom:partial-quote',
+  customThemes: [
+    {
+      id: 'custom:partial-quote',
+      name: '局部引用微调',
+      css: [
+        '/* Example: background: #ffffff; color: #222222; */',
+        '#mdstudio { padding: 12px; }',
+        '#mdstudio p { margin: 0 0 12px; }',
+        '#mdstudio h1, #mdstudio h2 { letter-spacing: 0.02em; }',
+        '#mdstudio blockquote { background: #f5f5f5; color: #555555; }',
+      ].join('\n'),
+    },
+  ],
+});
+assert.ok(
+  commentAndQuoteOnly.includes('--mdstudio-font-size'),
+  'comments and non-root blockquote colors do not misclassify partial custom CSS as standalone',
+);
+
+console.log('31 theme checks passed.');

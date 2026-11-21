@@ -236,7 +236,6 @@ export function HeaderBar(props: HeaderBarProps): ReactNode {
           className: 'mdstudio-icon-btn mdstudio-mobile-view',
           title: view === 'preview' ? t('view.edit') : t('view.preview'),
           'aria-label': view === 'preview' ? t('view.edit') : t('view.preview'),
-          'aria-pressed': view === 'preview',
           onClick: function () {
             actions.onView(view === 'preview' ? 'edit' : 'preview');
           },
@@ -292,7 +291,7 @@ export function HeaderBar(props: HeaderBarProps): ReactNode {
         onClose: function () {
           closeHeaderMenu(props);
         },
-        items: buildHeaderMenuEntries(props, icon),
+        items: state.menuOpen ? buildHeaderMenuEntries(props, icon) : [],
         anchor: tip(
           t('more'),
           h(

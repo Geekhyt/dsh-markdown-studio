@@ -421,7 +421,7 @@ function FormatMenu(props: {
   const t = props.t;
   const toolbar = props.toolbar;
   const [open, setOpen] = props.React.useState(false);
-  const model = buildFormatMenuModel(props.React, props.icons, buildFormatGroups(t, toolbar));
+  const model = open ? buildFormatMenuModel(props.React, props.icons, buildFormatGroups(t, toolbar)) : null;
 
   return h(props.icons.Menu, {
     open,
@@ -434,10 +434,10 @@ function FormatMenu(props: {
     className: 'mdstudio-format-wrap',
     listClassName: 'mdstudio-format-menu',
     ariaLabel: t('toolbar.format'),
-    items: model.items,
+    items: model ? model.items : [],
     onSelect: function (id: string) {
       setOpen(false);
-      const fn = model.actions[id];
+      const fn = model?.actions[id];
       if (fn) fn();
     },
     onClose: function () {

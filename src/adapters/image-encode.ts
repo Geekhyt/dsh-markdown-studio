@@ -49,7 +49,7 @@ export function encodeImageForWechat(image: ImageLike, documentLike: CanvasDocum
     quality = Math.round((quality - 0.1) * 100) / 100;
     encoded = canvas.toDataURL('image/jpeg', quality);
   }
-  if (approximateDataBytes(encoded) > 1000000 && scale > 0.4) {
+  if (approximateDataBytes(encoded) > 1000000 && (width > 640 || height > 640)) {
     const smaller = documentLike.createElement('canvas');
     smaller.width = Math.max(1, Math.round(width * 0.7));
     smaller.height = Math.max(1, Math.round(height * 0.7));

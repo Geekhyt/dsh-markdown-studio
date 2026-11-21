@@ -4,30 +4,72 @@ import { AllPackages } from 'mathjax-full/js/input/tex/AllPackages.js';
 import { TeX } from 'mathjax-full/js/input/tex.js';
 import { mathjax } from 'mathjax-full/js/mathjax.js';
 import { SVG } from 'mathjax-full/js/output/svg.js';
+import { hasCssUrlRef, parseCssDeclarations } from './domain/custom-css';
 
 declare global {
   interface Window {
-    __MDSTUDIO_MATH__?: { cssText: string; render: (tex: unknown, displayMode?: boolean) => string };
+    __MDSTUDIO_MATH__?: {
+      cssText: string;
+      render: (tex: unknown, displayMode?: boolean, labelPrefix?: string) => string;
+    };
   }
 }
 
 const adaptor = browserAdaptor();
 RegisterHTMLHandler(adaptor);
 // Exclude TeX extensions that inject links, arbitrary inline CSS styles, or
-// `<foreignObject>` tooltips (`html`: \href/\style, `bbox`: \bbox[...], `action`: \mathtip/\toggle).
-const BLOCKED_TEX_PACKAGES = new Set(['html', 'bbox', 'action']);
+// `<foreignObject>` tooltips (`html`: \href/\style, `bbox`: \bbox[...], `action`: \mathtip/\toggle, `unicode`: \unicode[style]{...}).
+const BLOCKED_TEX_PACKAGES = new Set(['html', 'bbox', 'action', 'unicode']);
 const SAFE_TEX_PACKAGES = AllPackages.filter(function (name) {
   return !BLOCKED_TEX_PACKAGES.has(name);
 });
-const tex = new TeX({ packages: SAFE_TEX_PACKAGES });
 const svg = new SVG({ fontCache: 'none' });
-const doc = mathjax.document(document, { InputJax: tex, OutputJax: svg });
 
 export const cssText = '';
 
 const SVG_PAINT_ATTRS = ['fill', 'stroke', 'filter', 'clip-path', 'mask'];
+const ALLOWED_ROOT_STYLE_PROPS = new Set([
+  'vertical-align',
+  'min-width',
+  'width',
+  'height',
+  'max-width',
+  'color',
+  'background-color',
+]);
+const ALLOWED_CHILD_STYLE_PROPS = new Set([
+  'stroke-width',
+  'color',
+  'background-color',
+  'font-size',
+  'font-weight',
+  'font-style',
+]);
 
-/** Defense in depth: unwrap SVG links, drop `<foreignObject>`, and neutralize external paint/style URLs. */
+function sanitizeInlineStyle(raw: string, allowed: Set<string>): string {
+  const kept: string[] = [];
+  for (const decl of parseCssDeclarations(raw)) {
+    if (!allowed.has(decl.prop)) continue;
+    if (hasCssUrlRef(decl.value) || /expression\s*\(/i.test(decl.value)) continue;
+    kept.push(decl.prop + ': ' + decl.value);
+  }
+  return kept.join('; ');
+}
+
+function sanitizeSvgNode(node: Element, isRoot: boolean): void {
+  const inlineStyle = node.getAttribute('style');
+  if (inlineStyle) {
+    const cleanStyle = sanitizeInlineStyle(inlineStyle, isRoot ? ALLOWED_ROOT_STYLE_PROPS : ALLOWED_CHILD_STYLE_PROPS);
+    if (cleanStyle) node.setAttribute('style', cleanStyle);
+    else node.removeAttribute('style');
+  }
+  for (const attr of SVG_PAINT_ATTRS) {
+    const value = node.getAttribute(attr);
+    if (value && hasCssUrlRef(value)) node.removeAttribute(attr);
+  }
+}
+
+/** Defense in depth: unwrap SVG links, drop `<foreignObject>`, and enforce CSS-escape-aware paint & style allowlists. */
 function stripSvgLinks(root: Element): void {
   Array.from(root.querySelectorAll('foreignObject')).forEach(function (node) {
     node.remove();
@@ -41,19 +83,15 @@ function stripSvgLinks(root: Element): void {
     node.removeAttribute('href');
     node.removeAttribute('xlink:href');
   });
+  sanitizeSvgNode(root, true);
   Array.from(root.querySelectorAll('*')).forEach(function (node) {
-    const inlineStyle = node.getAttribute('style');
-    if (inlineStyle && /url\s*\(/i.test(inlineStyle)) node.removeAttribute('style');
-    for (const attr of SVG_PAINT_ATTRS) {
-      const value = node.getAttribute(attr);
-      if (value && /url\s*\(/i.test(value)) node.removeAttribute(attr);
-    }
+    sanitizeSvgNode(node, false);
   });
 }
 
-function decorateMathSvg(svgNode: Element | null, source: string): void {
+function decorateMathSvg(svgNode: Element | null, source: string, labelPrefix: string): void {
   if (!svgNode) return;
-  svgNode.setAttribute('aria-label', '公式：' + source);
+  svgNode.setAttribute('aria-label', labelPrefix + source);
   stripSvgLinks(svgNode);
 }
 
@@ -61,11 +99,14 @@ function ensureSvgNamespace(html: string): string {
   return /^<svg[^>]*\sxmlns=/.test(html) ? html : html.replace(/^<svg/, '<svg xmlns="http://www.w3.org/2000/svg"');
 }
 
-export function render(texSource: unknown, displayMode?: boolean): string {
+export function render(texSource: unknown, displayMode?: boolean, labelPrefix = '公式：'): string {
   const source = String(texSource || '');
+  // Fresh TeX input instance per render prevents cross-formula `\label`, `\renewcommand`, and `\definecolor` contamination.
+  const tex = new TeX({ packages: SAFE_TEX_PACKAGES });
+  const doc = mathjax.document(document, { InputJax: tex, OutputJax: svg });
   const node = doc.convert(source, { display: Boolean(displayMode) });
   const svgNode = node.firstElementChild;
-  decorateMathSvg(svgNode, source);
+  decorateMathSvg(svgNode, source, labelPrefix);
   return ensureSvgNamespace(adaptor.outerHTML(svgNode || node));
 }
 

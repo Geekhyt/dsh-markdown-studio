@@ -59,12 +59,13 @@ export interface EditorCoords {
 
 export interface EditorApi {
   getValue(): string;
-  setValue(value: string): void;
+  setValue(value: string, silent?: boolean): void;
   getSelection(): EditorSelection;
   getScrollInfo(): EditorScrollInfo;
   scrollToRatio(ratio: number): void;
   onScroll(listener: (info: EditorScrollInfo) => void): () => void;
   focusRange(start: number, end: number): void;
+  revealRange?(start: number, end: number): void;
   focus(): void;
   destroy(): void;
   setDark(dark: boolean): void;

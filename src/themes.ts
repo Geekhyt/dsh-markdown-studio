@@ -6,7 +6,7 @@
  */
 
 import { codeThemeCss } from './code-themes';
-import { stripExternalCssUrls } from './domain/custom-css';
+import { isRootThemeSelector, parseCssRules, stripExternalCssUrls } from './domain/custom-css';
 import { type CustomTheme, extractCustomThemePreview, findCustomTheme, isCustomThemeId } from './domain/custom-themes';
 import { mix, rgba } from './theme-system/color';
 import { composeRecipe, type Recipe, recipePalette } from './theme-system/compose';
@@ -656,33 +656,6 @@ function resolveUserCss(settings: ThemeSettings): string {
   return custom ? custom.css : '';
 }
 
-function extractCssSelectors(css: string): string {
-  const noComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
-  let out = '';
-  let depth = 0;
-  let quote = '';
-  for (let i = 0; i < noComments.length; i++) {
-    const ch = noComments[i];
-    if (quote) {
-      if (ch === '\\') i++;
-      else if (ch === quote) quote = '';
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      quote = ch;
-      continue;
-    }
-    if (ch === '{') depth++;
-    else if (ch === '}') {
-      if (depth > 0) depth--;
-      if (depth === 0) out += '\n';
-    } else if (depth === 0) {
-      out += ch;
-    }
-  }
-  return out;
-}
-
 function parseCustomBasePragma(css: string): 'standalone' | 'classic' | null {
   const match = /\/\*\s*@base\s*:\s*(standalone|classic)\s*\*\//i.exec(css);
   if (!match) return null;
@@ -692,16 +665,21 @@ function parseCustomBasePragma(css: string): 'standalone' | 'classic' | null {
 function isStandaloneCustomCss(css: string): boolean {
   const pragma = parseCustomBasePragma(css);
   if (pragma) return pragma === 'standalone';
-  const selectors = extractCssSelectors(css);
-  const hasRoot = /(?:#mdstudio|\.mdstudio-content|:root|\bbody\b|\bhtml\b)/i.test(selectors);
+  const rules = parseCssRules(css);
+  const selectors = rules.flatMap((rule) => rule.selectors).join(', ');
+  const rootRules = rules.filter((rule) => rule.selectors.some(isRootThemeSelector));
+  const hasRoot = rootRules.length > 0;
   const hasProse = /(?:^|[,\s>+~])p(?=$|[\s,:{.#[])/im.test(selectors);
   const headingMatches = selectors.match(/\bh[1-6]\b/gi) || [];
   const headingCount = new Set(headingMatches.map((h) => h.toLowerCase())).size;
   const hasBlocks = /\b(?:blockquote|pre|code|ul|ol|table)\b/i.test(selectors);
   if (!(hasRoot && hasProse && headingCount >= 1 && (headingCount >= 2 || hasBlocks))) return false;
-  // Distinguish full standalone themes from short override snippets that only tweak accent/spacing.
-  const hasSurface = /(?:^|[;{\s])(?:background(?:-color)?|--mdstudio-bg)\s*:/im.test(css);
-  const hasTextTone = /(?:^|[;{\s])(?:color|--mdstudio-text)\s*:/im.test(css);
+  // Distinguish full standalone themes from short override snippets that only tweak accent/spacing or comments.
+  const rootDecls = rootRules.flatMap((rule) => rule.declarations);
+  const hasSurface = rootDecls.some(
+    (d) => d.prop === 'background' || d.prop === 'background-color' || d.prop === '--mdstudio-bg',
+  );
+  const hasTextTone = rootDecls.some((d) => d.prop === 'color' || d.prop === '--mdstudio-text');
   return hasSurface && hasTextTone;
 }
 

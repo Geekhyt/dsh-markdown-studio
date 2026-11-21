@@ -272,6 +272,23 @@ await check('selection prompt, fence unwrapper, patch applier and protected toke
     false,
     'escaped dollar signs are not treated as inline math',
   );
+  // Balanced-paren and titled Markdown link URLs are protected
+  assert.equal(
+    hasMissingProtectedTokens(
+      '参考 [wiki](https://en.wikipedia.org/wiki/Foo_(bar)) 与 [docs](https://a.example/x "Title")。',
+      '参考 [wiki](https://en.wikipedia.org/wiki/Foo_(bar)) 和 [docs](https://a.example/x "Title")。',
+    ),
+    false,
+    'balanced-paren and titled links remain protected',
+  );
+  assert.equal(
+    hasMissingProtectedTokens(
+      '参考 [wiki](https://en.wikipedia.org/wiki/Foo_(bar))。',
+      '参考 [wiki](https://en.wikipedia.org/wiki/Other)。',
+    ),
+    true,
+    'modified balanced-paren link triggers protected token warning',
+  );
 });
 
 await check('computeTextDiff pinpoints Chinese/English word & punctuation deletions and additions', () => {

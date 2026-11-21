@@ -221,3 +221,54 @@ const nonEmptyMerged = mergeLibraryBackup(
   { b: 'current', a: 'incoming' },
 );
 assert.ok(nonEmptyMerged.docs.length >= 1, 'mergeLibraryBackup never yields an empty docs array');
+
+// Duplicate incoming IDs are deduplicated and incoming custom themes survive docs[0] conflict = current
+const dupAndThemesMerged = mergeLibraryBackup(
+  {
+    activeId: 'a',
+    docs: [
+      {
+        id: 'a',
+        title: 'Local A',
+        markdown: '# local',
+        settings: { ...DEFAULT_SETTINGS },
+        view: 'split',
+        updatedAt: 5,
+      },
+    ],
+  },
+  {
+    activeId: 'a',
+    docs: [
+      {
+        id: 'a',
+        title: 'Incoming A1',
+        markdown: '# in1',
+        settings: {
+          ...DEFAULT_SETTINGS,
+          customThemes: [
+            { id: 'custom:night-ink', name: 'Night Ink', css: '#mdstudio { background: #111; color: #eee; }' },
+          ],
+        },
+        view: 'split',
+        updatedAt: 10,
+      },
+      {
+        id: 'a',
+        title: 'Incoming A2',
+        markdown: '# in2',
+        settings: { ...DEFAULT_SETTINGS },
+        view: 'split',
+        updatedAt: 11,
+      },
+    ],
+  },
+  'current',
+  { a: 'current' },
+);
+assert.equal(dupAndThemesMerged.docs.length, 2, 'duplicate incoming doc id is preserved via suffix rather than lost');
+assert.equal(
+  dupAndThemesMerged.docs[0].settings.customThemes?.some((t) => t.id === 'custom:night-ink'),
+  true,
+  'incoming custom themes survive even when docs[0] conflict chooses current',
+);

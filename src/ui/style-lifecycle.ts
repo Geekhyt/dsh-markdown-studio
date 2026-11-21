@@ -38,11 +38,19 @@ export function unmountPluginStyles(): void {
   const reg = getPluginStyleRegistry();
   reg.mounted = false;
   if (typeof document === 'undefined') return;
-  const nodes = document.querySelectorAll(`style[data-plugin=${JSON.stringify(PLUGIN_ID)}]`);
-  nodes.forEach((node) => {
-    const candidate = node as { dataset?: { pluginCss?: string }; remove?: () => void };
-    if (candidate.dataset?.pluginCss && typeof candidate.remove === 'function') {
+  const styleNodes = document.querySelectorAll(`style[data-plugin=${JSON.stringify(PLUGIN_ID)}]`);
+  styleNodes.forEach((node) => {
+    const candidate = node as { id?: string; dataset?: { pluginCss?: string }; remove?: () => void };
+    if (
+      typeof candidate.remove === 'function' &&
+      (candidate.dataset?.pluginCss || String(candidate.id || '').startsWith('js_darkmode_style__'))
+    ) {
       candidate.remove();
     }
+  });
+  const scriptNodes = document.querySelectorAll(`script[data-plugin=${JSON.stringify(PLUGIN_ID)}]`);
+  scriptNodes.forEach((node) => {
+    const candidate = node as { remove?: () => void };
+    if (typeof candidate.remove === 'function') candidate.remove();
   });
 }

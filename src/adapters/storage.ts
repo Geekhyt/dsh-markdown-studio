@@ -124,24 +124,57 @@ function parsePersistedLibrary(raw: string | null): LibraryState | null {
   }
 }
 
+function isRawFutureLibrary(raw: string | null): boolean {
+  if (!raw) return false;
+  try {
+    const data = JSON.parse(raw) as { schemaVersion?: unknown } | null;
+    return Boolean(data && isFutureSchema(data.schemaVersion, LIBRARY_SCHEMA_VERSION));
+  } catch {
+    return false;
+  }
+}
+
+export function hasFuturePersistedLibrary(): boolean {
+  return isRawFutureLibrary(safeStorageGet(LIBRARY_KEY_V2));
+}
+
 export function loadPersistedLibrary(): LibraryState | null {
-  const primary = parsePersistedLibrary(safeStorageGet(LIBRARY_KEY_V2));
+  const primaryRaw = safeStorageGet(LIBRARY_KEY_V2);
+  if (isRawFutureLibrary(primaryRaw)) return null;
+  const primary = parsePersistedLibrary(primaryRaw);
   if (primary) return primary;
   return parsePersistedLibrary(safeStorageGet(LIBRARY_BACKUP_KEY));
+}
+
+function restoreStorageKey(key: string, previous: string | null): void {
+  if (previous === null) return;
+  try {
+    window.localStorage.setItem(key, previous);
+  } catch {
+    /* best-effort rollback */
+  }
 }
 
 function writePrimaryWithQuotaRetry(payload: string): void {
   try {
     window.localStorage.setItem(LIBRARY_KEY_V2, payload);
   } catch (firstError) {
-    // Evict backup/unreadable snapshots on quota exhaustion so the active library can still persist.
+    // Snapshot backup/unreadable keys before eviction so a still-failing retry does not destroy recovery data.
+    const prevBackup = safeStorageGet(LIBRARY_BACKUP_KEY);
+    const prevUnreadable = safeStorageGet(LIBRARY_UNREADABLE_KEY);
     try {
       window.localStorage.removeItem(LIBRARY_BACKUP_KEY);
       window.localStorage.removeItem(LIBRARY_UNREADABLE_KEY);
     } catch {
       /* ignore */
     }
-    window.localStorage.setItem(LIBRARY_KEY_V2, payload);
+    try {
+      window.localStorage.setItem(LIBRARY_KEY_V2, payload);
+    } catch (retryError) {
+      restoreStorageKey(LIBRARY_BACKUP_KEY, prevBackup);
+      restoreStorageKey(LIBRARY_UNREADABLE_KEY, prevUnreadable);
+      throw retryError;
+    }
   }
 }
 

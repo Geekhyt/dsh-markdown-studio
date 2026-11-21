@@ -84,7 +84,7 @@ export function extractMermaidBlocks(markdown: unknown): string[] {
 }
 
 export function prependMermaidDirective(code: string, directive: string): string {
-  const fm = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.exec(code);
+  const fm = /^---\r?\n(?:[\s\S]*?\r?\n)?---(?:\r?\n|$)/.exec(code);
   if (fm) return fm[0] + (fm[0].endsWith('\n') ? '' : '\n') + directive + '\n' + code.slice(fm[0].length);
   return directive + '\n' + code;
 }
@@ -156,7 +156,7 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
   const [version, setVersion] = React.useState(0);
   const ensureGenRef = React.useRef(0);
   const inFlightEnsureRef = React.useRef<{ key: string; promise: Promise<void> } | null>(null);
-  const pinnedKeysRef = React.useRef<Set<string>>(new Set());
+  const pinnedKeysRef = React.useRef<Map<string, number>>(new Map());
   const themeRef = useLatest(React, options.theme);
 
   function load(): Promise<MermaidModule | null> {
@@ -225,6 +225,7 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
       await existing;
       return;
     }
+    cacheRef.current.set(key, { status: 'loading' });
     const task = renderAndStore(mermaid, theme, key, code, index);
     cacheRef.current.set(key, { status: 'loading', promise: task });
     await task;
@@ -233,12 +234,20 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
   function pruneInactiveCache(keys: string[]): void {
     const active = new Set(keys);
     cacheRef.current.forEach(function (_entry, key) {
-      if (!active.has(key) && !pinnedKeysRef.current.has(key)) cacheRef.current.delete(key);
+      if (!active.has(key) && (pinnedKeysRef.current.get(key) || 0) === 0) cacheRef.current.delete(key);
     });
   }
 
   function isCurrentGen(gen: number): boolean {
     return gen === ensureGenRef.current;
+  }
+
+  function adjustPins(keys: string[], delta: 1 | -1): void {
+    for (const k of keys) {
+      const next = (pinnedKeysRef.current.get(k) || 0) + delta;
+      if (next > 0) pinnedKeysRef.current.set(k, next);
+      else pinnedKeysRef.current.delete(k);
+    }
   }
 
   async function renderAllBlocks(
@@ -250,7 +259,7 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
   ): Promise<void> {
     const keys = blocks.map((code) => mermaidCacheKey(code, theme));
     if (unstoppable) {
-      for (const k of keys) pinnedKeysRef.current.add(k);
+      adjustPins(keys, 1);
     } else {
       pruneInactiveCache(keys);
     }
@@ -261,7 +270,7 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
       }
     } finally {
       if (unstoppable) {
-        for (const k of keys) pinnedKeysRef.current.delete(k);
+        adjustPins(keys, -1);
       }
     }
   }

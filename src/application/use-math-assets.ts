@@ -55,8 +55,10 @@ export function useMathAssets(options: MathAssetsOptions): MathAssetsApi {
     return typeof window !== 'undefined' && window.__MDSTUDIO_MATH__ ? window.__MDSTUDIO_MATH__.cssText : '';
   });
   const [version, setVersion] = React.useState(0);
+  const [loadFailed, setLoadFailed] = React.useState(false);
   const mountedRef = React.useRef(true);
-  const needsMath = hasMath(options.markdown);
+  const alreadyLoaded = typeof window !== 'undefined' && Boolean(window.__MDSTUDIO_MATH__);
+  const needsMath = !alreadyLoaded && hasMath(options.markdown);
 
   useMountDisposable(React, function () {
     mountedRef.current = true;
@@ -76,13 +78,22 @@ export function useMathAssets(options: MathAssetsOptions): MathAssetsApi {
     }
     await loadMathScript();
     const loaded = (window as { __MDSTUDIO_MATH__?: { cssText: string } }).__MDSTUDIO_MATH__;
-    if (mountedRef.current && loaded) {
+    if (!mountedRef.current) return;
+    if (loaded) {
+      setLoadFailed(false);
       setCss(loaded.cssText);
       setVersion((value) => value + 1);
+    } else {
+      setLoadFailed(true);
     }
   }
 
-  useDebouncedKeyTask(React, needsMath ? 'math' : 'none', 0, needsMath, function () {
+  const taskKey = !needsMath
+    ? 'none'
+    : loadFailed
+      ? `math-retry:${options.markdown.length}:${options.markdown.slice(0, 32)}`
+      : 'math';
+  useDebouncedKeyTask(React, taskKey, loadFailed ? 300 : 0, needsMath, function () {
     void ensure(options.markdown);
   });
 

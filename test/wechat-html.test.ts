@@ -27,13 +27,13 @@ assert.deepEqual(all, [
   'gradient-background',
 ]);
 
-// Code blocks using ```katex or illustrating href/src examples must not false-positive
+// Code blocks using ```katex or illustrating href/src/style examples and data-style must not false-positive
 const codeExampleHtml =
-  '<section id="mdstudio"><pre><code class="mdstudio-lang-katex">\\frac{1}{2}</code></pre>' +
-  '<pre><code class="mdstudio-lang-html"><a href="#section">demo</a><img src="http://127.0.0.1:4010/a.png"></code></pre></section>';
+  '<section id="mdstudio" data-style="font-family:Arial"><pre><code class="mdstudio-lang-katex">\\frac{1}{2}</code></pre>' +
+  '<pre><code class="mdstudio-lang-html"><div style="display:grid;font-family:Arial"><a href="#section">demo</a><img src="http://127.0.0.1:4010/a.png"></div></code></pre></section>';
 assert.deepEqual(
   inspectWechatHtml(codeExampleHtml),
   [],
-  'mdstudio-lang-katex and code-body examples do not trigger false-positive WeChat lint issues',
+  'mdstudio-lang-katex, data-style, and code-body style examples do not trigger false-positive WeChat lint issues',
 );
 console.log('10 WeChat HTML checks passed.');

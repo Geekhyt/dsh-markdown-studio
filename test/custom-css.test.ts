@@ -184,4 +184,18 @@ assert.ok(
   'sibling rule survives CDO @import removal',
 );
 
-console.log('42 custom-css and custom-themes checks passed.');
+// CSS Syntax Level 3 §4.3.7 newline/CRLF hex-escape url() bypasses & shorthand dark theme preview extraction
+for (const newlineVec of [
+  '#mdstudio p { background-image: \\75\nrl("https://attacker.example/lf.png"); color: #111; }',
+  '#mdstudio p { background-image: \\75\r\nrl("https://attacker.example/crlf.png"); color: #111; }',
+  '#mdstudio p { background-image: \\75\frl("https://attacker.example/ff.png"); color: #111; }',
+]) {
+  const out = stripExternalCssUrls(newlineVec);
+  assert.equal(/attacker\.example/.test(out), false, `newline hex escape stripped: ${JSON.stringify(newlineVec)}`);
+  assert.ok(out.includes('color: #111'), 'sibling declaration preserved after newline hex strip');
+}
+const shorthandDark = extractCustomThemePreview(':root { background: #1e1b4b no-repeat; color: #e2e8f0; }');
+assert.equal(shorthandDark.bg, '#1e1b4b', 'extractCustomThemePreview supports :root + background shorthand');
+assert.equal(shorthandDark.fg, '#e2e8f0');
+
+console.log('46 custom-css and custom-themes checks passed.');

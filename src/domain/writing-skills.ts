@@ -344,10 +344,36 @@ function matchInlineDollarMath(text: string, index: number): number {
   return -1;
 }
 
+function readBalancedLinkDest(text: string, openParen: number): { url: string; end: number } | null {
+  let i = openParen + 1;
+  while (i < text.length && /[ \t]/.test(text[i])) i++;
+  const urlStart = i;
+  let depth = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === '\\') {
+      i += 2;
+      continue;
+    }
+    if (/\s/.test(ch)) break;
+    if (ch === '(') depth++;
+    else if (ch === ')') {
+      if (depth === 0) break;
+      depth--;
+    }
+    i++;
+  }
+  const url = text.slice(urlStart, i);
+  if (!/^(?:https?:\/\/\S+|assets\/[a-zA-Z0-9._-]+)$/.test(url)) return null;
+  while (i < text.length && text[i] !== ')' && text[i] !== '\n') i++;
+  if (text[i] !== ')') return null;
+  return { url, end: i + 1 };
+}
+
 function matchLinkOrAsset(text: string, index: number): { token: string; next: number } | null {
-  if (text[index] === ']') {
-    const m = /^\]\((https?:\/\/[^)\s]+|assets\/[a-zA-Z0-9._-]+)\)/.exec(text.slice(index));
-    if (m) return { token: m[1], next: index + m[0].length };
+  if (text[index] === ']' && text[index + 1] === '(') {
+    const parsed = readBalancedLinkDest(text, index + 1);
+    if (parsed) return { token: parsed.url, next: parsed.end };
   }
   if (text.startsWith('assets/', index)) {
     const m = /^assets\/[a-zA-Z0-9._-]+/.exec(text.slice(index));

@@ -136,37 +136,41 @@ export function createArticleExporter(options: ArticleExportOptions): ArticleExp
   }
 
   async function exportHtml(): Promise<void> {
-    await Promise.all([options.mermaidAssets.ensure(doc.markdown), options.mathAssets.ensure(doc.markdown)]);
-    const article = renderArticle(doc.markdown, settings, {
-      locale: options.locale,
-      imageBaseUrl: base || 'http://127.0.0.1:4010',
-      mermaidAssets: options.mermaidAssets.cache,
-      footnotesTitle: t('footnotes.title'),
-      referencesTitle: t('references.title'),
-      scrollVerticalHint: t('scroll.verticalHint'),
-      scrollHorizontalHint: t('scroll.horizontalHint'),
-      imagePlaceholderPrefix: t('render.imagePlaceholderPrefix'),
-      imagePlaceholderFallback: t('render.imagePlaceholderFallback'),
-      codeBlockAriaLabel: t('render.codeBlockAria'),
-    });
-    const htmlLang = options.locale === 'en' ? 'en' : 'zh-CN';
-    const page =
-      '<!doctype html>\n<html lang="' +
-      htmlLang +
-      '">\n<head>\n<meta charset="utf-8">\n' +
-      '<meta name="viewport" content="width=device-width,initial-scale=1">\n' +
-      '<meta name="generator" content="dsh-markdown-studio">\n<title>' +
-      escapeHtml(title) +
-      '</title>\n' +
-      '<style>html,body{margin:0;padding:0;background:#f1f2f4}body{padding:32px 16px}</style>\n</head>\n' +
-      '<body><div style="max-width:677px;margin:0 auto;background:' +
-      escapeHtml(article.bg || '#ffffff') +
-      '">' +
-      article.html +
-      '</div></body>\n</html>';
-    if (options.download(slugify(title) + '.html', page, 'text/html;charset=utf-8'))
-      options.notify(t('toast.exported'));
-    options.closeMenu();
+    try {
+      await Promise.all([options.mermaidAssets.ensure(doc.markdown), options.mathAssets.ensure(doc.markdown)]);
+      const article = renderArticle(doc.markdown, settings, {
+        locale: options.locale,
+        imageBaseUrl: base || 'http://127.0.0.1:4010',
+        mermaidAssets: options.mermaidAssets.cache,
+        footnotesTitle: t('footnotes.title'),
+        referencesTitle: t('references.title'),
+        scrollVerticalHint: t('scroll.verticalHint'),
+        scrollHorizontalHint: t('scroll.horizontalHint'),
+        imagePlaceholderPrefix: t('render.imagePlaceholderPrefix'),
+        imagePlaceholderFallback: t('render.imagePlaceholderFallback'),
+        codeBlockAriaLabel: t('render.codeBlockAria'),
+      });
+      const htmlLang = options.locale === 'en' ? 'en' : 'zh-CN';
+      const page =
+        '<!doctype html>\n<html lang="' +
+        htmlLang +
+        '">\n<head>\n<meta charset="utf-8">\n' +
+        '<meta name="viewport" content="width=device-width,initial-scale=1">\n' +
+        '<meta name="generator" content="dsh-markdown-studio">\n<title>' +
+        escapeHtml(title) +
+        '</title>\n' +
+        '<style>html,body{margin:0;padding:0;background:#f1f2f4}body{padding:32px 16px}</style>\n</head>\n' +
+        '<body><div style="max-width:677px;margin:0 auto;background:' +
+        escapeHtml(article.bg || '#ffffff') +
+        '">' +
+        article.html +
+        '</div></body>\n</html>';
+      if (options.download(slugify(title) + '.html', page, 'text/html;charset=utf-8'))
+        options.notify(t('toast.exported'));
+      options.closeMenu();
+    } catch (error) {
+      options.notify(t('toast.bundleFailed') + ' · ' + errorMessage(error), 'error');
+    }
   }
 
   function exportMarkdown(): void {

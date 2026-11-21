@@ -178,7 +178,7 @@ export function createDocumentCommands(options: DocumentActionsOptions): Documen
       options.focusRange(text.length, text.length);
       options.notify(t('toast.imported'));
     } catch (error) {
-      options.notify(t('toast.copyFailed'), 'error');
+      options.notify(t('toast.importFailed') + ' · ' + options.errorMessage(error), 'error');
     }
   }
 

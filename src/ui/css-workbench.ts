@@ -138,6 +138,7 @@ function renderThemeChipStrip(
 
 function renderCssSurface(
   props: CssWorkbenchProps,
+  editorKey: string,
   cssDraft: string,
   setCssDraft: (value: string) => void,
   onKeyDown: (event: ReactNamespace.KeyboardEvent<HTMLElement>) => void,
@@ -150,6 +151,7 @@ function renderCssSurface(
       'div',
       { className: 'mdstudio-css-codemirror' },
       h(CodeMirrorEditor, {
+        key: editorKey,
         React: props.React,
         value: cssDraft,
         config: {
@@ -438,7 +440,7 @@ function CssWorkbenchContent(props: CssWorkbenchProps): ReactNode {
     h(
       'div',
       { className: 'mdstudio-editor-wrap mdstudio-css-editor-wrap' },
-      renderCssSurface(props, cssDraft, updateCssDraft, onEditorKeyDown),
+      renderCssSurface(props, editing ? editing.id : 'new', cssDraft, updateCssDraft, onEditorKeyDown),
     ),
     h(
       'div',

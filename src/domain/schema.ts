@@ -8,10 +8,16 @@ export const LIBRARY_SCHEMA_VERSION = 2;
 export const BACKUP_SCHEMA_VERSION = 2;
 export const ARCHIVE_SCHEMA_VERSION = 2;
 
+function parseIntegerVersion(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isInteger(value) ? value : null;
+  if (typeof value === 'string' && /^\d+$/.test(value.trim())) return Number(value.trim());
+  return null;
+}
+
 export function readSchemaVersion(value: unknown, fallback: number): number | null {
   if (value === undefined || value === null) return fallback;
-  const version = Number(value);
-  if (!Number.isInteger(version) || version < 1 || version > 1000) return null;
+  const version = parseIntegerVersion(value);
+  if (version === null || version < 1 || version > 1000) return null;
   return version;
 }
 
@@ -23,6 +29,6 @@ export function supportedSchemaVersion(value: unknown, fallback: number, current
 
 export function isFutureSchema(value: unknown, current: number): boolean {
   if (value === undefined || value === null) return false;
-  const version = Number(value);
-  return Number.isInteger(version) && version > current;
+  const version = parseIntegerVersion(value);
+  return version !== null && version > current;
 }

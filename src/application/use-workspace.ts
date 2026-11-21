@@ -15,7 +15,12 @@ export interface WorkspaceOptions {
   notify: Notify;
   fileContext: FileContextApi;
   onMenuClose: () => void;
-  onOpenFile: (directory: FileSystemDirectoryHandle, entry: WorkspaceFile, text: string, file?: File) => Promise<void>;
+  onOpenFile: (
+    directory: FileSystemDirectoryHandle,
+    entry: WorkspaceFile,
+    text: string,
+    file?: File,
+  ) => Promise<boolean | void>;
 }
 
 export interface WorkspaceApi {
@@ -40,6 +45,17 @@ function errorMessage(error: unknown): string {
 
 function isAbort(error: unknown): boolean {
   return !!error && typeof error === 'object' && (error as { name?: unknown }).name === 'AbortError';
+}
+
+function normalizeRelPath(raw: string): string {
+  return String(raw || '')
+    .split('/')
+    .filter(Boolean)
+    .join('/');
+}
+
+function isCaseOnlyRename(oldName: string, nextName: string): boolean {
+  return oldName !== nextName && oldName.toLowerCase() === nextName.toLowerCase();
 }
 
 function joinPath(parent: string, name: string): string {
@@ -308,8 +324,8 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
       const file = await entry.handle.getFile();
       const text = await file.text();
       if (req !== openGenRef.current) return;
-      await options.onOpenFile(directory, entry, text, file);
-      if (req !== openGenRef.current) return;
+      const opened = await options.onOpenFile(directory, entry, text, file);
+      if (req !== openGenRef.current || opened === false) return;
       dialogOpenRef.current = false;
       setState(function (prev) {
         return Object.assign({}, prev, { open: false });
@@ -382,7 +398,7 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
       return;
     }
     if (await entryMatchesOpenFile(entry, options.fileContext.linkedFile())) {
-      options.notify(options.t('workspace.moveOpenBlocked'), 'error');
+      options.notify(options.t('workspace.renameOpenBlocked'), 'error');
       return;
     }
     try {
@@ -393,13 +409,25 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
         options.notify(options.t('workspace.permission'), 'error');
         return;
       }
-      if (await fileExists(directory, filename)) {
+      const caseOnly = isCaseOnlyRename(entry.name, filename);
+      if (!caseOnly && (await fileExists(directory, filename))) {
         options.notify(options.t('workspace.exists'), 'error');
         return;
       }
       const file = await entry.handle.getFile();
-      await copyFileSafe(directory, filename, await file.text());
-      await directory.removeEntry(entry.name);
+      const text = await file.text();
+      if (caseOnly) {
+        await directory.removeEntry(entry.name);
+        try {
+          await copyFileSafe(directory, filename, text);
+        } catch (error) {
+          await copyFileSafe(directory, entry.name, text).catch(() => {});
+          throw error;
+        }
+      } else {
+        await copyFileSafe(directory, filename, text);
+        await directory.removeEntry(entry.name);
+      }
       await refresh();
       options.notify(options.t('workspace.renamed'));
     } catch (error) {
@@ -414,7 +442,7 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
       return;
     }
     if (await entryMatchesOpenFile(entry, options.fileContext.linkedFile())) {
-      options.notify(options.t('workspace.moveOpenBlocked'), 'error');
+      options.notify(options.t('workspace.renameOpenBlocked'), 'error');
       return;
     }
     try {
@@ -425,7 +453,7 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
         options.notify(options.t('workspace.permission'), 'error');
         return;
       }
-      if (await directoryExists(parent, dirname)) {
+      if (!isCaseOnlyRename(entry.name, dirname) && (await directoryExists(parent, dirname))) {
         options.notify(options.t('workspace.exists'), 'error');
         return;
       }
@@ -448,13 +476,15 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
     }
   }
 
-  async function moveEntry(entry: WorkspaceEntry, targetPath: string): Promise<void> {
-    if (targetPath === parentPath(entry.path)) return;
+  async function moveEntry(entry: WorkspaceEntry, rawTargetPath: string): Promise<void> {
+    const targetPath = normalizeRelPath(rawTargetPath);
+    const sourcePath = normalizeRelPath(entry.path);
+    if (targetPath === parentPath(sourcePath)) return;
     if (await entryMatchesOpenFile(entry, options.fileContext.linkedFile())) {
       options.notify(options.t('workspace.moveOpenBlocked'), 'error');
       return;
     }
-    if (entry.kind === 'directory' && (targetPath === entry.path || targetPath.indexOf(entry.path + '/') === 0)) {
+    if (entry.kind === 'directory' && (targetPath === sourcePath || targetPath.indexOf(sourcePath + '/') === 0)) {
       options.notify(options.t('workspace.moveInvalid'), 'error');
       return;
     }
@@ -502,7 +532,7 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
 
   async function deleteEntry(entry: WorkspaceEntry): Promise<void> {
     if (await entryMatchesOpenFile(entry, options.fileContext.linkedFile())) {
-      options.notify(options.t('workspace.moveOpenBlocked'), 'error');
+      options.notify(options.t('workspace.deleteOpenBlocked'), 'error');
       return;
     }
     try {

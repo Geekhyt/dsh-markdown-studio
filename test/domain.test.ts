@@ -155,4 +155,37 @@ assert.deepEqual(
   ],
   'assetFilesInMarkdown detects titled Markdown, ./assets, HTML img, and host URLs',
 );
-console.log('24 settings & image asset edge checks passed.');
+const refAndBracketAssets = assetFilesInMarkdown(
+  [
+    '![Arch][a]',
+    '![fig [1]](assets/4123456789abcdef01234567.png)',
+    '![cdn](https://cdn.example.com/assets/5123456789abcdef01234567.png)',
+    '',
+    '[a]: assets/6123456789abcdef01234567.png',
+  ].join('\n'),
+);
+assert.deepEqual(
+  refAndBracketAssets.sort(),
+  ['4123456789abcdef01234567.png', '6123456789abcdef01234567.png'],
+  'assetFilesInMarkdown collects reference-style and nested-bracket assets while ignoring external CDN URLs',
+);
+assert.equal(
+  portableizeAssetUrls('http://127.0.0.1:3000/api/markdown-studio/assets/0123456789abcdef01234567.png'),
+  'assets/0123456789abcdef01234567.png',
+  'portableizeAssetUrls strips leading loopback origin on /api/markdown-studio/assets/',
+);
+const plainSample = markdownToPlain(
+  '---\ntitle: Demo\n# yaml comment\n---\n\n:::lead\n==重点++与++高亮==\n:::\n\n> [!NOTE]\n> 正文',
+);
+assert.equal(plainSample.includes('title: Demo'), false, 'markdownToPlain strips YAML frontmatter');
+assert.equal(plainSample.includes(':::lead'), false, 'markdownToPlain strips editorial directives');
+assert.equal(plainSample.includes('[!NOTE]'), false, 'markdownToPlain strips GitHub alert markers');
+assert.equal(plainSample.includes('=='), false, 'markdownToPlain strips inline highlight syntax');
+assert.equal(
+  markdownHeadings('---\n# yaml comment\n---\n\n# Real Heading')
+    .map((h) => h.text)
+    .join(','),
+  'Real Heading',
+  'markdownHeadings skips YAML frontmatter comments',
+);
+console.log('30 settings & image asset edge checks passed.');

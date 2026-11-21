@@ -70,6 +70,7 @@ export interface LibraryArchiveOptions {
   download: (name: string, content: Blob | string, mime: string) => boolean;
   onReplace: (article: Article) => void;
   onClose: () => void;
+  flushBeforeSwitch?: () => Promise<boolean>;
   chooseImportMode?: (summary: ImportBackupSummary) => Promise<ImportModeChoice | null>;
   resolveConflicts?: (
     conflicts: MergeConflict[],
@@ -504,6 +505,10 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
         restoreImportRecovery(recovery.previous);
         return;
       }
+      if (options.flushBeforeSwitch && !(await options.flushBeforeSwitch())) {
+        restoreImportRecovery(recovery.previous);
+        return;
+      }
       const preparedParsed = remapLibraryAssetPaths(parsed, remapped);
       const nextLibrary = plan.merge
         ? mergeLibraryBackup(store.getSnapshot(), preparedParsed, prefer, plan.decisions)
@@ -551,6 +556,7 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
         prefer,
       );
       if (!plan || !mountedRef.current) return;
+      if (options.flushBeforeSwitch && !(await options.flushBeforeSwitch())) return;
       const recovery = snapshotImportRecovery();
       if (!recovery.ok) return;
       try {
@@ -592,6 +598,7 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
       if (!parsed) throw new Error('invalid recovery');
       const ok = await options.confirm({ title: t('library.recoverConfirm') });
       if (!ok) return;
+      if (options.flushBeforeSwitch && !(await options.flushBeforeSwitch())) return;
       const nextActive = store.replaceAll(parsed, true);
       applyImportedSkills(rawPayload, false, 'incoming');
       replace(nextActive);

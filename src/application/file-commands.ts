@@ -28,6 +28,8 @@ export interface FileActionsOptions {
   setDocumentRef: (ref: DocumentRef) => void;
   stampFile: (handle: FileSystemFileHandle, file: File, text?: string) => Promise<void>;
   flushBeforeSwitch?: () => Promise<boolean>;
+  claimOpenTransition?: () => () => boolean;
+  onSaved?: (writtenContent: string) => void;
   isPageAlive?: () => boolean;
   download: (name: string, content: Blob | string, mime: string) => boolean;
   isAbortError: (error: unknown) => boolean;
@@ -56,12 +58,20 @@ export function createFileCommands(options: FileActionsOptions): FileActionsApi 
         types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md', '.markdown', '.txt'] } }],
       });
       if (options.isPageAlive && !options.isPageAlive()) return;
+      const isCurrentOpen = options.claimOpenTransition ? options.claimOpenTransition() : () => true;
       if (options.flushBeforeSwitch && !(await options.flushBeforeSwitch())) return;
+      if (!isCurrentOpen()) return;
       const targetArticleId = options.store.getActive().id;
       const handle = handles[0];
       const file = await handle.getFile();
       const text = await file.text();
-      if ((options.isPageAlive && !options.isPageAlive()) || options.store.getActive().id !== targetArticleId) return;
+      if (
+        !isCurrentOpen() ||
+        (options.isPageAlive && !options.isPageAlive()) ||
+        options.store.getActive().id !== targetArticleId
+      ) {
+        return;
+      }
       options.resetEditorTo({
         title: options.deriveTitle(text),
         markdown: text,
@@ -69,7 +79,13 @@ export function createFileCommands(options: FileActionsOptions): FileActionsApi 
         view: options.view,
       });
       await options.stampFile(handle, file, text);
-      if ((options.isPageAlive && !options.isPageAlive()) || options.store.getActive().id !== targetArticleId) return;
+      if (
+        !isCurrentOpen() ||
+        (options.isPageAlive && !options.isPageAlive()) ||
+        options.store.getActive().id !== targetArticleId
+      ) {
+        return;
+      }
       options.setDocumentRef({ kind: 'file', handle });
       options.setFileName(file.name);
       options.notify(t('file.opened'));
@@ -131,6 +147,7 @@ export function createFileCommands(options: FileActionsOptions): FileActionsApi 
       const { result, writtenContent } = await writeWithConflict(handle, content, articleId, linkedBefore);
       if (result === 'denied') options.notify(t('file.permission'), 'error');
       if (result !== 'saved' || options.store.getActive().id !== articleId) return;
+      options.onSaved?.(writtenContent);
       if (options.fileContext.linkedFile() !== handle) {
         options.setDocumentRef({ kind: 'file', handle });
       }

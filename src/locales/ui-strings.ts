@@ -293,6 +293,8 @@ export const UI_STRINGS_ZH: Record<string, string> = {
   'workspace.moveFailed': '移动失败',
   'workspace.moveInvalid': '不能移动到自身或其子目录',
   'workspace.moveOpenBlocked': '当前文件正在编辑，先切换到其他文件再移动',
+  'workspace.renameOpenBlocked': '当前文件正在编辑，先切换到其他文件再重命名',
+  'workspace.deleteOpenBlocked': '当前文件正在编辑，先切换到其他文件再删除',
   'workspace.search': '搜索工作区',
   'workspace.noResults': '没有匹配的文件',
   'workspace.delete': '删除',
@@ -331,6 +333,7 @@ export const UI_STRINGS_ZH: Record<string, string> = {
   'toast.bundleFailed': '导出文章包失败',
   'toast.bundleImported': '文章包已导入',
   'toast.bundleImportFailed': '导入文章包失败',
+  'toast.importFailed': '导入 Markdown 失败',
   'toast.imported': '已导入 Markdown',
   'toast.saved': '草稿已保存到本机',
   'toast.cleared': '已清空',
@@ -394,6 +397,7 @@ export const UI_STRINGS_ZH: Record<string, string> = {
   'ai.newSkillDraft': '新建 Skill',
   'ai.newSkillBtn': '新建',
   'ai.importSkillBtn': '导入 .md',
+  'ai.skillLimitReached': '自定义写作 Skill 已达上限（24 个）',
   'ai.exportSkillBtn': '导出 SKILL.md',
   'ai.saveSkillBtn': '保存 Skill',
   'ai.setAsDefault': '设为默认动作',
@@ -752,6 +756,8 @@ export const UI_STRINGS_EN: Record<string, string> = {
   'workspace.moveFailed': 'Move failed',
   'workspace.moveInvalid': 'Cannot move a folder into itself or its child',
   'workspace.moveOpenBlocked': 'The open file cannot be moved; switch files first',
+  'workspace.renameOpenBlocked': 'The open file cannot be renamed; switch files first',
+  'workspace.deleteOpenBlocked': 'The open file cannot be deleted; switch files first',
   'workspace.search': 'Search workspace',
   'workspace.noResults': 'No matching files',
   'workspace.delete': 'Delete',
@@ -790,6 +796,7 @@ export const UI_STRINGS_EN: Record<string, string> = {
   'toast.bundleFailed': 'Could not export the article bundle',
   'toast.bundleImported': 'Article bundle imported',
   'toast.bundleImportFailed': 'Could not import the article bundle',
+  'toast.importFailed': 'Could not import Markdown',
   'toast.imported': 'Markdown imported',
   'toast.saved': 'Draft saved locally',
   'toast.cleared': 'Cleared',
@@ -853,6 +860,7 @@ export const UI_STRINGS_EN: Record<string, string> = {
   'ai.newSkillDraft': 'New skill',
   'ai.newSkillBtn': 'New',
   'ai.importSkillBtn': 'Import .md',
+  'ai.skillLimitReached': 'Custom writing skills limit reached (24)',
   'ai.exportSkillBtn': 'Export SKILL.md',
   'ai.saveSkillBtn': 'Save skill',
   'ai.setAsDefault': 'Set as default',
@@ -1001,6 +1009,8 @@ export function createStudioLocaleController(React: typeof ReactNamespace, names
       translate = null;
     }
     return function () {
+      localeService = null;
+      translate = null;
       for (const dispose of disposers) {
         try {
           dispose();

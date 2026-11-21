@@ -36,6 +36,8 @@ function isWithinGraceWindow(storedAt: string | undefined, minAgeMs: number, now
 export function createAssetGarbageCollector(options: AssetGarbageCollectorOptions): AssetGarbageCollector {
   const minAgeMs = options.minAgeMs ?? DEFAULT_MIN_ASSET_AGE_MS;
   let inFlight: Promise<string[]> | null = null;
+  let pendingRerun = false;
+  const pendingBypass = new Set<string>();
 
   function liveReferences(): Set<string> {
     const kept = new Set<string>(BUILTIN_SAMPLE_ASSETS);
@@ -90,8 +92,23 @@ export function createAssetGarbageCollector(options: AssetGarbageCollectorOption
   }
 
   function prune(pruneOptions?: AssetPruneOptions): Promise<string[]> {
-    if (inFlight) return inFlight;
-    const task = runPrune(pruneOptions).finally(function () {
+    if (inFlight) {
+      pendingRerun = true;
+      for (const file of pruneOptions?.bypassGraceFor || []) pendingBypass.add(file);
+      return inFlight;
+    }
+    const runWithFollowups = async (): Promise<string[]> => {
+      const removed = await runPrune(pruneOptions);
+      while (pendingRerun) {
+        pendingRerun = false;
+        const nextBypass = Array.from(pendingBypass);
+        pendingBypass.clear();
+        const extra = await runPrune(nextBypass.length ? { bypassGraceFor: nextBypass } : undefined);
+        removed.push(...extra);
+      }
+      return removed;
+    };
+    const task = runWithFollowups().finally(function () {
       if (inFlight === task) inFlight = null;
     });
     inFlight = task;

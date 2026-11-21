@@ -1,5 +1,6 @@
 import type { Article, LibraryState } from './article';
 import { parseView } from './article';
+import { type CustomTheme, mergeCustomThemes } from './custom-themes';
 import { BACKUP_SCHEMA_VERSION, supportedSchemaVersion } from './schema';
 import { sanitizeSettings } from './settings';
 import { sanitizeWritingSkillState, type WritingSkillState } from './writing-skills';
@@ -79,6 +80,39 @@ export function mergeConflicts(current: LibraryState, incoming: LibraryState): M
   return conflicts;
 }
 
+function collectUnionCustomThemes(current: LibraryState, incoming: LibraryState): CustomTheme[] {
+  let merged: CustomTheme[] = [];
+  for (const entry of [...current.docs, ...(current.trash || []), ...incoming.docs, ...(incoming.trash || [])]) {
+    if (entry.settings.customThemes?.length) {
+      merged = mergeCustomThemes(merged, entry.settings.customThemes);
+    }
+  }
+  return merged;
+}
+
+function attachSharedCustomThemes(docs: Article[], customThemes: CustomTheme[]): Article[] {
+  if (!customThemes.length || !docs.length) return docs;
+  return docs.map((entry) => ({
+    ...entry,
+    settings: { ...entry.settings, customThemes },
+  }));
+}
+
+function dedupeIncomingDocs(incomingDocs: readonly Article[], existingDocs: ReadonlyMap<string, Article>): Article[] {
+  const seen = new Set<string>();
+  return incomingDocs.map(function (entry) {
+    if (!seen.has(entry.id)) {
+      seen.add(entry.id);
+      return entry;
+    }
+    let suffix = 2;
+    while (seen.has(`${entry.id}-${suffix}`) || existingDocs.has(`${entry.id}-${suffix}`)) suffix++;
+    const nextId = `${entry.id}-${suffix}`;
+    seen.add(nextId);
+    return { ...entry, id: nextId };
+  });
+}
+
 /** Merge an imported library into the current one. Per-id decisions win over the default. */
 export function mergeLibraryBackup(
   current: LibraryState,
@@ -91,7 +125,7 @@ export function mergeLibraryBackup(
   const decisionFor = (id: string, exists: boolean): MergeDecision =>
     Object.hasOwn(decisions, id) ? decisions[id] : exists ? prefer : 'incoming';
   const incomingDocIds = new Set<string>();
-  for (const entry of incoming.docs) {
+  for (const entry of dedupeIncomingDocs(incoming.docs, docs)) {
     const exists = docs.has(entry.id) || trash.has(entry.id);
     const decision = decisionFor(entry.id, exists);
     if (decision === 'incoming' || !exists) {
@@ -116,7 +150,8 @@ export function mergeLibraryBackup(
       trash.delete(fallback.id);
     }
   }
-  const nextDocs = Array.from(docs.values());
+  const sharedThemes = collectUnionCustomThemes(current, incoming);
+  const nextDocs = attachSharedCustomThemes(Array.from(docs.values()), sharedThemes);
   const activeId = nextDocs.some((entry) => entry.id === current.activeId)
     ? current.activeId
     : nextDocs.some((entry) => entry.id === incoming.activeId)
@@ -156,6 +191,16 @@ export function parseLibraryBackup(input: unknown, fallbackTitle = '未命名'):
   if (!root || root.format !== 'markdown-studio-library' || root.version !== 1 || !Array.isArray(root.docs))
     return null;
   if (supportedSchemaVersion(root.schemaVersion, 1, BACKUP_SCHEMA_VERSION) === null) return null;
+  const seenIds = new Set<string>();
+  const uniqueId = (rawId: string, prefix: string, idx: number): string => {
+    let candidate = rawId || `${prefix}-${idx}-${Date.now().toString(36)}`;
+    let n = 2;
+    while (seenIds.has(candidate)) {
+      candidate = `${rawId || prefix}-${n++}`;
+    }
+    seenIds.add(candidate);
+    return candidate;
+  };
   const docs: Article[] = [];
   for (const value of root.docs) {
     const parsed = parseBackupArticle(
@@ -164,14 +209,14 @@ export function parseLibraryBackup(input: unknown, fallbackTitle = '未命名'):
       fallbackTitle,
       false,
     );
-    if (parsed) docs.push(parsed);
+    if (parsed) docs.push({ ...parsed, id: uniqueId(parsed.id, 'doc', docs.length) });
   }
   if (!docs.length) return null;
   const trash: Article[] = [];
   if (Array.isArray(root.trash)) {
     for (const value of root.trash) {
       const parsed = parseBackupArticle(value, 'trash-' + trash.length, fallbackTitle, true);
-      if (parsed) trash.push(parsed);
+      if (parsed) trash.push({ ...parsed, id: uniqueId(parsed.id, 'trash', trash.length) });
     }
   }
   const activeId =

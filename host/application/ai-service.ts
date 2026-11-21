@@ -86,7 +86,8 @@ function providerIdOf(entry: HostLlmProviderEntry): string {
   return typeof entry === 'string' ? trimString(entry) : trimString(entry?.id);
 }
 
-function appendProviderModels(out: HostLlmModelEntry[], provider: string, entries: readonly HostLlmModelEntry[]): void {
+function appendProviderModels(out: HostLlmModelEntry[], provider: string, entries: unknown): void {
+  if (!Array.isArray(entries)) return;
   for (const item of entries) {
     const id = trimString(item?.id);
     if (id) out.push({ provider, id, name: trimString(item.name) || id });
@@ -95,7 +96,9 @@ function appendProviderModels(out: HostLlmModelEntry[], provider: string, entrie
 
 async function collectCatalogModels(llm: HostLlmRuntime): Promise<HostLlmModelEntry[]> {
   if (typeof llm.listProviders !== 'function' || typeof llm.listModels !== 'function') return [];
-  const providers = (await llm.listProviders()).map(providerIdOf).filter(Boolean);
+  const rawProviders = await llm.listProviders();
+  if (!Array.isArray(rawProviders)) return [];
+  const providers = rawProviders.map(providerIdOf).filter(Boolean);
   const settled = await Promise.allSettled(
     providers.map(async (provider) => ({ provider, entries: await llm.listModels!(provider) })),
   );
@@ -242,14 +245,22 @@ export class AiHostService {
     if (system) streamOptions.system = system;
     if (reasoningEffort) streamOptions.reasoningEffort = reasoningEffort;
     let finished = false;
-    for await (const chunk of llm.stream(streamOptions)) {
-      if (signal?.aborted) throw new AiHostError('ABORTED', '已停止生成');
-      if (chunk.type === 'text-delta' && 'text' in chunk && chunk.text) {
-        onDelta(chunk.text);
-      } else if (chunk.type === 'finish' && 'reason' in chunk && chunk.reason) {
-        checkTerminalChunk(chunk.reason);
-        finished = true;
+    try {
+      for await (const chunk of llm.stream(streamOptions)) {
+        if (signal?.aborted) throw new AiHostError('ABORTED', '已停止生成');
+        if (chunk.type === 'text-delta' && 'text' in chunk && chunk.text) {
+          onDelta(chunk.text);
+        } else if (chunk.type === 'finish' && 'reason' in chunk && chunk.reason) {
+          checkTerminalChunk(chunk.reason);
+          finished = true;
+        }
       }
+    } catch (error) {
+      if (error instanceof AiHostError) throw error;
+      if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
+        throw new AiHostError('ABORTED', '已停止生成');
+      }
+      throw error;
     }
     if (signal?.aborted) throw new AiHostError('ABORTED', '已停止生成');
     if (!finished) {

@@ -5,7 +5,7 @@ import { markdown } from '@codemirror/lang-markdown';
 import { bracketMatching, HighlightStyle, indentOnInput, syntaxHighlighting, syntaxTree } from '@codemirror/language';
 import { highlightSelectionMatches } from '@codemirror/search';
 import type { Extension, Range, Text } from '@codemirror/state';
-import { Compartment, EditorState, RangeSetBuilder, StateEffect, StateField } from '@codemirror/state';
+import { Annotation, Compartment, EditorState, RangeSetBuilder, StateEffect, StateField } from '@codemirror/state';
 import type { DecorationSet, ViewUpdate } from '@codemirror/view';
 import {
   Decoration,
@@ -298,8 +298,10 @@ class AiInlineBlockWidget extends WidgetType {
 
   updateDOM(dom: HTMLElement): boolean {
     const item = this.spec;
+    const labelsKey = `${item.primaryLabel}\0${item.secondaryLabel}\0${item.retryLabel || ''}`;
     if (dom.getAttribute('data-mdstudio-ai-patch') !== item.id) return false;
     if (dom.getAttribute('data-mdstudio-ai-status') !== item.status) return false;
+    if (dom.getAttribute('data-mdstudio-ai-labels') !== labelsKey) return false;
     const existingWarn = dom.querySelector<HTMLElement>('.mdstudio-ai-inline-reason');
     if (Boolean(item.warning) !== Boolean(existingWarn)) return false;
     const prose = dom.querySelector<HTMLElement>('.mdstudio-ai-inline-prose');
@@ -316,6 +318,10 @@ class AiInlineBlockWidget extends WidgetType {
     wrap.className = 'mdstudio-ai-inline-card is-' + item.status;
     wrap.setAttribute('data-mdstudio-ai-patch', item.id);
     wrap.setAttribute('data-mdstudio-ai-status', item.status);
+    wrap.setAttribute(
+      'data-mdstudio-ai-labels',
+      `${item.primaryLabel}\0${item.secondaryLabel}\0${item.retryLabel || ''}`,
+    );
     wrap.setAttribute('role', item.status === 'error' ? 'alert' : 'region');
     wrap.setAttribute('aria-label', item.warning || item.primaryLabel || item.secondaryLabel);
     inlineBlockSpecs.set(wrap, item);
@@ -534,15 +540,19 @@ const diffTransitionField = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field),
 });
 
+const ProgrammaticUpdate = Annotation.define<boolean>();
+
 export function create(options: EditorOptions): EditorApi {
   const opts = options;
   const isCss = opts.language === 'css';
   const onUpdate = (update: ViewUpdate): void => {
-    if (update.docChanged && opts.onChange) {
+    const isSilentSync =
+      update.transactions.length > 0 && update.transactions.every((tr) => tr.annotation(ProgrammaticUpdate) === true);
+    if (update.docChanged && !isSilentSync && opts.onChange) {
       const selection = update.state.selection.main;
       opts.onChange(update.state.doc.toString(), { start: selection.from, end: selection.to, head: selection.head });
     }
-    if ((update.selectionSet || update.docChanged) && opts.onSelection) {
+    if ((update.selectionSet || (update.docChanged && !isSilentSync)) && opts.onSelection) {
       const selection = update.state.selection.main;
       opts.onSelection({ start: selection.from, end: selection.to, head: selection.head });
     }
@@ -610,10 +620,13 @@ export function create(options: EditorOptions): EditorApi {
     getValue() {
       return view.state.doc.toString();
     },
-    setValue(value: string) {
+    setValue(value: string, silent = false) {
       const current = view.state.doc.toString();
       if (current === value) return;
-      view.dispatch({ changes: { from: 0, to: current.length, insert: value } });
+      view.dispatch({
+        changes: { from: 0, to: current.length, insert: value },
+        ...(silent ? { annotations: ProgrammaticUpdate.of(true) } : {}),
+      });
     },
     getSelection() {
       const range = view.state.selection.main;
@@ -631,6 +644,12 @@ export function create(options: EditorOptions): EditorApi {
       return () => {
         scrollListeners.delete(listener);
       };
+    },
+    revealRange(start: number, end: number) {
+      const length = view.state.doc.length;
+      const from = Math.max(0, Math.min(length, start));
+      const to = Math.max(from, Math.min(length, end));
+      view.dispatch({ selection: { anchor: from, head: to }, scrollIntoView: true });
     },
     focusRange(start: number, end: number) {
       const length = view.state.doc.length;

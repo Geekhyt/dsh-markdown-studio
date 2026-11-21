@@ -3,10 +3,10 @@ const CSS_MULTI_URL_FUNCS = new Set(['image-set', '-webkit-image-set', 'image', 
 const C0_AND_CTRL = /[\u0000-\u0020\u007f-\u009f]/g;
 const DISALLOWED_URL_PREFIX = /^(?:[a-z][a-z0-9+.-]*:|[/\\]{2})/i;
 
-/** Decode CSS escapes (`\68ttps`, `u\72l`, `\2f `) and CSS string line continuations (`\<newline>`) in one pass. */
-function decodeCssEscapes(value: string): string {
+/** Decode CSS escapes (`\68ttps`, `u\72l`, `\75\nrl`, `\75\r\nrl`) and string line continuations per CSS Syntax Level 3 §4.3.7. */
+export function decodeCssEscapes(value: string): string {
   return value.replace(
-    /\\(?:\r\n|[\r\n\f])|\\([0-9a-f]{1,6})[ \t\r\n\f]?|\\([\s\S])/gi,
+    /\\(?:\r\n|[\r\n\f])|\\([0-9a-f]{1,6})(?:\r\n|[ \t\r\n\f])?|\\([\s\S])/gi,
     function (_match, hex?: string, lit?: string) {
       if (hex !== undefined) {
         const code = parseInt(hex, 16);
@@ -152,8 +152,17 @@ function scanIdentBeforeParen(text: string, from: number, parenIndex: number): {
       start--;
       continue;
     }
-    // CSS hex escapes inside function names (e.g. `\75 rl(`) consume one trailing space.
-    if (/[ \t]/.test(prev) && start >= from + 2 && /\\[0-9a-f]{1,6}$/i.test(text.slice(from, start - 1))) {
+    // CSS hex escapes inside function names (e.g. `\75 rl(`, `\75\nrl(`, `\75\r\nrl(`) consume one trailing whitespace.
+    if (
+      prev === '\n' &&
+      start >= from + 3 &&
+      text[start - 2] === '\r' &&
+      /\\[0-9a-f]{1,6}$/i.test(text.slice(from, start - 2))
+    ) {
+      start -= 2;
+      continue;
+    }
+    if (/[ \t\r\n\f]/.test(prev) && start >= from + 2 && /\\[0-9a-f]{1,6}$/i.test(text.slice(from, start - 1))) {
       start--;
       continue;
     }
@@ -305,6 +314,91 @@ function splitCssSegments(css: string): string[] {
   }
   if (start < css.length) parts.push(css.slice(start));
   return parts;
+}
+
+export interface CssDeclaration {
+  prop: string;
+  value: string;
+}
+
+export interface CssRule {
+  selectors: string[];
+  declarations: CssDeclaration[];
+}
+
+/** Strip CSS comments outside quoted strings. */
+export function stripCssComments(css: string): string {
+  return String(css || '').replace(
+    /("(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*')|\/\*[\s\S]*?\*\//g,
+    function (_match, quoted?: string) {
+      return quoted ?? '';
+    },
+  );
+}
+
+/** True when a CSS value or SVG paint attribute invokes any URL-loading CSS function (escape- and comment-aware). */
+export function hasCssUrlRef(value: string): boolean {
+  return findNextFunctionCall(precleanCss(value), 0) !== null;
+}
+
+/** Parse semicolon-separated CSS declarations safely across quotes and parenthesized expressions. */
+export function parseCssDeclarations(block: string): CssDeclaration[] {
+  const declarations: CssDeclaration[] = [];
+  for (const segment of splitCssSegments(block)) {
+    if (segment === ';' || segment === '{' || segment === '}') continue;
+    const colon = segment.indexOf(':');
+    if (colon <= 0) continue;
+    const prop = segment.slice(0, colon).trim().toLowerCase();
+    const value = segment.slice(colon + 1).trim();
+    if (prop && value) declarations.push({ prop, value });
+  }
+  return declarations;
+}
+
+/** Parse top-level CSS rules (`selector { declarations }`), skipping comments and `@`-rules. */
+export function parseCssRules(css: string): CssRule[] {
+  const parts = splitCssSegments(stripCssComments(css));
+  const rules: CssRule[] = [];
+  let depth = 0;
+  let selector = '';
+  let body: string[] = [];
+  for (const part of parts) {
+    if (part === '{') {
+      if (depth === 0) body = [];
+      else body.push(part);
+      depth++;
+      continue;
+    }
+    if (part === '}') {
+      if (depth > 0) depth--;
+      if (depth === 0) {
+        const trimmed = selector.trim();
+        if (trimmed && !trimmed.startsWith('@')) {
+          const selectors = trimmed
+            .split(',')
+            .map((item) => item.trim())
+            .filter(Boolean);
+          rules.push({ selectors, declarations: parseCssDeclarations(body.join('')) });
+        }
+        selector = '';
+        body = [];
+      } else {
+        body.push(part);
+      }
+      continue;
+    }
+    if (depth === 0) selector = part === ';' ? '' : selector + part;
+    else body.push(part);
+  }
+  return rules;
+}
+
+const ROOT_THEME_SELECTOR =
+  /^(?:(?:section|div|article)?(?:#mdstudio|\.mdstudio-content)|:root|html|body)(?:#mdstudio|\.mdstudio-content)*$/i;
+
+/** True when a single selector targets the article root canvas (`#mdstudio`, `.mdstudio-content`, `:root`, `html`, `body`). */
+export function isRootThemeSelector(selector: string): boolean {
+  return ROOT_THEME_SELECTOR.test(selector.trim());
 }
 
 /**

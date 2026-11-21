@@ -91,18 +91,20 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
   }
 
   async function requestPermission(): Promise<boolean> {
+    const generation = generationRef.current;
     const handle = permissionHandle();
     if (!handle) return true;
     if (typeof handle.requestPermission !== 'function') {
-      setPermission('granted');
+      if (generation === generationRef.current) setPermission('granted');
       return true;
     }
     try {
       const result = await handle.requestPermission({ mode: 'readwrite' });
+      if (generation !== generationRef.current) return false;
       setPermission(result === 'granted' ? 'granted' : result === 'denied' ? 'denied' : 'prompt');
       return result === 'granted';
     } catch (error) {
-      setPermission('prompt');
+      if (generation === generationRef.current) setPermission('prompt');
       return false;
     }
   }
@@ -272,8 +274,8 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
       const fingerprint = await fileFingerprint(text);
       if (!valid()) return;
       rememberFile(handle, file, fingerprint);
-      optionsRef.current.onReload(text, file);
       dismissConflict();
+      optionsRef.current.onReload(text, file);
       optionsRef.current.notify(optionsRef.current.t('file.reloaded'));
     } catch (error) {
       if (valid()) optionsRef.current.notify(optionsRef.current.t('file.openFailed'), 'error');

@@ -1,3 +1,5 @@
+import { hasCssUrlRef } from '../domain/custom-css';
+
 /**
  * DOM-only cleanup for the clipboard copy. The preview keeps the original
  * semantic structure; only copied HTML gets WeChat-specific guard nodes and
@@ -107,7 +109,7 @@ function inheritedSvgFill(element: SVGElement, stopAt: Element): string {
   let cursor: Element | null = element;
   while (cursor && cursor !== stopAt) {
     const fill = (cursor.getAttribute('fill') || '').trim();
-    if (fill && /url\s*\(/i.test(fill)) return '';
+    if (fill && hasCssUrlRef(fill)) return '';
     if (fill && fill.toLowerCase() !== 'currentcolor' && fill.toLowerCase() !== 'none') return fill;
     cursor = cursor.parentElement;
   }
@@ -119,7 +121,7 @@ function sanitizeSvgPathElement(element: SVGElement, svg: SVGSVGElement): void {
   const inlineStrokeWidth = element.style?.strokeWidth || '';
   if (ownFill === 'none') {
     element.setAttribute('fill', 'none');
-    if (!element.getAttribute('stroke') || /url\s*\(/i.test(element.getAttribute('stroke') || '')) {
+    if (!element.getAttribute('stroke') || hasCssUrlRef(element.getAttribute('stroke') || '')) {
       element.setAttribute('stroke', 'currentColor');
     }
     if (inlineStrokeWidth && !element.getAttribute('stroke-width')) {
@@ -132,6 +134,15 @@ function sanitizeSvgPathElement(element: SVGElement, svg: SVGSVGElement): void {
   element.setAttribute('stroke', 'none');
 }
 
+function stripUnsafeSvgPaintAttrs(element: Element): void {
+  Array.from(element.attributes).forEach(function (attribute) {
+    if (attribute.name.indexOf('data-') === 0) element.removeAttribute(attribute.name);
+    else if (/^(?:fill|stroke|filter|clip-path|mask)$/i.test(attribute.name) && hasCssUrlRef(attribute.value)) {
+      element.removeAttribute(attribute.name);
+    }
+  });
+}
+
 function sanitizeMathSvgs(root: HTMLElement): void {
   Array.from(root.querySelectorAll<HTMLElement>('.mdstudio-math')).forEach(function (node) {
     const display = node.getAttribute('data-mdstudio-display') === '1';
@@ -140,6 +151,8 @@ function sanitizeMathSvgs(root: HTMLElement): void {
       Array.from(svg.querySelectorAll('foreignObject')).forEach(function (fo) {
         fo.remove();
       });
+      stripUnsafeSvgPaintAttrs(svg);
+      if (hasCssUrlRef(svg.getAttribute('style') || '')) svg.removeAttribute('style');
       const width = svg.getAttribute('width');
       const height = svg.getAttribute('height');
       if (width) {
@@ -155,15 +168,7 @@ function sanitizeMathSvgs(root: HTMLElement): void {
       // styles on SVG children, which can leave only <rect> rules visible.
       // Keep the geometry and paint, but remove attributes we do not need.
       Array.from(svg.querySelectorAll<SVGElement>('*')).forEach(function (element) {
-        Array.from(element.attributes).forEach(function (attribute) {
-          if (attribute.name.indexOf('data-') === 0) element.removeAttribute(attribute.name);
-          else if (
-            /^(?:fill|stroke|filter|clip-path|mask)$/i.test(attribute.name) &&
-            /url\s*\(/i.test(attribute.value)
-          ) {
-            element.removeAttribute(attribute.name);
-          }
-        });
+        stripUnsafeSvgPaintAttrs(element);
         if (element.tagName.toLowerCase() === 'path') sanitizeSvgPathElement(element, svg);
         if (element.tagName.toLowerCase() !== 'svg') element.removeAttribute('style');
       });

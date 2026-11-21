@@ -166,7 +166,7 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
     const cls = joinClass('mdstudio-dsh-btn ' + legacy + ' is-' + variant + ' is-' + size, className);
     return h(
       'button',
-      { type: 'button', ...rest, className: cls },
+      { type: 'button', ...rest, 'data-mdstudio-autofocus': rest.autoFocus ? 'true' : undefined, className: cls },
       icon != null ? h('span', { className: 'mdstudio-dsh-btn-icon' }, icon) : null,
       children,
     );
@@ -193,7 +193,12 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
 
   const FallbackInput = withInputRef(React, function FallbackInputInner(props, ref) {
     const { icon, className, wrapClassName, ...rest } = props;
-    const inputNode = h('input', { ...rest, ref, className: joinClass('mdstudio-input', className) });
+    const inputNode = h('input', {
+      ...rest,
+      'data-mdstudio-autofocus': rest.autoFocus ? 'true' : undefined,
+      ref,
+      className: joinClass('mdstudio-input', className),
+    });
     if (icon == null) return inputNode;
     return h(
       'span',
@@ -378,7 +383,9 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
           focusTimerRef.current = null;
           if (!el.isConnected || el.contains(document.activeElement)) return;
           const focusable = getFocusableElements(el);
-          const auto = focusable.find((item) => item.hasAttribute('autofocus'));
+          const auto = focusable.find(
+            (item) => item.hasAttribute('autofocus') || item.hasAttribute('data-mdstudio-autofocus'),
+          );
           (auto || focusable[0] || el).focus();
         }, 0);
       }

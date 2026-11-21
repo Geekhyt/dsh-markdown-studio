@@ -796,6 +796,23 @@ check('v0.1.8 CommonMark link-ref, task-list, blockquote lazy continuation and C
   assert.equal(engine.containsMath('$$\n\\int_0^1 x^2 dx\n$$'), true);
   assert.equal(engine.containsMath('Inline TeX \\(a^2 + b^2\\)'), true);
   assert.equal(engine.containsMath('\\[\n\\sum_{i=1}^n i\n\\]'), true);
+  // Single-source containsMath parity across same-line multiline $$ and blockquote multiline $$
+  for (const sample of [
+    '$$ E = mc^2\n+ p^2c^2 $$',
+    '> $$\n> a^2 + b^2 = c^2\n> $$',
+    '- $$\n  x + y\n  $$',
+    '\\[\n\\frac{1}{2}\n\\]',
+    '价格从 $100 涨到 $200',
+  ]) {
+    assert.equal(
+      engine.containsMath(sample),
+      engine.renderMarkdown(sample).html.includes('class="mdstudio-math"'),
+      `containsMath matches renderMarkdown for ${JSON.stringify(sample)}`,
+    );
+  }
+  // Backslash-slash protocol-relative URL bypass rejection
+  const backslashLink = engine.renderMarkdown('[phish](\\\\/evil.example/phish)', { linkFootnotes: true });
+  assert.equal(backslashLink.html.includes('evil.example'), false, '\\/ protocol-relative link is rejected');
 });
 
 console.log(`\n${checks} engine checks passed.`);

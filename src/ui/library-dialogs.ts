@@ -246,18 +246,27 @@ function emptyLibraryMessage(tab: 'docs' | 'trash', hasQuery: boolean, t: (key: 
 function useModalMenuState(React: typeof ReactNamespace, open: boolean, closeModal: () => void) {
   const [prevOpen, setPrevOpen] = React.useState(open);
   const [rawMenuOpen, setRawMenuOpen] = React.useState(false);
-  const lastClosedAtRef = React.useRef(0);
+  const dismissSuppressRef = React.useRef<'escape' | 'pointer' | null>(null);
   const insideMenuRef = React.useRef(false);
   if (prevOpen !== open) {
     setPrevOpen(open);
     if (!open && rawMenuOpen) setRawMenuOpen(false);
   }
   const menuOpen = open && rawMenuOpen;
-  const updateMenuOpen = function (next: boolean): void {
+  const updateMenuOpen = function (next: boolean, fromAction = false): void {
     setRawMenuOpen(next);
     if (!next) {
-      lastClosedAtRef.current = Date.now();
+      if (fromAction || insideMenuRef.current) {
+        dismissSuppressRef.current = null;
+      } else if (dismissSuppressRef.current !== 'escape') {
+        dismissSuppressRef.current = 'pointer';
+        window.setTimeout(function () {
+          if (dismissSuppressRef.current === 'pointer') dismissSuppressRef.current = null;
+        }, 0);
+      }
       insideMenuRef.current = false;
+    } else {
+      dismissSuppressRef.current = null;
     }
   };
   const markInsideMenu = function (event: Event): void {
@@ -268,13 +277,25 @@ function useModalMenuState(React: typeof ReactNamespace, open: boolean, closeMod
         target.closest('[role="menu"], [role="menuitem"], [data-menu-material]'),
     );
   };
+  const markEscapeWhileMenuOpen = function (event: KeyboardEvent): void {
+    if (event.key !== 'Escape') return;
+    dismissSuppressRef.current = 'escape';
+    Promise.resolve().then(function () {
+      if (dismissSuppressRef.current === 'escape') dismissSuppressRef.current = null;
+    });
+  };
   useDocumentEvent(React, 'pointerdown', markInsideMenu, menuOpen, true);
   useDocumentEvent(React, 'mousedown', markInsideMenu, menuOpen, true);
+  useDocumentEvent(React, 'keydown', markEscapeWhileMenuOpen, menuOpen, true);
   const onModalClose = function (): void {
     if (!open) return;
-    if (menuOpen || Date.now() - lastClosedAtRef.current < 50) {
-      if (menuOpen && !insideMenuRef.current) updateMenuOpen(false);
+    if (menuOpen) {
+      if (!insideMenuRef.current) updateMenuOpen(false, false);
       insideMenuRef.current = false;
+      return;
+    }
+    if (dismissSuppressRef.current !== null) {
+      dismissSuppressRef.current = null;
       return;
     }
     closeModal();
@@ -299,7 +320,7 @@ export function LibraryDialog(props: LibraryDialogProps): ReactNode {
     });
   }
   const onSelectMenu = function (id: string): void {
-    updateMenuOpen(false);
+    updateMenuOpen(false, true);
     if (id === 'import') fileRef.current?.click();
     else if (id === 'exportArchive') props.actions.onExportArchive();
     else if (id === 'recover') props.actions.onRecoverImport();

@@ -72,7 +72,7 @@ const PATTERN_RULES: ReadonlyArray<readonly ['html' | 'style', RegExp, WechatHtm
 
 function collectInlineStyles(html: string): string {
   const styles: string[] = [];
-  const pattern = /\bstyle\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
+  const pattern = /(?:^|[\s<])style\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(html))) {
     styles.push(match[1] ?? match[2] ?? '');
@@ -95,8 +95,8 @@ export function inspectWechatHtml(html: string): WechatHtmlIssue[] {
   if (!/^\s*<section\b[^>]*\bid="mdstudio"/i.test(text)) {
     issues.push({ code: 'root-not-section', message: '文章根节点不是 section#mdstudio' });
   }
-  const inlineStyles = collectInlineStyles(text);
   const markupOutsideCode = stripCodeElementBodies(text);
+  const inlineStyles = collectInlineStyles(markupOutsideCode);
   for (const [scope, pattern, code, message] of PATTERN_RULES) {
     const target = scope === 'style' ? inlineStyles : markupOutsideCode;
     if (pattern.test(target)) issues.push({ code, message });

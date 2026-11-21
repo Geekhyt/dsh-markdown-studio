@@ -96,7 +96,7 @@ for (const ct of CODE_THEMES) {
 
 const codePaletteOptions = [
   { id: 'theme', label: '跟随文章主题 (Follow Theme)' },
-  ...CODE_THEMES.map((c) => ({ id: c.id, label: c.id })),
+  ...CODE_THEMES.filter((c) => c.id !== 'theme').map((c) => ({ id: c.id, label: c.id })),
 ];
 
 const galleryHtml = `<!doctype html>

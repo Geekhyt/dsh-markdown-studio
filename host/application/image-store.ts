@@ -255,7 +255,9 @@ export class ImageHostService {
         }
       }
       const manifest = await this.loadManifest();
-      if (!manifest[filename]) {
+      const existing = manifest[filename];
+      const existingAgeMs = existing ? Date.now() - Date.parse(existing.storedAt || '') : Number.POSITIVE_INFINITY;
+      if (!existing || !Number.isFinite(existingAgeMs) || existingAgeMs > 15_000) {
         const next: Manifest = {
           ...manifest,
           [filename]: {

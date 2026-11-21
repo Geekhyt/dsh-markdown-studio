@@ -50,6 +50,7 @@ export interface SaveSkillInput {
 export interface UseWritingSkillsOptions {
   React: typeof ReactNamespace;
   t: (key: string) => string;
+  locale?: 'zh' | 'en';
   notify: Notify;
   aiClient: AiClient;
   markdown?: string;
@@ -291,7 +292,7 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
     if (!name || !instructions) return null;
     const current = skillStateRef.current;
     if (!canSaveCustom(current, input.id)) {
-      optionsRef.current.notify(t('ai.skillImportFailed'), 'error');
+      optionsRef.current.notify(t('ai.skillLimitReached'), 'error');
       return null;
     }
     const id = input.id && input.id !== BUILTIN_HUMANIZER_ID ? input.id : createCustomSkillId();
@@ -477,7 +478,7 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
         },
       ),
     );
-  }, [session, t]);
+  }, [session, t, options.locale]);
 
   const buildInlineBlocks = (): EditorInlineBlock[] => memoInlineBlocks as EditorInlineBlock[];
 

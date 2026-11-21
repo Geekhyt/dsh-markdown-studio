@@ -2464,4 +2464,93 @@ console.log('ok - English locale boots with English sample article and zero Chin
   console.log('ok - lowercase Chromium macOS userAgentData renders ⌘/⇧/⌥ shortcuts');
 }
 
+// Multi-tab storage sync updates markdown & resets undo/fileContext cleanly without dirty bounce (C-01)
+{
+  const syncContainer = document.createElement('div');
+  document.body.appendChild(syncContainer);
+  const syncRoot = ReactDOM.createRoot(syncContainer);
+  try {
+    window.localStorage.clear();
+    const syncKey = 'dsh.markdown-studio.library.v2';
+    const baseSettings = {
+      theme: 'classic',
+      codeTheme: 'theme',
+      accent: '#3d57e6',
+      fontSize: 16,
+      lineHeight: 1.75,
+      allowExternalCssResources: false,
+      linkFootnotes: true,
+      imagePlaceholders: true,
+      codeNbsp: true,
+    };
+    const initPayload = {
+      version: 2,
+      schemaVersion: 2,
+      activeId: 'sync-doc-1',
+      docs: [
+        {
+          id: 'sync-doc-1',
+          title: 'Sync Doc',
+          markdown: '# Before Sync',
+          settings: baseSettings,
+          view: 'split',
+          updatedAt: 100,
+        },
+        {
+          id: 'sync-doc-2',
+          title: 'Fallback Doc',
+          markdown: '# Fallback',
+          settings: baseSettings,
+          view: 'split',
+          updatedAt: 90,
+        },
+      ],
+      trash: [],
+    };
+    window.localStorage.setItem(syncKey, JSON.stringify(initPayload));
+    await act(async () => {
+      syncRoot.render(React.createElement(Main, {}));
+    });
+    await settle(40);
+    // Simulate another tab updating the active document
+    const updatedPayload = {
+      ...initPayload,
+      docs: [{ ...initPayload.docs[0], markdown: '# Synced From Tab 2', updatedAt: 200 }, initPayload.docs[1]],
+    };
+    window.localStorage.setItem(syncKey, JSON.stringify(updatedPayload));
+    await act(async () => {
+      window.dispatchEvent(new window.StorageEvent('storage', { key: syncKey }));
+    });
+    await settle(30);
+    const syncTa = syncContainer.querySelector<HTMLTextAreaElement>('textarea.mdstudio-editor')!;
+    assert.equal(syncTa.value, '# Synced From Tab 2', 'storage sync updates editor content');
+    // Pressing Cmd+Z right after external sync must NOT revert synced text back to pre-sync content
+    await act(async () => {
+      syncTa.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'z', metaKey: true, bubbles: true }));
+    });
+    await settle(20);
+    assert.equal(syncTa.value, '# Synced From Tab 2', 'undo after external sync does not revert Tab 2 text');
+
+    // Simulate another tab deleting the active document -> activeId switches cleanly to fallback doc
+    const deletedActivePayload = {
+      ...initPayload,
+      activeId: 'sync-doc-2',
+      docs: [initPayload.docs[1]],
+      trash: [{ ...initPayload.docs[0], deletedAt: 300 }],
+    };
+    window.localStorage.setItem(syncKey, JSON.stringify(deletedActivePayload));
+    await act(async () => {
+      window.dispatchEvent(new window.StorageEvent('storage', { key: syncKey }));
+    });
+    await settle(30);
+    assert.equal(syncTa.value, '# Fallback', 'deleting active doc in another tab switches cleanly');
+  } finally {
+    await act(async () => {
+      syncRoot.unmount();
+    });
+    syncContainer.remove();
+  }
+  console.log('ok - multi-tab storage sync updates editor without undo pollution or stale active doc');
+}
+
 console.log('\nAll UI render checks passed.');

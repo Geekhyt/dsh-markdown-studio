@@ -43,6 +43,7 @@ jobs:
           npm run lint
           npm run licenses:check
           npm run quality
+          npm run test:browser
           npm run mutation
 
       - name: Publish to npm (OIDC Trusted Publisher or NPM_TOKEN)

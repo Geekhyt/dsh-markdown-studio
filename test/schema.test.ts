@@ -16,6 +16,8 @@ assert.equal(readSchemaVersion(2, 1), 2);
 assert.equal(readSchemaVersion(0, 1), null);
 assert.equal(readSchemaVersion(1.5, 1), null);
 assert.equal(readSchemaVersion('2', 1), 2);
+assert.equal(readSchemaVersion([2], 1), null, 'array coercion is rejected');
+assert.equal(isFutureSchema([99], 2), false, 'array coercion is not treated as future schema');
 assert.equal(supportedSchemaVersion(3, 1, 2), null, 'future schemas are rejected');
 assert.equal(supportedSchemaVersion(undefined, 2, LIBRARY_SCHEMA_VERSION), 2);
 assert.equal(isFutureSchema(ARCHIVE_SCHEMA_VERSION + 1, ARCHIVE_SCHEMA_VERSION), true);

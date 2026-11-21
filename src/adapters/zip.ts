@@ -363,11 +363,16 @@ export async function unzipEntries(buffer: ArrayBuffer): Promise<ZipEntry[]> {
   const records: ZipRecord[] = [];
   let offset = directory.start;
   let total = 0;
+  let totalCompressed = 0;
   for (let index = 0; index < directory.count; index++) {
     const record = zipRecord(buffer, offset, directory);
     offset = record.next;
     total += record.entry.size;
+    totalCompressed += record.entry.compressed.length;
     assertZipBudget(index + 1, total);
+    if (total > RATIO_GUARD_MIN_BYTES && totalCompressed > 0 && total / totalCompressed > MAX_ZIP_COMPRESSION_RATIO) {
+      throw new Error('ZIP_LIMIT_EXCEEDED');
+    }
     records.push(record.entry);
   }
   if (offset !== directory.end) throw new Error('corrupt zip directory');

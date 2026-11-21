@@ -17,7 +17,7 @@ const mutations: Mutation[] = [
   {
     name: 'allow unsafe URL schemes',
     file: 'src/domain/urls.ts',
-    find: 'if (/^(https?:|mailto:)/i.test(value)) return value;',
+    find: 'if (/^(https?:|mailto:)/i.test(probe)) return value;',
     replace: 'if (true) return value;',
     test: 'test/engine.test.ts',
   },
@@ -52,8 +52,15 @@ const mutations: Mutation[] = [
   {
     name: 'allow unsafe image schemes',
     file: 'src/domain/urls.ts',
-    find: 'if (/^https?:/i.test(value)) return value;',
+    find: 'if (/^https?:/i.test(probe)) return value;',
     replace: 'return value;',
+    test: 'test/engine.test.ts',
+  },
+  {
+    name: 'allow origin-escaping relative URLs',
+    file: 'src/domain/urls.ts',
+    find: 'if (!SCHEME.test(probe)) return escapesBaseOrigin(probe) ? null : value;',
+    replace: 'if (!SCHEME.test(probe)) return value;',
     test: 'test/engine.test.ts',
   },
   {

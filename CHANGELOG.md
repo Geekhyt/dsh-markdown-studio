@@ -2,6 +2,34 @@
 
 All notable changes to `dsh-markdown-studio` are documented in this file.
 
+## [0.1.9] - 2026-11-21
+
+### Security
+- **Unified CSS Syntax Level 3, MathJax, Mermaid & WHATWG URL Hardening**:
+  - Updated `decodeCssEscapes` and `scanIdentBeforeParen` (`src/domain/custom-css.ts`) per CSS Syntax Level 3 §4.3.7 to consume trailing LF / CRLF / FF whitespace after hex escapes (blocking `\75\nrl(...)`), and shared `hasCssUrlRef` across custom CSS, MathJax, and clipboard SVG sanitizers.
+  - Replaced manual URL prefix checks (`src/domain/urls.ts`) with a WHATWG `new URL(probe, 'https://dsh.invalid/')` origin-escape guard blocking `\/`, `\\`, `//`, `/\`, and all protocol-relative variants.
+  - Blocked the MathJax `unicode` TeX macro package, isolated each `render()` call with a fresh `TeX` instance (eliminating cross-document `\label`/`\renewcommand`/`\definecolor` leakage), and enforced an SVG root + descendant style property allowlist (`src/math-entry.ts`, `src/adapters/wechat-clipboard-dom.ts`).
+  - Locked `themeCSS`, `htmlLabels`, `flowchart`, and `fontFamily` in Mermaid's `secure` array and stripped external `url()` references from generated `<style>` blocks (`src/mermaid-entry.ts`).
+  - Added whole-archive aggregate compression-ratio protection (`total / totalCompressed <= 100` above 1 MiB) in `src/adapters/zip.ts` and unified strict loopback `Host` + remote-address validation (`isLoopbackReq`) across `/math`, `/mermaid`, asset, and AI routes (`host/http/`).
+
+### Fixed
+- **Multi-Tab Undo Sync, Document Session Transactions & Storage Integrity**:
+  - Tagged external React/storage updates to CodeMirror with `ProgrammaticUpdate` (`setValue(value, silent=true)`) so programmatic sync never echoes back into `onChange`; cross-tab `storage` sync now resets `docHistory` and detaches deleted linked files, eliminating `⌘Z` rollback corruption after concurrent tab edits (`src/ui/codemirror-core.ts`, `src/app.ts`, `src/application/document-store.ts`).
+  - Added a shared `claimOpenTransition()` sequence guard across local-file open, drag-drop, workspace open, and library switches, flushed linked files before switch/new/delete/archive-replace/unmount, normalized workspace `moveEntry` target paths with case-only rename support, and fixed `saveLocalFile` / conflict-reload / permission-request races (`src/app.ts`, `src/application/`).
+  - Snapshotted and restored backup/unreadable keys if quota-retry writes fail (`src/adapters/storage.ts`), prevented corrupted v3 libraries from silently falling back to stale v2 data, deduplicated merged backup IDs while preserving custom-theme unions (`src/domain/library-backup.ts`), and added follow-up GC pruning with `storedAt` touch on deduplicated asset re-uploads (`src/application/asset-gc.ts`, `host/application/image-store.ts`).
+  - Allowed `useMathAssets` retry after transient bundle-load errors, switched `useMermaidAssets` cache pinning to ref-counted keys (`Map<string, number>`) respecting `previewSettings`, isolated CodeMirror undo stacks by entity `key` in the CSS Workbench and Skill Manager, and resolved superseded confirm dialogs cleanly (`src/ui/css-workbench.ts`, `src/ui/skill-manager-dialog.ts`, `src/ui/dialog-host.ts`).
+- **Single-Source Markdown Metadata & Structured CSS Theme View**:
+  - Delegated `containsMath()` directly to `renderMarkdown()` (`src/markdown-parser.ts`), removing 50 lines of drifting regexes so cold-boot multiline block formulas (`$$ E=mc^2\n... $$`) always load `math.js` while keeping currency prose untouched.
+  - Extended `assetFilesInMarkdown` (`src/domain/images.ts`) to cover balanced-bracket inline images and reference definitions while excluding external CDN URLs, unified `stripLeadingFrontmatter` and directive/callout stripping across headings & plain-text extraction (`src/domain/article.ts`), tightened WeChat HTML inline-style lint boundaries (`src/domain/wechat-html-lint.ts`), and hardened balanced-paren URL protection & surrogate-safe snippets (`src/domain/writing-skills.ts`, `src/domain/library-search.ts`).
+  - Rewrote `extractCustomThemePreview` and `isStandaloneCustomCss` (`src/domain/custom-themes.ts`, `src/themes.ts`) on top of a lightweight `parseCssRules` + `isRootThemeSelector` view supporting `:root`/`html`/`body` and `background:` shorthand while ignoring CSS comments and non-root rules.
+- **DSH Real-Host Modal Escape, Find Focus, Narrow Immersive & Touch Layout**:
+  - Replaced the 50 ms wall-clock cooldown in `useModalMenuState` (`src/ui/library-dialogs.ts`) with an event-driven `dismissSuppressRef` so exporting `.zip` from the Library modal and immediately pressing `Escape` dismisses reliably in real DeepSeek Harness hosts (restoring `npm run test:dsh` to 100% pass).
+  - Split `revealRange` (scroll/select without stealing focus) from `focusRange` (`src/ui/codemirror-core.ts`, `src/application/editor-search.ts`) so repeated `Enter` presses in Find & Replace step cleanly through matches without overwriting article text.
+  - Fixed narrow-screen (`<= 720px`) immersive preview blank screen (`:not([data-mdstudio-immersive="preview"])`) and widened `@media (pointer: coarse)` preview header and typography capsule tracks to zero overflow while keeping `>= 44px` touch targets (`src/ui/styles.ts`).
+- **Contrast, Accessibility, Lifecycle & Release Pipeline**:
+  - Lifted `poster` theme yellow `:::lead` `<del>` contrast (`4.32:1` → `>= 5.14:1` WCAG AA) in `src/theme-system/atoms/inline.ts`, aligned `ensureContrast` target selection with `readableOn` (`src/theme-system/color.ts`), and added true Porter-Duff alpha compositing for semi-transparent ancestor backgrounds in dark preview (`src/adapters/dark-preview.ts`).
+  - Numbered duplicate scroll regions (`代码块 1` / `Code block 1`) to bring desktop axe-core violations to `0` (`landmark-unique`), localized MathJax SVG `aria-label` prefixes (`Formula: ` / `公式：`), cleaned up `<script data-plugin="dsh-markdown-studio">` and `localeService` on hot disable, bounded thumbnail encoding on tall images (`width > 640 || height > 640`), deduplicated `docs/theme-gallery.html`, and added `npm run test:browser` to `.github/workflows/release.yml`.
+
 ## [0.1.8] - 2026-11-21
 
 ### Security

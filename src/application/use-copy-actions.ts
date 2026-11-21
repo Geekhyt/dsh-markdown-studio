@@ -33,14 +33,16 @@ export interface CopyActionsApi {
 export function useCopyActions(options: CopyActionsOptions): CopyActionsApi {
   const React = options.React;
   const [copying, setCopying] = React.useState(false);
+  const copyingRef = React.useRef(false);
   const t = options.t;
   const doc = options.doc;
   const settings = options.settings;
 
-  function legacyCopy(html: string): boolean {
+  function copyViaHolder(applyContent: (holder: HTMLDivElement) => void): boolean {
     const holder = options.copyRef.current;
     if (!holder) return false;
-    holder.innerHTML = html;
+    const prevActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    applyContent(holder);
     try {
       holder.focus();
       const range = document.createRange();
@@ -51,12 +53,25 @@ export function useCopyActions(options: CopyActionsOptions): CopyActionsApi {
       selection.addRange(range);
       const ok = document.execCommand('copy');
       selection.removeAllRanges();
-      holder.innerHTML = '';
       return ok;
     } catch (error) {
-      holder.innerHTML = '';
       return false;
+    } finally {
+      holder.innerHTML = '';
+      if (prevActive && prevActive !== holder && prevActive.isConnected) {
+        try {
+          prevActive.focus({ preventScroll: true });
+        } catch {
+          /* ignore */
+        }
+      }
     }
+  }
+
+  function legacyCopy(html: string): boolean {
+    return copyViaHolder(function (holder) {
+      holder.innerHTML = html;
+    });
   }
 
   async function copyRichText(html: string, plain: string): Promise<boolean> {
@@ -81,7 +96,8 @@ export function useCopyActions(options: CopyActionsOptions): CopyActionsApi {
       options.notify(t('toast.empty'), 'error');
       return;
     }
-    if (copying) return;
+    if (copyingRef.current) return;
+    copyingRef.current = true;
     setCopying(true);
     try {
       await Promise.all([options.mermaidAssets.ensure(doc.markdown), options.mathAssets.ensure(doc.markdown)]);
@@ -110,6 +126,7 @@ export function useCopyActions(options: CopyActionsOptions): CopyActionsApi {
     } catch (error) {
       options.notify(options.describeHostError(error), 'error');
     } finally {
+      copyingRef.current = false;
       setCopying(false);
     }
   }
@@ -126,24 +143,9 @@ export function useCopyActions(options: CopyActionsOptions): CopyActionsApi {
       ok = false;
     }
     if (!ok) {
-      try {
-        const holder = options.copyRef.current;
-        if (holder) {
-          holder.textContent = text;
-          holder.focus();
-          const range = document.createRange();
-          range.selectNodeContents(holder);
-          const selection = window.getSelection();
-          if (!selection) throw new Error('selection unavailable');
-          selection.removeAllRanges();
-          selection.addRange(range);
-          ok = document.execCommand('copy');
-          selection.removeAllRanges();
-          holder.textContent = '';
-        }
-      } catch (error) {
-        ok = false;
-      }
+      ok = copyViaHolder(function (holder) {
+        holder.textContent = text;
+      });
     }
     options.notify(ok ? t('toast.textCopied') : t('toast.copyFailed'), ok ? 'success' : 'error');
     options.setMenuOpen(false);

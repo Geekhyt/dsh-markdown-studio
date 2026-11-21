@@ -7,7 +7,7 @@ import { Readable } from 'node:stream';
 import { ImageHostError, ImageHostService, MAX_IMAGE_BYTES, parseDataUrl } from '../host/application/image-store';
 import { MATH_PATH, mathRoute } from '../host/http/math-route';
 import { MERMAID_PATH, mermaidRoute } from '../host/http/mermaid-route';
-import { ASSET_PREFIX, createAssetRoute, createImageRoute } from '../host/http/routes';
+import { ASSET_PREFIX, createAssetRoute, createImageRoute, isLoopbackHostHeader } from '../host/http/routes';
 import { startLocalImageServer } from '../host/local-server';
 import { SAMPLE_IMAGE_FILENAME } from '../host/sample-asset';
 import { resolveStorageDir } from '../index';
@@ -446,6 +446,16 @@ try {
         );
         assert.equal(missingHead.status, 404);
         assert.equal(missingHead.body, '');
+
+        // Strict Host header validation (empty, credentials, pathname, foreign host)
+        assert.equal(isLoopbackHostHeader('127.0.0.1:4010'), true);
+        assert.equal(isLoopbackHostHeader('localhost'), true);
+        assert.equal(isLoopbackHostHeader('[::1]:8080'), true);
+        assert.equal(isLoopbackHostHeader(''), false);
+        assert.equal(isLoopbackHostHeader('user@127.0.0.1:4010'), false);
+        assert.equal(isLoopbackHostHeader('127.0.0.1/extra'), false);
+        assert.equal(isLoopbackHostHeader('evil.example'), false);
+        assert.equal(isLoopbackHostHeader('http://bad host'), false);
       } finally {
         mathServer.server.close();
         mermaidServer.server.close();

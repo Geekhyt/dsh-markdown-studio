@@ -12,6 +12,7 @@ export interface EditorSearchOptions {
   selection: () => SelectionRange;
   setMarkdown: (value: string, options: { boundary?: boolean; prevSelection?: SelectionRange }) => void;
   focusRange: (start: number, end: number) => void;
+  revealRange?: (start: number, end: number) => void;
   notify: (text: string, tone?: 'success' | 'error' | 'info') => void;
   t: (key: string) => string;
   searchPanel: SearchState;
@@ -46,6 +47,10 @@ export function createEditorSearch(options: EditorSearchOptions): EditorSearchAp
     });
   }
 
+  function reveal(start: number, end: number): void {
+    (options.revealRange || options.focusRange)(start, end);
+  }
+
   function findNext(): void {
     const text = options.editorValue();
     const query = options.searchPanel.query;
@@ -59,7 +64,7 @@ export function createEditorSearch(options: EditorSearchOptions): EditorSearchAp
       options.notify(options.t('search.notFound'), 'error');
       return;
     }
-    options.focusRange(index, index + query.length);
+    reveal(index, index + query.length);
   }
 
   function replaceOne(): void {
@@ -80,9 +85,11 @@ export function createEditorSearch(options: EditorSearchOptions): EditorSearchAp
     });
     const afterEnd = selected.start + replacement.length;
     const needle = query.toLowerCase();
-    const nextIdx = next.toLowerCase().indexOf(needle, afterEnd);
-    if (nextIdx >= 0) options.focusRange(nextIdx, nextIdx + query.length);
-    else options.focusRange(afterEnd, afterEnd);
+    const lowerNext = next.toLowerCase();
+    let nextIdx = lowerNext.indexOf(needle, afterEnd);
+    if (nextIdx < 0) nextIdx = lowerNext.indexOf(needle);
+    if (nextIdx >= 0) reveal(nextIdx, nextIdx + query.length);
+    else reveal(afterEnd, afterEnd);
   }
 
   function replaceAll(): void {
@@ -102,7 +109,7 @@ export function createEditorSearch(options: EditorSearchOptions): EditorSearchAp
     });
     options.setMarkdown(next, { boundary: true });
     options.notify(count + ' ' + options.t('search.replaced'));
-    options.focusRange(0, 0);
+    reveal(0, 0);
   }
 
   function focusHeading(heading: Heading): void {

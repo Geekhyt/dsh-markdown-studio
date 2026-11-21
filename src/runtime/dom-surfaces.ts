@@ -172,7 +172,7 @@ export function usePreviewHtmlSurface(
 
 export interface ImperativeEditorHandle<TBlock, TTransition> {
   getValue(): string;
-  setValue(value: string): void;
+  setValue(value: string, silent?: boolean): void;
   setDark(dark: boolean): void;
   setPlaceholder?(placeholder: string, ariaLabel?: string): void;
   setInlineBlocks?(blocks: readonly TBlock[]): void;
@@ -208,6 +208,8 @@ export function useImperativeEditor<TApi extends ImperativeEditorHandle<TBlock, 
   const apiRef = React.useRef<TApi | null>(null);
   const specRef = useLatest(React, spec);
 
+  const syncedRef = React.useRef({ dark: false, placeholder: '', ariaLabel: '' as string | undefined, mounted: false });
+
   React.useEffect(function () {
     const parent = hostRef.current;
     if (!parent) return undefined;
@@ -222,10 +224,17 @@ export function useImperativeEditor<TApi extends ImperativeEditorHandle<TBlock, 
       return undefined;
     }
     apiRef.current = instance;
+    syncedRef.current = {
+      dark: specRef.current.dark,
+      placeholder: specRef.current.placeholder || '',
+      ariaLabel: specRef.current.ariaLabel,
+      mounted: true,
+    };
     specRef.current.onReady?.(instance);
     return function () {
       instance.destroy();
       apiRef.current = null;
+      syncedRef.current.mounted = false;
       specRef.current.onReady?.(null);
     };
   }, []);
@@ -233,7 +242,9 @@ export function useImperativeEditor<TApi extends ImperativeEditorHandle<TBlock, 
   React.useEffect(
     function () {
       const api = apiRef.current;
-      if (api) api.setDark(spec.dark);
+      if (!api || (syncedRef.current.mounted && syncedRef.current.dark === spec.dark)) return;
+      syncedRef.current.dark = spec.dark;
+      api.setDark(spec.dark);
     },
     [spec.dark],
   );
@@ -241,7 +252,7 @@ export function useImperativeEditor<TApi extends ImperativeEditorHandle<TBlock, 
   React.useEffect(
     function () {
       const api = apiRef.current;
-      if (api && api.getValue() !== spec.value) api.setValue(spec.value);
+      if (api && api.getValue() !== spec.value) api.setValue(spec.value, true);
     },
     [spec.value],
   );
@@ -249,7 +260,18 @@ export function useImperativeEditor<TApi extends ImperativeEditorHandle<TBlock, 
   React.useEffect(
     function () {
       const api = apiRef.current;
-      if (api?.setPlaceholder) api.setPlaceholder(spec.placeholder || '', spec.ariaLabel);
+      const nextPh = spec.placeholder || '';
+      if (
+        !api?.setPlaceholder ||
+        (syncedRef.current.mounted &&
+          syncedRef.current.placeholder === nextPh &&
+          syncedRef.current.ariaLabel === spec.ariaLabel)
+      ) {
+        return;
+      }
+      syncedRef.current.placeholder = nextPh;
+      syncedRef.current.ariaLabel = spec.ariaLabel;
+      api.setPlaceholder(nextPh, spec.ariaLabel);
     },
     [spec.placeholder, spec.ariaLabel],
   );

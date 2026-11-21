@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { fileURLToPath } from 'node:url';
-import { isLoopbackHostHeader } from './routes';
+import { isLoopbackHostHeader, isLoopbackReq } from './routes';
 
 export const MATH_PATH = '/api/markdown-studio/math.js';
 const BUNDLED_FILE = fileURLToPath(new URL('./math.js', import.meta.url));
@@ -25,7 +25,7 @@ async function readMathBundle(): Promise<Buffer> {
 export async function mathRoute(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const headOnly = req.method === 'HEAD';
   const host = Array.isArray(req.headers.host) ? req.headers.host[0] : req.headers.host || '';
-  if (!isLoopbackHostHeader(host)) {
+  if (!isLoopbackReq(req) || !isLoopbackHostHeader(host)) {
     res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
     res.end(headOnly ? undefined : 'loopback only');
     return;
