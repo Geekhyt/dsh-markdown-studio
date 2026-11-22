@@ -312,6 +312,16 @@ function resolveSlashTop(coords: { top: number; bottom: number }, wrapTop: numbe
   return clamp(Math.round(coords.top - wrapTop - Math.min(348, spaceAbove) - 6), 8, maxTop);
 }
 
+function visibleEditorWidth(rootEl: HTMLElement | null, rect: DOMRect): number {
+  const drawer = rootEl?.querySelector<HTMLElement>('.mdstudio-drawer');
+  if (!drawer) return rect.width;
+  const drawerRect = drawer.getBoundingClientRect();
+  if (drawerRect.width > 0 && drawerRect.left < rect.right && drawerRect.left > rect.left + 180) {
+    return drawerRect.left - rect.left;
+  }
+  return rect.width;
+}
+
 function computeSlashPos(
   rootEl: HTMLElement | null,
   coordsAtPos: SlashMenuOptions['coordsAtPos'],
@@ -322,8 +332,9 @@ function computeSlashPos(
   if (!wrap || !coords) return null;
   const rect = wrap.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) return null;
-  const menuW = Math.min(320, Math.max(180, rect.width - 20));
-  const maxLeft = Math.max(10, Math.round(rect.width - menuW - 10));
+  const availWidth = visibleEditorWidth(rootEl, rect);
+  const menuW = Math.min(320, Math.max(180, availWidth - 20));
+  const maxLeft = Math.max(10, Math.round(availWidth - menuW - 10));
   return {
     top: resolveSlashTop(coords, rect.top, rect.height),
     left: clamp(Math.round(coords.left - rect.left), 10, maxLeft),

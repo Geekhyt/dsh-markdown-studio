@@ -2,6 +2,26 @@
 
 All notable changes to `dsh-markdown-studio` are documented in this file.
 
+## [0.1.11] - 2026-11-22
+
+### Fixed
+- **Unified LIFO Escape Stack, Monotonic Overlay Layering & Surface Visibility Invariants**:
+  - Replaced scattered Escape checks across editor shortcuts and document listeners with a unified LIFO priority chain (`Menu → Slash → Outline → SearchBar → AI Review → Drawer → Immersive`) via a tri-state `'handled' | 'defer' | false` contract (`src/app.ts`, `src/application/editor-shortcuts.ts`). Fixes dead `Escape` when editor content is focused with Find & Replace open in Immersive Write, preserves active AI inline diffs when dismissing an overlapping Outline popover, keeps focused `SettingsDrawer` closing before background `SearchBar`, and respects `event.defaultPrevented` in `FallbackModal` (`src/ui/dsh-primitives.ts`).
+  - Established a strict monotonic `z-index` hierarchy (`outline 30 < slash 31 < floating AI pill 32 < overlay drawer 40 < immersive dock 55 < modal 70 < menu 75 < toast 85 < tooltip 90`) and added `visibleEditorWidth()` in `src/application/use-slash-menu.ts` so `.mdstudio-slash` never paints over or hides behind the overlay `SettingsDrawer` in sidebar-expanded DeepSeek Harness windows (`src/ui/styles.ts`, `src/application/use-slash-menu.ts`).
+  - Reset active AI writing sessions on `openCssWorkbench()`, scoped `effectivePreviewMarkdown` and document-level Escape strictly to `panes.showMarkdownEditor`, and replaced `event.target instanceof Element` with cross-realm safe `isEventInside()` (`src/app.ts`).
+- **Floating Overlay Lifecycle & Clean Focus Handoff**:
+  - Closed `.mdstudio-slash` on CodeMirror/textarea scroll, Outline toggle, and container resize so slash palettes never float detached mid-air (`src/app.ts`).
+  - Dismissed the floating AI selection pill on outside `mousedown` while preserving editor interactions and native DSH portaled menus (`[role="menu"]`, `[data-menu-material]`) and widened its right-edge clamp margin (`src/ui/selection-bubble.ts`).
+  - Snapshotted `SettingsDrawer` root and pre-existing workbench state at mount time so React 18 unmount ref clearing never steals focus from `CssWorkbench` when editing existing custom themes, while still restoring focus to the Settings trigger when dismissing a drawer opened from inside `CssWorkbench`; auto-focused the CSS editor surface when editing an existing custom theme (`src/ui/settings-drawer.ts`, `src/ui/css-workbench.ts`).
+- **Dark Mode Immersive Stage Sync & Alpha-Aware WCAG AA Contrast**:
+  - Extended `paintStageBackground` (`src/runtime/dom-surfaces.ts`) and `PreviewPane` (`src/ui/preview-pane.ts`) to synchronize `.mdstudio-stage.is-desktop` alongside `.mdstudio-device` and `.mdstudio-device-screen` across dark-mode resolution and `mobile ↔ desktop` switches, eliminating the 52px top background seam on dark custom themes in PC immersive preview.
+  - Updated `resolveFgHex` (`src/adapters/dark-preview.ts`) to alpha-composite translucent `mp-darkmode` foreground colors against their effective blended dark surface with a `4.6:1` rounding margin, reducing dark-mode kitchen-sink WCAG 2 AA text contrast violations across all 8 built-in themes from 9 to 0.
+- **Responsive Container Layout vs Touch Density Decoupling & Narrow Convergence**:
+  - Extended `observeHostTitlebarInset` (`src/adapters/host-shell.ts`) with an optional `onResize` callback so widening a narrow container past `720px` while `CssWorkbench` is in mobile preview automatically restores `split` view instead of leaving an invisible CSS draft hijacking live preview (`src/app.ts`).
+  - Decoupled container-width layout collapsing (`@container mdstudio (max-width: 720px)` with compact `32×30px` icon-only copy button) from mobile `44px` touch-target inflation (`@media (max-width: 720px)`), and dropped narrow immersive SearchBar (`@container mdstudio (max-width: 640px)`) cleanly below the floating dock at full width (`src/ui/styles.ts`).
+- **Concurrency & State Hardening**:
+  - Switched `.md` drag-and-drop imports to `claimOpenTransition()` (`src/app.ts`) and converted Skill Manager instruction updates to a functional `setForm((prev) => ...)` updater (`src/ui/skill-manager-dialog.ts`).
+
 ## [0.1.10] - 2026-11-22
 
 ### Fixed

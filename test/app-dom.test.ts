@@ -2751,6 +2751,232 @@ console.log('ok - English locale boots with English sample article and zero Chin
       null,
       'Cmd+F clears floating AI pill',
     );
+
+    // 6. Immersive Write + SearchBar + focus inside editor: Escape #1 closes SearchBar, Escape #2 exits immersive
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-focus-btn')?.click();
+    });
+    await settle(20);
+    await act(async () => {
+      ta2.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'f', metaKey: true, bubbles: true }));
+    });
+    await settle(20);
+    assert.ok(comboContainer.querySelector('.mdstudio-searchbar'), 'search bar opens in immersive write');
+    await act(async () => {
+      ta2.focus();
+      ta2.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    });
+    await settle(20);
+    assert.equal(comboContainer.querySelector('.mdstudio-searchbar'), null, 'Escape #1 in editor closes SearchBar');
+    assert.equal(
+      comboContainer.querySelector('.mdstudio-root')?.getAttribute('data-mdstudio-immersive'),
+      'write',
+      'Escape #1 keeps immersive write active after closing SearchBar',
+    );
+    await act(async () => {
+      ta2.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    });
+    await settle(20);
+    assert.equal(
+      comboContainer.querySelector('.mdstudio-root')?.getAttribute('data-mdstudio-immersive'),
+      null,
+      'Escape #2 exits immersive write cleanly',
+    );
+
+    // 7. Floating AI pill dismisses on mousedown outside editor (e.g. clicking PreviewPane)
+    await act(async () => {
+      ta2.focus();
+      ta2.setSelectionRange(0, 12);
+      ta2.dispatchEvent(new window.Event('select', { bubbles: true }));
+    });
+    await settle(20);
+    assert.ok(
+      comboContainer.querySelector('.mdstudio-skill-split.is-floating'),
+      'floating pill visible before preview click',
+    );
+    await act(async () => {
+      comboContainer
+        .querySelector<HTMLElement>('.mdstudio-preview-article')
+        ?.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true }));
+    });
+    await settle(20);
+    assert.equal(
+      comboContainer.querySelector('.mdstudio-skill-split.is-floating'),
+      null,
+      'mousedown in PreviewPane dismisses floating AI selection pill',
+    );
+
+    // 8. Slash menu closes immediately on editor scroll
+    await act(async () => {
+      setTaVal?.call(ta2, '/');
+      ta2.setSelectionRange(1, 1);
+      ta2.dispatchEvent(new window.Event('input', { bubbles: true }));
+    });
+    await settle(20);
+    assert.ok(comboContainer.querySelector('.mdstudio-slash'), 'slash menu opens on /');
+    await act(async () => {
+      ta2.dispatchEvent(new window.Event('scroll'));
+    });
+    await settle(20);
+    assert.equal(comboContainer.querySelector('.mdstudio-slash'), null, 'editor scroll closes slash menu');
+
+    // 9. SettingsDrawer -> edit existing custom theme hands focus to CssWorkbench (never steals focus to style button)
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-style-btn')?.click();
+    });
+    await settle(20);
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-theme-card-edit')?.click();
+    });
+    await settle(40);
+    assert.ok(comboContainer.querySelector('.mdstudio-css-workbench'), 'edit custom theme opens CssWorkbench');
+    assert.equal(
+      document.activeElement?.classList.contains('mdstudio-style-btn'),
+      false,
+      'SettingsDrawer unmount does not steal focus back to style button',
+    );
+    assert.ok(
+      document.activeElement?.closest('.mdstudio-css-workbench'),
+      'focus lands inside CssWorkbench when editing an existing custom theme',
+    );
+
+    // 10. Narrow CssWorkbench -> mobile Preview -> widen window > 720px restores split so draft stays visible
+    const comboRootEl = comboContainer.querySelector<HTMLElement>('.mdstudio-root')!;
+    let narrowW = 640;
+    Object.defineProperty(comboRootEl, 'clientWidth', { get: () => narrowW, configurable: true });
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-mobile-view')?.click();
+    });
+    await settle(20);
+    assert.equal(
+      comboContainer.querySelector('.mdstudio-body')?.getAttribute('data-mdstudio-view'),
+      'preview',
+      'narrow CssWorkbench switches to preview',
+    );
+    narrowW = 1200;
+    await act(async () => {
+      window.dispatchEvent(new window.Event('resize'));
+    });
+    await settle(20);
+    assert.equal(
+      comboContainer.querySelector('.mdstudio-body')?.getAttribute('data-mdstudio-view'),
+      'split',
+      'widening beyond 720px restores split view while CssWorkbench is open',
+    );
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-css-back-btn')?.click();
+    });
+    await settle(20);
+
+    // 11. SearchBar + SettingsDrawer: pressing Escape while focused inside drawer closes drawer first without closing SearchBar
+    await act(async () => {
+      ta2.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'f', metaKey: true, bubbles: true }));
+    });
+    await settle(20);
+    assert.ok(comboContainer.querySelector('.mdstudio-searchbar'), 'search bar open before opening drawer');
+    const styleBtnForSearch = comboContainer.querySelector<HTMLButtonElement>('.mdstudio-style-btn')!;
+    await act(async () => {
+      styleBtnForSearch.focus();
+      styleBtnForSearch.click();
+    });
+    await settle(20);
+    const drawerTabEl = comboContainer.querySelector<HTMLElement>('.mdstudio-drawer [role="tab"]')!;
+    await act(async () => {
+      drawerTabEl.focus();
+      drawerTabEl.dispatchEvent(
+        new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+    });
+    await settle(20);
+    assert.equal(comboContainer.querySelector('.mdstudio-drawer'), null, 'Escape inside drawer closes drawer first');
+    assert.ok(
+      comboContainer.querySelector('.mdstudio-searchbar'),
+      'SearchBar remains open when Escape closes focused SettingsDrawer',
+    );
+    await act(async () => {
+      ta2.focus();
+      ta2.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    });
+    await settle(20);
+    assert.equal(
+      comboContainer.querySelector('.mdstudio-searchbar'),
+      null,
+      'subsequent Escape in editor closes SearchBar',
+    );
+
+    // 12. Opening SettingsDrawer while already inside CssWorkbench and closing it restores focus to style button
+    await act(async () => {
+      styleBtnForSearch.focus();
+      styleBtnForSearch.click();
+    });
+    await settle(20);
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-section-action')?.click();
+    });
+    await settle(30);
+    assert.ok(comboContainer.querySelector('.mdstudio-css-workbench'), 'CssWorkbench open');
+    await act(async () => {
+      styleBtnForSearch.focus();
+      styleBtnForSearch.click();
+    });
+    await settle(20);
+    assert.ok(comboContainer.querySelector('.mdstudio-drawer'), 'SettingsDrawer opens on top of CssWorkbench');
+    const drawerTabOnWb = comboContainer.querySelector<HTMLElement>('.mdstudio-drawer [role="tab"]')!;
+    await act(async () => {
+      drawerTabOnWb.focus();
+      drawerTabOnWb.dispatchEvent(
+        new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+    });
+    await settle(20);
+    assert.equal(comboContainer.querySelector('.mdstudio-drawer'), null, 'Escape closes drawer over CssWorkbench');
+    assert.equal(
+      document.activeElement,
+      styleBtnForSearch,
+      'closing SettingsDrawer opened from CssWorkbench restores focus to style button instead of dropping to body',
+    );
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-css-back-btn')?.click();
+    });
+    await settle(20);
+
+    // 13. AI Inline Diff + Outline LIFO Escape & CssWorkbench session cleanup
+    await act(async () => {
+      setTaVal?.call(ta2, '# 标题\n\n第一段用于测试 AI 润色与大纲叠放。');
+      ta2.dispatchEvent(new window.Event('input', { bubbles: true }));
+      ta2.focus();
+      ta2.setSelectionRange(6, 26);
+      ta2.dispatchEvent(new window.Event('select', { bubbles: true }));
+      ta2.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'j', metaKey: true, bubbles: true }));
+    });
+    await settle(80);
+    if (comboContainer.querySelector('.mdstudio-ai-inline-card')) {
+      await act(async () => {
+        comboContainer.querySelector<HTMLButtonElement>('.mdstudio-outline-anchor button')?.click();
+      });
+      await settle(20);
+      assert.ok(comboContainer.querySelector('.mdstudio-outline'), 'outline opens alongside AI diff');
+      await act(async () => {
+        ta2.focus();
+        ta2.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      });
+      await settle(20);
+      assert.equal(comboContainer.querySelector('.mdstudio-outline'), null, 'Escape #1 closes Outline first');
+      assert.ok(comboContainer.querySelector('.mdstudio-ai-inline-card'), 'Escape #1 preserves AI inline diff');
+      await act(async () => {
+        comboContainer.querySelector<HTMLButtonElement>('.mdstudio-style-btn')?.click();
+      });
+      await settle(20);
+      await act(async () => {
+        comboContainer.querySelector<HTMLButtonElement>('.mdstudio-section-action')?.click();
+      });
+      await settle(20);
+      assert.equal(
+        comboContainer.querySelector('.mdstudio-ai-inline-card'),
+        null,
+        'opening CssWorkbench cleanly resets active AI diff session',
+      );
+    }
   } finally {
     await act(async () => {
       comboRoot.unmount();

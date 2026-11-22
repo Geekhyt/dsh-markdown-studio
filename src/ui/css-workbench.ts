@@ -259,14 +259,19 @@ function CssWorkbenchContent(props: CssWorkbenchProps): ReactNode {
 
   useMountDisposable(React, function () {
     props.onDraftCssChange(draft.cssDraft);
-    const focusTimer =
-      draft.editingId === null
-        ? window.setTimeout(function () {
-            nameInputRef.current?.focus();
-          }, 20)
-        : null;
+    const focusTimer = window.setTimeout(function () {
+      const nameEl = nameInputRef.current;
+      if (draft.editingId === null) {
+        nameEl?.focus();
+        return;
+      }
+      const pane = nameEl?.closest<HTMLElement>('.mdstudio-css-workbench');
+      if (!pane || pane.contains(document.activeElement)) return;
+      const target = pane.querySelector<HTMLElement>('.cm-content, textarea.mdstudio-css') || nameEl;
+      target?.focus();
+    }, 20);
     return function () {
-      if (focusTimer !== null) window.clearTimeout(focusTimer);
+      window.clearTimeout(focusTimer);
       props.onDraftCssChange('');
     };
   });

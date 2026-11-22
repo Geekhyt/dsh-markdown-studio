@@ -396,8 +396,9 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
       React,
       'keydown',
       function (event: KeyboardEvent) {
-        if (event.isComposing || event.keyCode === 229) return;
+        if (event.isComposing || event.keyCode === 229 || event.defaultPrevented) return;
         if (event.key === 'Escape') {
+          event.preventDefault();
           event.stopPropagation();
           props.onClose();
         }

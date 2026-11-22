@@ -124,6 +124,17 @@ const h = React.createElement;
   assert.equal(disconnected, true);
   assert.equal(target.style.getPropertyValue('--mdstudio-host-inset'), '');
 
+  // onResize callback fires only when clientWidth changes (never spuriously on mount)
+  let mockClientW = 640;
+  Object.defineProperty(target, 'clientWidth', { get: () => mockClientW, configurable: true });
+  const observedWidths: number[] = [];
+  const disposeResize = observeHostTitlebarInset(target, (w) => observedWidths.push(w));
+  assert.deepEqual(observedWidths, [], 'onResize does not fire spuriously on initial mount');
+  mockClientW = 1040;
+  win.dispatchEvent(new win.Event('resize'));
+  assert.deepEqual(observedWidths, [1040], 'onResize notifies when container width changes');
+  disposeResize();
+
   delete (globalThis as unknown as { ResizeObserver?: unknown }).ResizeObserver;
   Object.defineProperty(win, 'innerWidth', { value: 1280, configurable: true });
   const disposeNoObserver = observeHostTitlebarInset(target);
@@ -376,6 +387,14 @@ const h = React.createElement;
     preventDefault() {},
   } as unknown as ReactNamespace.KeyboardEvent<HTMLDivElement>);
   assert.equal(document.activeElement, confirmBtn, 'Shift+Tab at start wraps to last modal button');
+
+  // Escape already consumed by an inner menu (defaultPrevented) must NOT also dismiss FallbackModal
+  await act(async () => {
+    const preHandledEsc = new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    preHandledEsc.preventDefault();
+    document.dispatchEvent(preHandledEsc);
+  });
+  assert.equal(modalClosed, false, 'FallbackModal respects event.defaultPrevented on Escape');
 
   await act(async () => {
     document.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));

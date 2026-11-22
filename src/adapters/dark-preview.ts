@@ -1,6 +1,6 @@
 import { contrast, DARK_STAGE_DEFAULT, ensureContrast, parseHex, rgbToHex } from '../theme-system/color';
 
-const DARK_TEXT_MIN_CONTRAST = 4.5;
+const DARK_TEXT_MIN_CONTRAST = 4.6;
 
 function rgbTuple(color: string): [number, number, number] | null {
   const rgb = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i.exec(color);
@@ -62,7 +62,10 @@ function blendColorLayers(
   return blended;
 }
 
-function nearestOpaqueBgHex(element: HTMLElement, stopAt: HTMLElement): { hex: string; lum: number } {
+function nearestOpaqueBgHex(
+  element: HTMLElement,
+  stopAt: HTMLElement,
+): { rgb: [number, number, number]; hex: string; lum: number } {
   const layers: Array<{ rgb: [number, number, number]; alpha: number }> = [];
   let baseRgb: [number, number, number] = parseHex(DARK_STAGE_DEFAULT);
   for (let cursor: HTMLElement | null = element; cursor; cursor = nextAncestor(cursor, stopAt)) {
@@ -76,7 +79,7 @@ function nearestOpaqueBgHex(element: HTMLElement, stopAt: HTMLElement): { hex: s
   }
   const blended = blendColorLayers(layers, baseRgb);
   const hex = rgbToHex(blended[0], blended[1], blended[2]);
-  return { hex, lum: luminance(`rgb(${blended[0]}, ${blended[1]}, ${blended[2]})`) };
+  return { rgb: blended, hex, lum: luminance(`rgb(${blended[0]}, ${blended[1]}, ${blended[2]})`) };
 }
 
 function isNonEmptyTextNode(node: ChildNode): boolean {
@@ -91,9 +94,13 @@ function hasDirectTextOrMath(element: HTMLElement): boolean {
   return false;
 }
 
-function resolveFgHex(element: HTMLElement): string | null {
-  const fgRgb = rgbTuple(window.getComputedStyle(element).color);
-  return fgRgb ? rgbToHex(fgRgb[0], fgRgb[1], fgRgb[2]) : null;
+function resolveFgHex(element: HTMLElement, bgRgb: [number, number, number]): string | null {
+  const raw = window.getComputedStyle(element).color;
+  const fgRgb = rgbTuple(raw);
+  if (!fgRgb) return null;
+  const alpha = alphaOf(raw);
+  const effective = alpha < 0.99 ? compositeOver(fgRgb, alpha, bgRgb) : fgRgb;
+  return rgbToHex(effective[0], effective[1], effective[2]);
 }
 
 function shouldLiftElement(element: HTMLElement): boolean {
@@ -108,7 +115,7 @@ function liftElementContrast(element: HTMLElement, root: HTMLElement): void {
   if (!shouldLiftElement(element)) return;
   const bg = nearestOpaqueBgHex(element, root);
   if (bg.lum >= 0.25) return;
-  const fgHex = resolveFgHex(element);
+  const fgHex = resolveFgHex(element, bg.rgb);
   if (!needsContrastLift(fgHex, bg.hex)) return;
   element.style.setProperty('color', ensureContrast(fgHex, bg.hex, DARK_TEXT_MIN_CONTRAST), 'important');
 }

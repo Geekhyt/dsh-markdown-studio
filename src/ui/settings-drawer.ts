@@ -276,9 +276,17 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactNode {
   return props.React.createElement(SettingsDrawerContent, props);
 }
 
-function hasTakeoverSurface(drawer: HTMLElement | null): boolean {
-  const root = drawer ? drawer.closest<HTMLElement>('.mdstudio-root') : null;
-  if (root && root.querySelector('.mdstudio-css-workbench')) return true;
+function hasOpenWorkbench(drawer: HTMLElement | null, root: HTMLElement | null): boolean {
+  const scope = root || (drawer ? drawer.closest<HTMLElement>('.mdstudio-root') : null);
+  return Boolean(scope && scope.querySelector('.mdstudio-css-workbench'));
+}
+
+function hasTakeoverSurface(
+  drawer: HTMLElement | null,
+  root: HTMLElement | null,
+  hadWorkbenchOnMount = false,
+): boolean {
+  if (!hadWorkbenchOnMount && hasOpenWorkbench(drawer, root)) return true;
   return Boolean(document.querySelector('[aria-modal="true"]'));
 }
 
@@ -286,8 +294,12 @@ function isFocusLost(active: Element | null): boolean {
   return !active || active === document.body || active === document.documentElement;
 }
 
-function shouldRestoreDrawerFocus(drawer: HTMLElement | null): boolean {
-  if (hasTakeoverSurface(drawer)) return false;
+function shouldRestoreDrawerFocus(
+  drawer: HTMLElement | null,
+  root: HTMLElement | null,
+  hadWorkbenchOnMount = false,
+): boolean {
+  if (hasTakeoverSurface(drawer, root, hadWorkbenchOnMount)) return false;
   const active = document.activeElement;
   if (isFocusLost(active)) return true;
   return Boolean(drawer && drawer.contains(active));
@@ -305,12 +317,21 @@ function SettingsDrawerContent(props: SettingsDrawerProps): ReactNode {
 
   useMountDisposable(props.React, function () {
     const previous = document.activeElement as HTMLElement | null;
+    const mountedDrawer = drawerRef.current;
+    const mountedRoot = mountedDrawer?.closest<HTMLElement>('.mdstudio-root') || null;
+    const hadWorkbenchOnMount = Boolean(mountedRoot?.querySelector('.mdstudio-css-workbench'));
     const focusTimer = window.setTimeout(function () {
       document.getElementById('mdstudio-tab-' + props.initialTab)?.focus();
     }, 0);
     return function () {
       window.clearTimeout(focusTimer);
-      if (shouldRestoreDrawerFocus(drawerRef.current) && previous && document.contains(previous)) previous.focus();
+      if (
+        shouldRestoreDrawerFocus(drawerRef.current || mountedDrawer, mountedRoot, hadWorkbenchOnMount) &&
+        previous &&
+        document.contains(previous)
+      ) {
+        previous.focus();
+      }
     };
   });
 

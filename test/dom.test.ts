@@ -513,6 +513,7 @@ check('prepareClipboardDom unwraps section blocks nested inside paragraphs with 
     tintedHost.innerHTML =
       '<section id="mdstudio" style="background-color: rgb(247, 245, 239); color: rgb(47, 43, 39);">' +
       '<p style="color: rgb(39, 105, 76);">Tinted paper paragraph</p>' +
+      '<p class="alpha-warn" style="background-color: rgb(46, 48, 53); color: rgba(190, 140, 110, 0.85);">Semi-transparent warning</p>' +
       '</section>';
     document.body.appendChild(tintedHost);
     assert.equal(await applyDarkPreview(tintedHost), true, 'tinted paper transforms in dark preview');
@@ -521,6 +522,11 @@ check('prepareClipboardDom unwraps section blocks nested inside paragraphs with 
       tintedRoot.style.backgroundColor.includes('color-mix') ||
         tintedRoot.style.backgroundColor !== 'rgb(247, 245, 239)',
       'tinted #mdstudio root background is darkened instead of remaining light gray',
+    );
+    const alphaWarn = tintedHost.querySelector<HTMLElement>('.alpha-warn')!;
+    assert.ok(
+      alphaWarn.style.getPropertyPriority('color') === 'important',
+      'alpha-composited low-contrast dark text is lifted with !important',
     );
     tintedHost.remove();
 

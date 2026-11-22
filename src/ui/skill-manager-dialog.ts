@@ -504,7 +504,9 @@ function SkillManagerDialogContent(props: SkillManagerDialogProps): ReactNode {
         t('ai.skillBodyPlaceholder'),
         t('ai.skillBodyLabel'),
         function (next) {
-          setForm({ ...form, instructions: next });
+          setForm(function (prev) {
+            return { ...prev, instructions: next };
+          });
         },
         onEditorKeyDown,
       ),

@@ -41,6 +41,7 @@ export function PreviewPane(props: PreviewPaneProps): ReactNode {
     darkFallbackBg: DARK_STAGE_DEFAULT,
     paper: props.rendered.paper,
     dark,
+    previewMode: props.previewMode,
     empty: props.empty,
     applyDark: applyDarkPreview,
     cleanupDark: cleanupDarkPreview,

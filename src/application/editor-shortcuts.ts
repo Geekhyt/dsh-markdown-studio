@@ -34,7 +34,7 @@ export interface EditorShortcutsOptions {
   openSearch: () => void;
   runWritingSkill?: () => void;
   acceptAiReview?: () => boolean;
-  cancelAiReview?: () => boolean;
+  dismissEscape?: () => 'handled' | 'defer' | false;
 }
 
 function handleSaveShortcut(options: EditorShortcutsOptions, forceDialog: boolean): void {
@@ -310,18 +310,29 @@ function escapeScopeOf(event: ReactNamespace.KeyboardEvent<HTMLElement>): object
 
 const MODIFIER_ONLY_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta']);
 
+function handleEscapeKey(
+  options: EditorShortcutsOptions,
+  event: ReactNamespace.KeyboardEvent<HTMLElement>,
+  scope: object,
+): boolean {
+  const outcome = options.dismissEscape ? options.dismissEscape() : false;
+  if (outcome === 'handled') {
+    ESCAPE_TAB_ARMED.delete(scope);
+    event.preventDefault();
+    return true;
+  }
+  if (outcome === 'defer') {
+    ESCAPE_TAB_ARMED.delete(scope);
+    return true;
+  }
+  // WCAG 2.1.2 keyboard escape hatch: Escape followed by Tab/Shift+Tab releases focus from the editor.
+  ESCAPE_TAB_ARMED.set(scope, escapeTabGeneration);
+  return false;
+}
+
 function handleNonModKey(options: EditorShortcutsOptions, event: ReactNamespace.KeyboardEvent<HTMLElement>): boolean {
   const scope = escapeScopeOf(event);
-  if (event.key === 'Escape') {
-    if (options.cancelAiReview && options.cancelAiReview() === true) {
-      ESCAPE_TAB_ARMED.delete(scope);
-      event.preventDefault();
-      return true;
-    }
-    // WCAG 2.1.2 keyboard escape hatch: Escape followed by Tab/Shift+Tab releases focus from the editor.
-    ESCAPE_TAB_ARMED.set(scope, escapeTabGeneration);
-    return false;
-  }
+  if (event.key === 'Escape') return handleEscapeKey(options, event, scope);
   if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey) {
     if (ESCAPE_TAB_ARMED.get(scope) === escapeTabGeneration || isEmbeddedInteractiveTarget(event.target)) {
       ESCAPE_TAB_ARMED.delete(scope);

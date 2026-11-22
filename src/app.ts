@@ -112,6 +112,11 @@ function isAbortError(error: unknown): boolean {
   return Boolean(error && typeof error === 'object' && (error as { name?: unknown }).name === 'AbortError');
 }
 
+function isEventInside(event: Event, selector: string): boolean {
+  const el = event.target as Element | null;
+  return Boolean(el && typeof el.closest === 'function' && el.closest(selector));
+}
+
 function detectPlatformModifiers(): { modKey: string; shiftKey: string; altKey: string } {
   let isMac = false;
   try {
@@ -865,6 +870,29 @@ export function createClientPlugin(
       if (docHistory.redo()) slashMenu.close();
     }
 
+    const panes = computePaneVisibility(immersive, view, cssWorkbench.open);
+
+    function closeSearchPanel(): void {
+      setSearchPanel((prev) => (prev.open ? { ...prev, open: false } : prev));
+      focusEditor();
+    }
+
+    function dismissActiveEditorLayer(): boolean {
+      if (searchPanel.open) {
+        closeSearchPanel();
+        return true;
+      }
+      if (!writingSkills.session) return false;
+      writingSkills.cancelSession();
+      return true;
+    }
+
+    function dismissEditorEscape(): 'handled' | 'defer' | false {
+      if (menuOpen || outlineOpen) return 'defer';
+      if (!panes.showMarkdownEditor) return false;
+      return dismissActiveEditorLayer() ? 'handled' : false;
+    }
+
     const handleEditorShortcut = createEditorShortcuts({
       t,
       notify,
@@ -906,11 +934,7 @@ export function createClientPlugin(
         writingSkills.acceptPatch(session.patches[0].id);
         return true;
       },
-      cancelAiReview: () => {
-        if (!writingSkills.session) return false;
-        writingSkills.cancelSession();
-        return true;
-      },
+      dismissEscape: dismissEditorEscape,
     });
 
     const docCommands = createDocumentCommands({
@@ -946,8 +970,18 @@ export function createClientPlugin(
       },
     });
 
+    function handleSurfaceResize(width: number): void {
+      selectionBubble.clear();
+      selectionBubble.clearPointer();
+      slashMenu.close();
+      if (cssWorkbench.open && view === 'preview' && width > 720) {
+        store.updateActive({ view: 'split' });
+      }
+    }
+    const handleSurfaceResizeRef = useLatest(React, handleSurfaceResize);
+
     // Host titlebar clearance binding + Window flush/Escape/Immersive bindings + Mount disposable
-    useElementBinding(React, rootRef, observeHostTitlebarInset);
+    useElementBinding(React, rootRef, (el) => observeHostTitlebarInset(el, (w) => handleSurfaceResizeRef.current(w)));
     useWindowEvent(React, 'beforeunload', () => store.flush());
     useWindowEvent(React, 'pagehide', () => store.flush());
     useWindowEvent(React, 'storage', (event: StorageEvent) => {
@@ -967,8 +1001,8 @@ export function createClientPlugin(
     });
 
     useWindowEvent(React, 'resize', () => {
-      selectionBubble.clear();
-      selectionBubble.clearPointer();
+      const width = rootRef.current?.clientWidth || window.innerWidth;
+      handleSurfaceResize(width);
     });
 
     useWindowEvent(
@@ -992,8 +1026,7 @@ export function createClientPlugin(
           return;
         }
         // Keep the docked desktop inspector open when pressing Esc inside the editor (CodeMirror Esc->Tab escape).
-        const targetEl = event.target instanceof Element ? event.target : null;
-        if (targetEl?.closest('.mdstudio-editor-pane')) return;
+        if (isEventInside(event, '.mdstudio-editor-pane')) return;
         setDrawerOpen(false);
       },
       menuOpen || drawerOpen,
@@ -1110,6 +1143,7 @@ export function createClientPlugin(
 
     function openCssWorkbench(targetId: string | null): void {
       dismissTransientOverlays();
+      writingSkills.resetSession();
       if (view !== 'split') store.updateActive({ view: 'split' });
       setCssWorkbench((prev) => ({ open: true, targetId, seq: prev.seq + 1 }));
     }
@@ -1147,7 +1181,7 @@ export function createClientPlugin(
     }
 
     function hasEditorBlockingOverlay(): boolean {
-      if (!computePaneVisibility(immersive, view, cssWorkbench.open).showMarkdownEditor) return false;
+      if (!panes.showMarkdownEditor) return false;
       return [searchPanel.open, slashMenu.open, outlineOpen, writingSkills.session].some(Boolean);
     }
 
@@ -1164,11 +1198,11 @@ export function createClientPlugin(
       'keydown',
       (event: KeyboardEvent) => {
         if (!isUnhandledEscapeKey(event)) return;
-        if ([hasActiveModal(), menuOpen, outlineOpen, slashMenu.open].some(Boolean)) return;
-        event.preventDefault();
-        writingSkills.cancelSession();
+        const inDrawer = drawerOpen && isEventInside(event, '.mdstudio-drawer');
+        if ([hasActiveModal(), menuOpen, outlineOpen, slashMenu.open, inDrawer].some(Boolean)) return;
+        if (dismissActiveEditorLayer()) event.preventDefault();
       },
-      Boolean(writingSkills.session),
+      panes.showMarkdownEditor && (searchPanel.open || Boolean(writingSkills.session)),
     );
 
     function handleEditorKeyDown(event: React.KeyboardEvent<HTMLElement>): void {
@@ -1194,12 +1228,12 @@ export function createClientPlugin(
         return;
       }
       if (!/\.(md|markdown|txt)$/i.test(first.name)) return;
-      const targetArticleId = store.getActive().id;
+      const isCurrent = claimOpenTransition();
       void (async () => {
         try {
           if (!(await flushLinkedFileBeforeSwitch())) return;
           const text = await first.text();
-          if (!pageAliveRef.current || store.getActive().id !== targetArticleId) return;
+          if (!isCurrent()) return;
           detachFileContext();
           writingSkills.resetSession();
           selectionBubble.clear();
@@ -1222,8 +1256,8 @@ export function createClientPlugin(
     const useCodeMirror = !editorFailed && typeof window.ResizeObserver !== 'undefined';
     const deferredMarkdown = useDeferredText(doc.markdown);
     const effectivePreviewMarkdown = React.useMemo(
-      () => writingSkills.previewMarkdown(deferredMarkdown),
-      [deferredMarkdown, writingSkills.session],
+      () => (panes.showMarkdownEditor ? writingSkills.previewMarkdown(deferredMarkdown) : deferredMarkdown),
+      [deferredMarkdown, panes.showMarkdownEditor, writingSkills.session],
     );
     const headings = React.useMemo(
       () => (outlineOpen ? markdownHeadings(doc.markdown) : []),
@@ -1273,7 +1307,6 @@ export function createClientPlugin(
       }),
       [deferredMarkdown],
     );
-    const panes = computePaneVisibility(immersive, view, cssWorkbench.open);
     const { modKey, shiftKey, altKey } = React.useMemo(() => detectPlatformModifiers(), []);
     const shortcutRows = React.useMemo(
       () => buildShortcutRows(t, modKey, shiftKey, altKey),
@@ -1434,6 +1467,7 @@ export function createClientPlugin(
             },
             onOutline: () => {
               selectionBubble.clear();
+              slashMenu.close();
               setOutlineOpen((prev) => !prev);
             },
             onReload: () => void fileActions.reloadLinkedFile(),
@@ -1459,10 +1493,7 @@ export function createClientPlugin(
             },
             onReplaceOne: searchCmds.replaceOne,
             onReplaceAll: searchCmds.replaceAll,
-            onClose: () => {
-              setSearchPanel((prev) => ({ ...prev, open: false }));
-              focusEditor();
-            },
+            onClose: closeSearchPanel,
           },
           outline: {
             open: outlineOpen,
@@ -1480,7 +1511,12 @@ export function createClientPlugin(
             textareaRef,
             onReady: (api) => {
               cmScrollCleanupRef.current?.();
-              cmScrollCleanupRef.current = api ? api.onScroll(() => selectionBubble.clear()) : null;
+              cmScrollCleanupRef.current = api
+                ? api.onScroll(() => {
+                    selectionBubble.clear();
+                    slashMenu.close();
+                  })
+                : null;
               scrollSync.registerCodeMirror(api);
             },
             onError: () => {
@@ -1522,6 +1558,7 @@ export function createClientPlugin(
             },
             onTextareaScroll: () => {
               selectionBubble.clear();
+              slashMenu.close();
               scrollSync.syncPreviewFromEditor();
             },
             onRefreshSlash: slashMenu.refreshFromCaret,

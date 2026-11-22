@@ -43,7 +43,19 @@ function observeDocAttributes(onMutate: () => void): { disconnect(): void } | nu
   return mo;
 }
 
-export function observeHostTitlebarInset(target: HTMLElement): () => void {
+function createResizeNotifier(target: HTMLElement, onResize?: (width: number) => void): () => void {
+  if (!onResize) return function () {};
+  let lastWidth = target.clientWidth;
+  return function (): void {
+    const width = target.clientWidth;
+    if (width <= 0 || width === lastWidth) return;
+    lastWidth = width;
+    onResize(width);
+  };
+}
+
+export function observeHostTitlebarInset(target: HTMLElement, onResize?: (width: number) => void): () => void {
+  const notifyResize = createResizeNotifier(target, onResize);
   const update = function (): void {
     const left = target.getBoundingClientRect().left;
     const clearance = resolveHostClearance(target);
@@ -51,6 +63,7 @@ export function observeHostTitlebarInset(target: HTMLElement): () => void {
     target.style.setProperty('--mdstudio-host-inset', inset + 'px');
     if (inset > 0) target.setAttribute('data-mdstudio-host-titlebar', '');
     else target.removeAttribute('data-mdstudio-host-titlebar');
+    notifyResize();
   };
   update();
   const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(update) : null;

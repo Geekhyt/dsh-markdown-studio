@@ -53,15 +53,20 @@ export interface PreviewSurfaceSpec {
   darkFallbackBg: string;
   paper: boolean;
   dark: boolean;
+  previewMode?: 'mobile' | 'desktop';
   empty?: boolean;
   applyDark: (articleEl: HTMLElement, isCancelled?: () => boolean) => Promise<boolean>;
   cleanupDark?: () => void;
 }
 
-function paintStageBackground(screen: HTMLElement, color: string, fallback: string): void {
+function paintStageBackground(screen: HTMLElement, color: string, fallback: string, isDesktop: boolean): void {
   const bg = color || fallback;
   screen.style.backgroundColor = bg;
-  if (screen.parentElement) screen.parentElement.style.backgroundColor = bg;
+  const device = screen.parentElement;
+  if (!device) return;
+  device.style.backgroundColor = bg;
+  const stage = device.parentElement;
+  if (stage) stage.style.backgroundColor = isDesktop ? bg : '';
 }
 
 const TRANSPARENT_BG = new Set(['', 'rgba(0, 0, 0, 0)', 'transparent']);
@@ -130,9 +135,10 @@ export function usePreviewHtmlSurface(
         cleanupDarkRef.current?.();
         return undefined;
       }
+      const isDesktop = spec.previewMode === 'desktop';
       const contentChanged = syncMountedArticle(article, spec, lastMountedRef);
       if (!spec.dark) {
-        paintStageBackground(screen, spec.surfaceBg, spec.darkFallbackBg);
+        paintStageBackground(screen, spec.surfaceBg, spec.darkFallbackBg, isDesktop);
         cleanupDarkRef.current?.();
         return undefined;
       }
@@ -141,10 +147,11 @@ export function usePreviewHtmlSurface(
           screen,
           spec.paper ? spec.surfaceBg : resolveDarkStageBg(article, spec.darkFallbackBg),
           spec.darkFallbackBg,
+          isDesktop,
         );
         return undefined;
       }
-      paintStageBackground(screen, spec.surfaceBg, spec.darkFallbackBg);
+      paintStageBackground(screen, spec.surfaceBg, spec.darkFallbackBg, isDesktop);
       let cancelled = false;
       void applyDarkRef
         .current(article, () => cancelled)
@@ -152,7 +159,12 @@ export function usePreviewHtmlSurface(
           if (cancelled || !applied) return;
           lastMountedRef.current = { node: article, html: spec.html, dark: spec.dark, darkApplied: true };
           if (!spec.paper) {
-            paintStageBackground(screen, resolveDarkStageBg(article, spec.darkFallbackBg), spec.darkFallbackBg);
+            paintStageBackground(
+              screen,
+              resolveDarkStageBg(article, spec.darkFallbackBg),
+              spec.darkFallbackBg,
+              isDesktop,
+            );
           }
         })
         .catch(function () {});
@@ -160,7 +172,7 @@ export function usePreviewHtmlSurface(
         cancelled = true;
       };
     },
-    [spec.html, spec.surfaceBg, spec.darkFallbackBg, spec.paper, spec.dark, spec.empty],
+    [spec.html, spec.surfaceBg, spec.darkFallbackBg, spec.paper, spec.dark, spec.previewMode, spec.empty],
   );
   React.useEffect(function () {
     return function () {

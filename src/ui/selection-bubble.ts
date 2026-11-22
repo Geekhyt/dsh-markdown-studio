@@ -2,7 +2,7 @@ import type * as ReactNamespace from 'react';
 import type { SelectionRange } from '../domain/article';
 import type { EditorApi } from '../domain/editor-types';
 import { clamp } from '../domain/settings';
-import { useLatest, useMountDisposable } from '../runtime/react-lifecycle';
+import { useDocumentEvent, useLatest, useMountDisposable } from '../runtime/react-lifecycle';
 
 interface PointerPoint {
   x: number;
@@ -54,12 +54,21 @@ function hasSelectedProse(
   return Boolean(markdown.slice(range.start, range.end).trim());
 }
 
+function isBubbleInteractiveTarget(target: EventTarget | null): boolean {
+  const el = target as Element | null;
+  return Boolean(
+    el &&
+      typeof el.closest === 'function' &&
+      el.closest('.mdstudio-editor-wrap, .mdstudio-skill-split, .mdstudio-menu, [role="menu"], [data-menu-material]'),
+  );
+}
+
 function clampBubbleCoords(
   surfaceRect: DOMRect,
   anchor: { x: number; yBottom: number; yTop: number } | null,
 ): { top: number; left: number } {
   const minTop = 6;
-  const maxLeft = Math.max(12, surfaceRect.width - 144);
+  const maxLeft = Math.max(12, surfaceRect.width - 168);
   if (!anchor) return { top: 10, left: clamp(24, 12, maxLeft) };
   const rawBelow = anchor.yBottom - surfaceRect.top + 6;
   const rawTop = rawBelow + 38 <= surfaceRect.height ? rawBelow : anchor.yTop - surfaceRect.top - 38;
@@ -122,6 +131,17 @@ export function useSelectionBubble(options: SelectionBubbleOptions): SelectionBu
       if (pointerCleanupRef.current) pointerCleanupRef.current();
     };
   });
+
+  useDocumentEvent(
+    React,
+    'mousedown',
+    function (event: MouseEvent) {
+      if (isBubbleInteractiveTarget(event.target)) return;
+      clear();
+      clearPointer();
+    },
+    Boolean(pos),
+  );
 
   function clear(): void {
     cancelPendingRaf();
