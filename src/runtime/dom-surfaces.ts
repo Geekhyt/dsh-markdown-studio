@@ -67,6 +67,51 @@ export function collectSurfaceObstacles(rootEl: HTMLElement | null): MeasuredRec
 }
 
 /**
+ * Checks whether an element is connected, enabled, and not hidden by ancestor
+ * `display: none` or `visibility: hidden` (works identically in browsers & JSDOM).
+ */
+export function isElementVisible(el: HTMLElement | null): el is HTMLElement {
+  if (
+    !el ||
+    el === document.body ||
+    el === document.documentElement ||
+    !el.isConnected ||
+    el.hasAttribute('disabled') ||
+    el.getAttribute('aria-hidden') === 'true'
+  ) {
+    return false;
+  }
+  if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return true;
+  let cur: HTMLElement | null = el;
+  while (cur && cur !== document.documentElement) {
+    const style = window.getComputedStyle(cur);
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+    cur = cur.parentElement;
+  }
+  return true;
+}
+
+/**
+ * Resolves a safe visible focus restoration target, avoiding detached menu items
+ * or hidden chrome (e.g. HeaderBar buttons while Immersive mode is active).
+ */
+export function resolveSafeFocusTarget(
+  preferred: HTMLElement | null,
+  root: HTMLElement | null,
+  fallbackSelectors: readonly string[],
+): HTMLElement | null {
+  if (isElementVisible(preferred) && preferred.getAttribute('role') !== 'menuitem') {
+    return preferred;
+  }
+  if (!root) return null;
+  for (const selector of fallbackSelectors) {
+    const candidate = root.querySelector<HTMLElement>(selector);
+    if (isElementVisible(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
  * Binds an imperative DOM observer to a mounted element ref synchronously before paint.
  */
 export function useElementBinding<T extends HTMLElement>(
@@ -94,6 +139,7 @@ export interface PreviewSurfaceSpec {
   applyDark: (articleEl: HTMLElement, isCancelled?: () => boolean) => Promise<boolean>;
   cleanupDark?: () => void;
   onMountSurface?: () => void;
+  onPreviewRelayout?: () => void;
 }
 
 function paintStageBackground(screen: HTMLElement, color: string, fallback: string, isDesktop: boolean): void {
@@ -155,6 +201,24 @@ function syncMountedArticle(
   return true;
 }
 
+function usePreviewRelayoutSync(
+  React: typeof ReactNamespace,
+  previewMode: 'mobile' | 'desktop' | undefined,
+  onRelayout?: () => void,
+): void {
+  const onRelayoutRef = useLatest(React, onRelayout);
+  const lastModeRef = React.useRef<'mobile' | 'desktop' | undefined>(previewMode);
+  const useIsoLayoutEffect = React.useLayoutEffect || React.useEffect;
+  useIsoLayoutEffect(
+    function () {
+      if (lastModeRef.current === previewMode) return;
+      lastModeRef.current = previewMode;
+      onRelayoutRef.current?.();
+    },
+    [previewMode],
+  );
+}
+
 export function usePreviewHtmlSurface(
   React: typeof ReactNamespace,
   articleRef: ReactNamespace.RefObject<HTMLDivElement | null>,
@@ -164,6 +228,7 @@ export function usePreviewHtmlSurface(
   const cleanupDarkRef = useLatest(React, spec.cleanupDark);
   const onMountSurfaceRef = useLatest(React, spec.onMountSurface);
   const lastMountedRef = React.useRef<MountedSurfaceState>({ ...EMPTY_MOUNTED_SURFACE });
+  usePreviewRelayoutSync(React, spec.previewMode, spec.onPreviewRelayout);
   React.useEffect(
     function () {
       const article = articleRef.current;

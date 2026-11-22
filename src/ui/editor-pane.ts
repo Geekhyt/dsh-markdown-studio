@@ -420,6 +420,7 @@ function FormatMenu(props: {
   t: (key: string) => string;
   icons: UiKit;
   toolbar: EditorToolbarModel;
+  onOpen?: () => void;
 }): ReactNode {
   const h = props.React.createElement;
   const t = props.t;
@@ -461,6 +462,7 @@ function FormatMenu(props: {
           'aria-haspopup': 'menu',
           'aria-expanded': open,
           onClick: function () {
+            if (!open && props.onOpen) props.onOpen();
             setOpen(!open);
           },
         },
@@ -475,12 +477,13 @@ function FormatMenu(props: {
   });
 }
 
-function renderToolbarEnd(props: EditorPaneProps): ReactNode {
+function renderFileStatusBanner(props: EditorPaneProps): ReactNode {
   const h = props.React.createElement;
   const { t, ui: icons, toolbar } = props;
+  if (toolbar.permission === 'granted' && !toolbar.fileConflict) return null;
   return h(
     'div',
-    { className: 'mdstudio-toolbar-end' },
+    { className: 'mdstudio-file-banner', role: 'status' },
     toolbar.permission !== 'granted'
       ? h(
           'button',
@@ -773,6 +776,7 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
         t: t,
         icons: icons,
         toolbar: toolbar,
+        onOpen: outline.onClose,
       }),
       h(
         icons.ToolButton,
@@ -828,8 +832,8 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
           h(icons.Icon, { name: 'listTree', size: 15 }),
         ),
       ),
-      renderToolbarEnd(props),
     ),
+    renderFileStatusBanner(props),
     renderAiReviewOverlay(props),
     search.open
       ? h(

@@ -64,6 +64,7 @@ import { canStartAutosave } from './domain/file-session.machine';
 import {
   canFocusMarkdownEditor,
   canHandleImmersiveShortcutPolicy,
+  canShowSelectionBubble,
   computePaneVisibility,
   isParentModalOpen,
   resolveDocumentEscapeAction,
@@ -75,7 +76,7 @@ import {
 } from './domain/studio-overlay.machine';
 import type { WritingSkill } from './domain/writing-skills';
 import { createStudioLocaleController } from './locales/ui-strings';
-import { useElementBinding } from './runtime/dom-surfaces';
+import { isElementVisible, resolveSafeFocusTarget, useElementBinding } from './runtime/dom-surfaces';
 import {
   useDebouncedKeyTask,
   useDocumentEvent,
@@ -186,6 +187,22 @@ async function migrateDataImages(
   } finally {
     for (const filename of tracked) onTrackInFlight?.(filename, false);
   }
+}
+
+const DIALOG_FALLBACK_FOCUS = [
+  '.mdstudio-immersive-exit',
+  '.mdstudio-style-btn',
+  '[data-mdstudio-menu-trigger="more"]',
+] as const;
+
+function resolveDialogTriggerElement(active: HTMLElement | null, root: HTMLElement | null): HTMLElement | null {
+  if (!active) return null;
+  if (active.getAttribute('role') === 'menuitem') {
+    if (active.closest('.mdstudio-skill-menu-list')) return null;
+    const moreBtn = root?.querySelector<HTMLElement>('[data-mdstudio-menu-trigger="more"]') || null;
+    return isElementVisible(moreBtn) ? moreBtn : null;
+  }
+  return isElementVisible(active) ? active : null;
 }
 
 function resolvePreviewSettings(base: themes.ThemeSettings, cssOpen: boolean, draftCss: string): themes.ThemeSettings {
@@ -420,24 +437,31 @@ export function createClientPlugin(
       window.setTimeout(focusEditor, 30);
     }
 
-    function captureDialogTriggerFocus(): void {
-      const active = asFocusableElement(document.activeElement);
-      if (active && active.getAttribute('role') === 'menuitem') {
-        const moreBtn = rootRef.current?.querySelector<HTMLElement>('[data-mdstudio-menu-trigger="more"]');
-        dialogReturnFocusRef.current = moreBtn || null;
+    function captureDialogTriggerFocus(preferEditor = false): void {
+      if (preferEditor) {
+        dialogReturnFocusRef.current = null;
         return;
       }
-      dialogReturnFocusRef.current = active;
+      dialogReturnFocusRef.current = resolveDialogTriggerElement(
+        asFocusableElement(document.activeElement),
+        rootRef.current,
+      );
     }
 
     function restoreDialogTriggerFocus(): void {
       const target = dialogReturnFocusRef.current;
       dialogReturnFocusRef.current = null;
-      if (target && target.isConnected) {
-        window.requestAnimationFrame(() => target.focus());
-      } else if (store.getActive().view !== 'preview') {
-        window.requestAnimationFrame(() => focusEditor());
-      }
+      window.requestAnimationFrame(() => {
+        if (isElementVisible(target)) {
+          target.focus();
+          return;
+        }
+        if (canFocusEditorRef.current()) {
+          focusEditor();
+          return;
+        }
+        resolveSafeFocusTarget(null, rootRef.current, DIALOG_FALLBACK_FOCUS)?.focus();
+      });
     }
 
     const selectionBubble = useSelectionBubble({
@@ -1546,7 +1570,10 @@ export function createClientPlugin(
               selectionBubble.clearPointer();
               searchCmds.focusHeading(heading);
             },
-            onClose: () => setOutlineOpen(false),
+            onClose: () => {
+              selectionBubble.clear();
+              setOutlineOpen(false);
+            },
           },
           content: {
             useCodeMirror,
@@ -1607,13 +1634,27 @@ export function createClientPlugin(
             },
             onRefreshSlash: slashMenu.refreshFromCaret,
           },
-          ai: buildEditorAiModel(writingSkills, hasActiveModal() ? null : selectionBubble.pos, () => {
-            captureDialogTriggerFocus();
-            setMenuOpen(false);
-            slashMenu.close();
-            setOutlineOpen(false);
-            writingSkills.openManager(null);
-          }),
+          ai: buildEditorAiModel(
+            writingSkills,
+            canShowSelectionBubble({
+              showMarkdownEditor: panes.showMarkdownEditor,
+              hasModal: hasActiveModal(),
+              hasAiSession: Boolean(writingSkills.session),
+              outlineOpen,
+              slashOpen: slashMenu.open,
+              menuOpen,
+            })
+              ? selectionBubble.pos
+              : null,
+            () => {
+              captureDialogTriggerFocus(true);
+              selectionBubble.clear();
+              setMenuOpen(false);
+              slashMenu.close();
+              setOutlineOpen(false);
+              writingSkills.openManager(null);
+            },
+          ),
         }),
 
         h(CssWorkbenchPane, {
@@ -1641,13 +1682,18 @@ export function createClientPlugin(
               rendered,
               empty: !effectivePreviewMarkdown.trim(),
               previewMode,
-              onPreviewMode: setPreviewMode,
+              onPreviewMode: (next) => {
+                if (next === previewMode) return;
+                scrollSync.capturePreviewRatio();
+                setPreviewMode(next);
+              },
               scrollSyncEnabled: scrollSync.enabled,
               onToggleSync: () => scrollSync.setEnabled(!scrollSync.enabled),
               previewScrollRef: scrollSync.previewRef,
               onPreviewScroll: scrollSync.syncEditorFromPreview,
               onPreviewClick: previewClick,
               onPreviewMounted: scrollSync.restorePreviewScroll,
+              onPreviewRelayout: scrollSync.applyCapturedPreviewRatio,
             })
           : null,
 

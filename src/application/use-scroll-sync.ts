@@ -19,6 +19,8 @@ export interface ScrollSyncApi {
   restorePreviewScroll: () => void;
   restoreEditorScroll: () => void;
   resetPreviewScroll: () => void;
+  capturePreviewRatio: () => void;
+  applyCapturedPreviewRatio: () => void;
 }
 
 export function useScrollSync(options: ScrollSyncOptions): ScrollSyncApi {
@@ -31,6 +33,7 @@ export function useScrollSync(options: ScrollSyncOptions): ScrollSyncApi {
   const disposeRef = React.useRef<(() => void) | null>(null);
   const lastRatioRef = React.useRef(0);
   const pendingEditorSyncRef = React.useRef(false);
+  const pendingRelayoutRatioRef = React.useRef<number | null>(null);
 
   useMountDisposable(React, function () {
     return function () {
@@ -139,8 +142,37 @@ export function useScrollSync(options: ScrollSyncOptions): ScrollSyncApi {
   function resetPreviewScroll(): void {
     lastRatioRef.current = 0;
     pendingEditorSyncRef.current = false;
+    pendingRelayoutRatioRef.current = null;
     const preview = previewRef.current;
     if (preview) preview.scrollTop = 0;
+  }
+
+  function capturePreviewRatio(): void {
+    const preview = previewRef.current;
+    if (!preview) return;
+    const max = scrollMax(preview);
+    pendingRelayoutRatioRef.current = max > 0 ? preview.scrollTop / max : 0;
+    acquireLock('editor');
+  }
+
+  function applyCapturedPreviewRatio(): void {
+    const ratio = pendingRelayoutRatioRef.current;
+    pendingRelayoutRatioRef.current = null;
+    if (ratio === null) return;
+    const preview = previewRef.current;
+    if (!preview) return;
+    const appliedMax = scrollMax(preview);
+    acquireLock('editor');
+    scrollToRatio(preview, ratio);
+    lastRatioRef.current = ratio;
+    if (typeof window !== 'undefined') {
+      window.requestAnimationFrame(function () {
+        const current = previewRef.current;
+        if (!current || scrollMax(current) === appliedMax) return;
+        acquireLock('editor');
+        scrollToRatio(current, ratio);
+      });
+    }
   }
 
   function registerCodeMirror(api: EditorApi | null): void {
@@ -168,5 +200,7 @@ export function useScrollSync(options: ScrollSyncOptions): ScrollSyncApi {
     restorePreviewScroll,
     restoreEditorScroll,
     resetPreviewScroll,
+    capturePreviewRatio,
+    applyCapturedPreviewRatio,
   };
 }

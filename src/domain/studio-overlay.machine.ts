@@ -84,11 +84,29 @@ export function shouldKeepCssWorkbenchOnViewChange(
   containerWidth: number,
   nextView: SurfaceViewMode,
 ): boolean {
-  return cssOpen && containerWidth <= NARROW_CONTAINER_PX && nextView !== 'split';
+  return cssOpen && (nextView === 'split' || containerWidth <= NARROW_CONTAINER_PX);
 }
 
 export function shouldRestoreSplitOnResize(cssOpen: boolean, view: string, containerWidth: number): boolean {
-  return cssOpen && view === 'preview' && containerWidth > NARROW_CONTAINER_PX;
+  return cssOpen && view !== 'split' && containerWidth > NARROW_CONTAINER_PX;
+}
+
+export function canShowSelectionBubble(flags: {
+  showMarkdownEditor: boolean;
+  hasModal: boolean;
+  hasAiSession: boolean;
+  outlineOpen: boolean;
+  slashOpen: boolean;
+  menuOpen: boolean;
+}): boolean {
+  return (
+    flags.showMarkdownEditor &&
+    !flags.hasModal &&
+    !flags.hasAiSession &&
+    !flags.outlineOpen &&
+    !flags.slashOpen &&
+    !flags.menuOpen
+  );
 }
 
 export function resolveEditorEscapeOutcome(flags: {
@@ -180,7 +198,17 @@ export function hasSurfaceModal(state: StudioSurfaceState): boolean {
 
 export function effectiveBubbleVisible(state: StudioSurfaceState): boolean {
   const panes = computePaneVisibility(state.immersive, state.view, state.cssWorkbenchOpen);
-  return panes.showMarkdownEditor && state.bubbleVisible && state.aiSession === 'none' && !hasSurfaceModal(state);
+  return (
+    state.bubbleVisible &&
+    canShowSelectionBubble({
+      showMarkdownEditor: panes.showMarkdownEditor,
+      hasModal: hasSurfaceModal(state),
+      hasAiSession: state.aiSession !== 'none',
+      outlineOpen: state.outlineOpen,
+      slashOpen: state.slashOpen,
+      menuOpen: state.menuOpen,
+    })
+  );
 }
 
 function dismissTransient(
@@ -276,9 +304,11 @@ function applyEscape(state: StudioSurfaceState, target: 'editor' | 'drawer' | 'd
 
 function stepModalEvent(state: StudioSurfaceState, event: StudioSurfaceEvent): StudioSurfaceState | null {
   switch (event.type) {
-    case 'OPEN_PARENT_MODAL':
-      if (hasSurfaceModal(state) || state.immersive) return state;
+    case 'OPEN_PARENT_MODAL': {
+      const allowedInImmersive = event.modal === 'skills' && state.immersive === 'write';
+      if (hasSurfaceModal(state) || (state.immersive && !allowedInImmersive)) return state;
       return { ...dismissTransient(state, { keepSearch: true, keepDrawer: true }), parentModal: event.modal };
+    }
     case 'CLOSE_PARENT_MODAL':
       return state.childModal !== 'none' ? state : { ...state, parentModal: 'none' };
     case 'OPEN_CHILD_MODAL':
@@ -420,6 +450,10 @@ const STUDIO_INVARIANTS: ReadonlyArray<readonly [string, (state: StudioSurfaceSt
     },
   ],
   [
+    'CSS workbench requires split view (live preview) whenever container is wide',
+    (s) => s.cssWorkbenchOpen && !s.narrow && s.view !== 'split',
+  ],
+  [
     'CSS workbench cannot coexist with an active AI writing session',
     (s) => s.cssWorkbenchOpen && s.aiSession !== 'none',
   ],
@@ -428,8 +462,10 @@ const STUDIO_INVARIANTS: ReadonlyArray<readonly [string, (state: StudioSurfaceSt
     (s) => isParentModalOpen(s.parentModal !== 'none', s.childModal !== 'none') && s.childModal !== 'none',
   ],
   [
-    'selection bubble must stay hidden during modals or AI sessions',
-    (s) => (hasSurfaceModal(s) || s.aiSession !== 'none') && effectiveBubbleVisible(s),
+    'selection bubble must not coexist with modals, AI sessions, outline, slash menu, or header menu',
+    (s) =>
+      (hasSurfaceModal(s) || s.aiSession !== 'none' || s.outlineOpen || s.slashOpen || s.menuOpen) &&
+      effectiveBubbleVisible(s),
   ],
   [
     'immersive mode must not coexist with CSS workbench, settings drawer, or header menu',

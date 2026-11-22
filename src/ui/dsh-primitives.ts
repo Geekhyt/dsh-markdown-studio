@@ -1,5 +1,6 @@
 import type * as ReactNamespace from 'react';
 import type { ComponentType, ReactElement, ReactNode } from 'react';
+import { isElementVisible } from '../runtime/dom-surfaces';
 import { useAutoDismissTimer, useDocumentEvent, useWindowEvent } from '../runtime/react-lifecycle';
 import type {
   DshButtonProps,
@@ -398,27 +399,29 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
     );
   }
 
-  function FallbackToast(props: BridgedToastProps): ReactElement {
+  function FallbackToast(props: BridgedToastProps): ReactNode {
     useAutoDismissTimer(React, props.holdMs ?? 2800, props.onDone);
     const tone = props.tone || 'success';
     const isErr = tone === 'error';
     const defaultGlyph: IconName = isErr ? 'alert' : tone === 'info' ? 'info' : 'check';
-    return h(
-      'div',
-      {
-        className: isErr ? 'mdstudio-toast is-error' : tone === 'info' ? 'mdstudio-toast is-info' : 'mdstudio-toast',
-        role: isErr ? 'alert' : 'status',
-      },
+    return portalOverlay(
       h(
-        'span',
-        { className: 'mdstudio-toast-icon', 'aria-hidden': 'true' },
-        props.icon !== undefined ? props.icon : h(Icon, { name: defaultGlyph, size: 15 }),
+        'div',
+        {
+          className: isErr ? 'mdstudio-toast is-error' : tone === 'info' ? 'mdstudio-toast is-info' : 'mdstudio-toast',
+          role: isErr ? 'alert' : 'status',
+        },
+        h(
+          'span',
+          { className: 'mdstudio-toast-icon', 'aria-hidden': 'true' },
+          props.icon !== undefined ? props.icon : h(Icon, { name: defaultGlyph, size: 15 }),
+        ),
+        h('span', { className: 'mdstudio-toast-text' }, props.text),
       ),
-      h('span', { className: 'mdstudio-toast-text' }, props.text),
     );
   }
 
-  function FallbackModal(props: DshModalProps): ReactElement | null {
+  function FallbackModal(props: DshModalProps): ReactNode {
     const focusedOnOpenRef = React.useRef(false);
     const previousFocusRef = React.useRef<HTMLElement | null>(null);
     const focusTimerRef = React.useRef<number | null>(null);
@@ -433,7 +436,7 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
         previousFocusRef.current = null;
         const active = document.activeElement;
         const focusLost = !active || active === document.body || active === document.documentElement;
-        if (focusLost && prev && document.contains(prev)) prev.focus();
+        if (focusLost && isElementVisible(prev) && prev.getAttribute('role') !== 'menuitem') prev.focus();
         return;
       }
       if (!focusedOnOpenRef.current) {
@@ -469,58 +472,60 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
       (props.tone === 'warning'
         ? 'mdstudio-modal mdstudio-fallback-modal is-warning'
         : 'mdstudio-modal mdstudio-fallback-modal') + (props.headless ? ' is-headless' : '');
-    return h(
-      'div',
-      { className: 'mdstudio-modal-scrim', onClick: props.onClose },
+    return portalOverlay(
       h(
         'div',
-        {
-          ref: attachDialogRef,
-          className: joinClass(modalBase, props.className),
-          role: 'dialog',
-          'aria-modal': 'true',
-          'aria-label': props.title,
-          tabIndex: -1,
-          onClick: function (event: ReactNamespace.MouseEvent<HTMLDivElement>) {
-            event.stopPropagation();
+        { className: 'mdstudio-modal-scrim', onClick: props.onClose },
+        h(
+          'div',
+          {
+            ref: attachDialogRef,
+            className: joinClass(modalBase, props.className),
+            role: 'dialog',
+            'aria-modal': 'true',
+            'aria-label': props.title,
+            tabIndex: -1,
+            onClick: function (event: ReactNamespace.MouseEvent<HTMLDivElement>) {
+              event.stopPropagation();
+            },
+            onKeyDown: trapModalTab,
           },
-          onKeyDown: trapModalTab,
-        },
-        props.headless
-          ? props.children
-          : h(
-              React.Fragment,
-              null,
-              h(
-                'div',
-                { className: joinClass('mdstudio-modal-content', props.contentClassName) },
+          props.headless
+            ? props.children
+            : h(
+                React.Fragment,
+                null,
                 h(
                   'div',
-                  { className: 'mdstudio-modal-head' },
+                  { className: joinClass('mdstudio-modal-content', props.contentClassName) },
                   h(
-                    'h2',
-                    { className: 'mdstudio-modal-title' },
-                    props.tone === 'warning'
-                      ? h(Icon, { name: 'alert', size: 18, className: 'mdstudio-modal-warn-icon' })
-                      : null,
-                    props.title,
+                    'div',
+                    { className: 'mdstudio-modal-head' },
+                    h(
+                      'h2',
+                      { className: 'mdstudio-modal-title' },
+                      props.tone === 'warning'
+                        ? h(Icon, { name: 'alert', size: 18, className: 'mdstudio-modal-warn-icon' })
+                        : null,
+                      props.title,
+                    ),
+                    h(
+                      'button',
+                      {
+                        type: 'button',
+                        className: 'mdstudio-modal-close mdstudio-search-close',
+                        'aria-label': props.closeLabel,
+                        onClick: props.onClose,
+                      },
+                      h(Icon, { name: 'close', size: 14 }),
+                    ),
                   ),
-                  h(
-                    'button',
-                    {
-                      type: 'button',
-                      className: 'mdstudio-modal-close mdstudio-search-close',
-                      'aria-label': props.closeLabel,
-                      onClick: props.onClose,
-                    },
-                    h(Icon, { name: 'close', size: 14 }),
-                  ),
+                  props.description ? h('p', { className: 'mdstudio-modal-desc' }, props.description) : null,
+                  props.children !== undefined ? h('div', { className: 'mdstudio-modal-body' }, props.children) : null,
                 ),
-                props.description ? h('p', { className: 'mdstudio-modal-desc' }, props.description) : null,
-                props.children !== undefined ? h('div', { className: 'mdstudio-modal-body' }, props.children) : null,
+                props.footer !== undefined ? h('div', { className: 'mdstudio-modal-footer' }, props.footer) : null,
               ),
-              props.footer !== undefined ? h('div', { className: 'mdstudio-modal-footer' }, props.footer) : null,
-            ),
+        ),
       ),
     );
   }

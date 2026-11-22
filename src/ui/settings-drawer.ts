@@ -2,6 +2,7 @@ import type * as ReactNamespace from 'react';
 import type { ReactNode } from 'react';
 import { CODE_THEMES } from '../code-themes';
 import { MAX_CUSTOM_THEMES } from '../domain/custom-themes';
+import { resolveSafeFocusTarget } from '../runtime/dom-surfaces';
 import { useMountDisposable } from '../runtime/react-lifecycle';
 import type { CustomTheme, ThemeSettings } from '../themes';
 import * as themes from '../themes';
@@ -307,6 +308,12 @@ function shouldRestoreDrawerFocus(
   return Boolean(drawer && drawer.contains(active));
 }
 
+const DRAWER_FALLBACK_FOCUS = [
+  '[data-mdstudio-menu-trigger="more"]',
+  '.mdstudio-style-btn',
+  '.mdstudio-immersive-exit',
+] as const;
+
 function SettingsDrawerContent(props: SettingsDrawerProps): ReactNode {
   const h = props.React.createElement;
   const t = props.t;
@@ -318,22 +325,21 @@ function SettingsDrawerContent(props: SettingsDrawerProps): ReactNode {
   const tab = props.onTabChange ? props.initialTab : localTab;
 
   useMountDisposable(props.React, function () {
-    const previous = document.activeElement as HTMLElement | null;
     const mountedDrawer = drawerRef.current;
     const mountedRoot = mountedDrawer?.closest<HTMLElement>('.mdstudio-root') || null;
+    const active = document.activeElement as HTMLElement | null;
+    const previous =
+      active && active.getAttribute('role') === 'menuitem'
+        ? mountedRoot?.querySelector<HTMLElement>('[data-mdstudio-menu-trigger="more"]') || null
+        : active;
     const mountedWbSeq = readWorkbenchSeq(mountedDrawer, mountedRoot);
     const focusTimer = window.setTimeout(function () {
       document.getElementById('mdstudio-tab-' + props.initialTab)?.focus();
     }, 0);
     return function () {
       window.clearTimeout(focusTimer);
-      if (
-        shouldRestoreDrawerFocus(drawerRef.current || mountedDrawer, mountedRoot, mountedWbSeq) &&
-        previous &&
-        document.contains(previous)
-      ) {
-        previous.focus();
-      }
+      if (!shouldRestoreDrawerFocus(drawerRef.current || mountedDrawer, mountedRoot, mountedWbSeq)) return;
+      resolveSafeFocusTarget(previous, mountedRoot, DRAWER_FALLBACK_FOCUS)?.focus();
     };
   });
 

@@ -2,6 +2,31 @@
 
 All notable changes to `dsh-markdown-studio` are documented in this file.
 
+## [0.1.15] - 2026-11-23
+
+### Fixed
+- **React 18 Portaled Menu Mouse-Click Survival Inside Floating `SkillSplitTrigger` (P0)**:
+  - Unified portaled menu selectors into a single canonical `PORTALED_MENU_SELECTOR` (`.mdstudio-menu, .mdstudio-menu-scrim, [role="menu"], [data-menu-material]`) composed into both `EDITOR_OVERLAY_SELECTOR` and `BUBBLE_INTERACTIVE_SELECTOR` (`src/ui/selection-bubble.ts`). Prevents React 18 synthetic `onMouseDownCapture` on `.mdstudio-editor-wrap` from clearing `SelectionBubble` and unmounting floating skill dropdown menus (both native DeepSeek Harness `Menu` and `FallbackMenu`) before `click` fires.
+  - Modeled `OPEN_PARENT_MODAL` (`'skills'`) during `immersive === 'write'` in `src/domain/studio-overlay.machine.ts` so `SkillManagerDialog` × `Immersive Write` interleavings and LIFO `Escape` convergence are verified exhaustively.
+- **`CssWorkbench` View-Switch & Container-Resize State-Machine Invariants**:
+  - Updated `shouldKeepCssWorkbenchOnViewChange` (`nextView === 'split' || containerWidth <= 720`) and `shouldRestoreSplitOnResize` (`view !== 'split' && containerWidth > 720`) in `src/domain/studio-overlay.machine.ts` so clicking the already-active `Split` button never wipes unsaved CSS drafts, and widening past `720px` from narrow mobile `edit` mode automatically restores side-by-side live preview.
+- **Editor Floating Popover Mutual Exclusion (`Outline` × `SelectionBubble` × `FormatMenu`)**:
+  - Extracted shared pure predicate `canShowSelectionBubble(...)` (`src/domain/studio-overlay.machine.ts`) wired into both formal BFS (`effectiveBubbleVisible`) and `src/app.ts`, suppressing floating `SelectionBubble` while `Outline`, `SlashMenu`, `HeaderMenu`, modals, or AI review sessions are active; also closes `Outline` when opening `FormatMenu` (`src/ui/editor-pane.ts`).
+- **Universal Visible Focus Restoration (`SettingsDrawer` & Immersive Modals)**:
+  - Added cross-browser/JSDOM `isElementVisible()` (excluding `document.body`, `document.documentElement`, detached nodes, and hidden/disabled ancestors) and `resolveSafeFocusTarget()` in `src/runtime/dom-surfaces.ts`, wired across `SettingsDrawer` (`src/ui/settings-drawer.ts`), `FallbackModal` (`src/ui/dsh-primitives.ts`), and dialog trigger focus handoff (`src/app.ts`). Closing `SettingsDrawer` opened from `More Menu → Shortcuts` restores focus to the visible `More` trigger instead of `document.body`, and closing `SkillManagerDialog` in `Immersive Write` restores focus directly to the active editor instead of hidden header chrome.
+- **CodeMirror Minimal Prefix/Suffix Diff on `setValue`**:
+  - Added pure O(N) `computeMinimalChange(current, next)` in `src/ui/codemirror-core.ts` so normalization updates (such as `CssWorkbench` `⌘/Ctrl+S` trimming trailing newlines, cross-tab sync, and reloads) dispatch only the minimal changed slice instead of replacing `[0, length]`, preventing mid-file carets from teleporting back to line 1 offset 0.
+- **Preview `Mobile ↔ PC` Ratio-Preserving Scroll Anchor**:
+  - Added `capturePreviewRatio()` and `applyCapturedPreviewRatio()` in `src/application/use-scroll-sync.ts` triggered synchronously before paint via `usePreviewRelayoutSync` (`useLayoutEffect` in `src/runtime/dom-surfaces.ts`, `src/ui/preview-pane.ts`, `src/app.ts`), preserving exact reading ratio (`0.000` drift) across `Mobile ↔ PC` width changes without yanking the editor via bidirectional scroll sync.
+- **Unified Body-Portal Fallback Layer, Dedicated File-Conflict Banner & Responsive Polish**:
+  - Routed `FallbackModal` and `FallbackToast` through `portalOverlay()` (`src/ui/dsh-primitives.ts`) alongside `FallbackMenu` and `FallbackTooltip` so all 4 fixed fallback overlays escape host stacking contexts cleanly.
+  - Promoted linked local file conflict and reauthorize actions out of the horizontally scrolling `.mdstudio-toolbar` into a dedicated full-width `.mdstudio-file-banner` strip below the toolbar with `Immersive Write` dock clearance (`src/ui/editor-pane.ts`, `src/ui/styles.ts`).
+  - Hid secondary `.mdstudio-file-name` at `@container mdstudio (max-width: 960px)` alongside `.mdstudio-brand-name` so `760px` English + Darwin `160px` titlebar inset retains wide editable document titles, and scoped mobile/coarse-pointer `44px` touch-target rules strictly to interactive `button.mdstudio-custom-chip` / `button.mdstudio-skill-item` instead of non-interactive `span.is-draft` badges (`src/ui/styles.ts`).
+  - Converted `CHROME_CSS` to a single template literal and pruned 5 unused CSS rules (`src/ui/styles.ts`), keeping `dist/client.studio.js` under the `1,280.0 KiB` raw budget (`1,279.3 KiB` / `400.5 KiB` gzip) and `dist/client.js` at `5.1 KiB` (`2.3 KiB` gzip).
+
+### Verification & Regression Gates
+- Expanded `test/formal-models.test.ts` (`StudioOverlayMachine` 1,516 states / 48,512 transitions with wide-workbench live-preview invariant, `Outline`/`Slash`/`Menu` bubble exclusion, and `Immersive Write` → `SkillManagerDialog` LIFO `Escape` traces), `test/architecture.test.ts` (portaled menu selector parity, 4-overlay `portalOverlay` coverage, and `button.*` touch-target guards), `test/dsh-primitives.test.ts` (`FallbackModal`/`FallbackToast` body portaling, `isElementVisible`/`resolveSafeFocusTarget`, and `computeMinimalChange`), `test/app-dom.test.ts`, and `scripts/mutation-smoke.ts` (20/20 killed mutants).
+
 ## [0.1.14] - 2026-11-23
 
 ### Fixed

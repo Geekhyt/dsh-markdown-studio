@@ -3,6 +3,7 @@ import { JSDOM } from 'jsdom';
 import type * as ReactNamespace from 'react';
 import type { Root } from 'react-dom/client';
 import { observeHostTitlebarInset } from '../src/adapters/host-shell';
+import { isElementVisible, resolveSafeFocusTarget } from '../src/runtime/dom-surfaces';
 import type {
   DshButtonProps,
   DshCheckboxProps,
@@ -14,6 +15,7 @@ import type {
   DshToastProps,
   DshTooltipProps,
 } from '../src/types/dsh-primitives';
+import { computeMinimalChange } from '../src/ui/codemirror-core';
 import { type DialogHostApi, useDialogHost } from '../src/ui/dialog-host';
 import { createDshBridge, trapModalTab } from '../src/ui/dsh-primitives';
 import { toMenuShortcut } from '../src/ui/shortcut-model';
@@ -989,6 +991,25 @@ const h = React.createElement;
     });
     const topTip = document.body.querySelector<HTMLElement>('.mdstudio-tooltip');
     assert.ok(topTip && Number.parseFloat(topTip.style.top) > mockAnchorBottom, 'top-edge tooltip flips below anchor');
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('#top-tip-btn')!.blur();
+    });
+
+    // FallbackModal and FallbackToast portal to document.body to escape host stacking contexts
+    await act(async () => {
+      root!.render(
+        h(
+          'div',
+          { id: 'portal-host-wrap' },
+          h(kit.Modal, { open: true, title: 'Portal Modal', closeLabel: 'Close', onClose: () => {} }, 'Modal body'),
+          h(kit.Toast, { text: 'Portal Toast', tone: 'success', holdMs: 60_000, onDone: () => {} }),
+        ),
+      );
+    });
+    const portaledModal = document.body.querySelector<HTMLElement>('.mdstudio-modal-scrim');
+    assert.ok(portaledModal && portaledModal.parentElement === document.body, 'FallbackModal portals to document.body');
+    const portaledToast = document.body.querySelector<HTMLElement>('.mdstudio-toast');
+    assert.ok(portaledToast && portaledToast.parentElement === document.body, 'FallbackToast portals to document.body');
   } finally {
     (globalThis as { ReactDOM?: unknown }).ReactDOM = prevGlobalDom;
     win.HTMLElement.prototype.getBoundingClientRect = origRect;
@@ -999,7 +1020,64 @@ const h = React.createElement;
     });
     container.remove();
   }
-  console.log('ok - FallbackMenu/FallbackTooltip portal escape and vertical flip clamping');
+  console.log('ok - FallbackMenu/FallbackTooltip/FallbackModal/FallbackToast portal escape and vertical flip clamping');
+}
+
+// 9. Safe focus visibility & minimal CodeMirror text diff
+{
+  const scope = document.createElement('div');
+  const hiddenWrap = document.createElement('div');
+  hiddenWrap.style.display = 'none';
+  const hiddenBtn = document.createElement('button');
+  hiddenBtn.className = 'hidden-trigger';
+  hiddenWrap.appendChild(hiddenBtn);
+  const visibleBtn = document.createElement('button');
+  visibleBtn.className = 'visible-trigger';
+  const disabledBtn = document.createElement('button');
+  disabledBtn.disabled = true;
+  const menuItem = document.createElement('button');
+  menuItem.setAttribute('role', 'menuitem');
+  scope.append(hiddenWrap, visibleBtn, disabledBtn, menuItem);
+  document.body.appendChild(scope);
+  try {
+    assert.equal(isElementVisible(null), false);
+    assert.equal(isElementVisible(document.body), false, 'document.body is never a valid interactive focus target');
+    assert.equal(isElementVisible(document.documentElement), false, 'documentElement is never a valid focus target');
+    assert.equal(isElementVisible(hiddenBtn), false, 'element inside display:none ancestor is not visible');
+    assert.equal(isElementVisible(disabledBtn), false, 'disabled button is not focusable visible');
+    assert.equal(isElementVisible(visibleBtn), true);
+    assert.equal(
+      resolveSafeFocusTarget(document.body, scope, ['.hidden-trigger', '.visible-trigger']),
+      visibleBtn,
+      'falls back past document.body and hidden triggers to first visible target',
+    );
+    assert.equal(
+      resolveSafeFocusTarget(menuItem, scope, ['.visible-trigger']),
+      visibleBtn,
+      'menu items resolve to visible fallback trigger',
+    );
+    assert.equal(resolveSafeFocusTarget(visibleBtn, scope, []), visibleBtn, 'visible preferred target is kept');
+  } finally {
+    scope.remove();
+  }
+
+  assert.equal(computeMinimalChange('same', 'same'), null, 'identical text emits no change');
+  assert.deepEqual(
+    computeMinimalChange('line1\nline2\n\n', 'line1\nline2'),
+    { from: 11, to: 13, insert: '' },
+    'trailing trim produces minimal suffix deletion',
+  );
+  assert.deepEqual(
+    computeMinimalChange('  hello world', 'hello world'),
+    { from: 0, to: 2, insert: '' },
+    'leading trim produces minimal prefix deletion',
+  );
+  assert.deepEqual(
+    computeMinimalChange('alpha beta gamma', 'alpha BETA gamma'),
+    { from: 6, to: 10, insert: 'BETA' },
+    'mid-string replacement isolates changed slice',
+  );
+  console.log('ok - safe visible focus resolution and CodeMirror minimal text diff');
 }
 
 win.close();

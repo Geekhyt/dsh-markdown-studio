@@ -543,6 +543,23 @@ const diffTransitionField = StateField.define<DecorationSet>({
 const ProgrammaticUpdate = Annotation.define<boolean>();
 const ProgrammaticSelection = Annotation.define<boolean>();
 
+export function computeMinimalChange(
+  current: string,
+  next: string,
+): { from: number; to: number; insert: string } | null {
+  if (current === next) return null;
+  let start = 0;
+  const minLen = Math.min(current.length, next.length);
+  while (start < minLen && current.charCodeAt(start) === next.charCodeAt(start)) start++;
+  let endCurrent = current.length;
+  let endNext = next.length;
+  while (endCurrent > start && endNext > start && current.charCodeAt(endCurrent - 1) === next.charCodeAt(endNext - 1)) {
+    endCurrent--;
+    endNext--;
+  }
+  return { from: start, to: endCurrent, insert: next.slice(start, endNext) };
+}
+
 export function create(options: EditorOptions): EditorApi {
   const opts = options;
   const isCss = opts.language === 'css';
@@ -632,10 +649,10 @@ export function create(options: EditorOptions): EditorApi {
       return view.state.doc.toString();
     },
     setValue(value: string, silent = false) {
-      const current = view.state.doc.toString();
-      if (current === value) return;
+      const change = computeMinimalChange(view.state.doc.toString(), value);
+      if (!change) return;
       view.dispatch({
-        changes: { from: 0, to: current.length, insert: value },
+        changes: change,
         ...(silent ? { annotations: ProgrammaticUpdate.of(true) } : {}),
       });
     },

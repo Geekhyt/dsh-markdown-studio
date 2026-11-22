@@ -134,6 +134,27 @@ const mutations: Mutation[] = [
     replace: 'const maxHeight = spec.maxMenuHeight;',
     test: 'test/domain.test.ts',
   },
+  {
+    name: 'keep CssWorkbench open on active Split click',
+    file: 'src/domain/studio-overlay.machine.ts',
+    find: "return cssOpen && (nextView === 'split' || containerWidth <= NARROW_CONTAINER_PX);",
+    replace: "return cssOpen && containerWidth <= NARROW_CONTAINER_PX && nextView !== 'split';",
+    test: 'test/formal-models.test.ts',
+  },
+  {
+    name: 'suppress SelectionBubble while Outline or Slash menu is open',
+    file: 'src/domain/studio-overlay.machine.ts',
+    find: '!flags.outlineOpen &&\n    !flags.slashOpen &&\n    !flags.menuOpen',
+    replace: 'true',
+    test: 'test/formal-models.test.ts',
+  },
+  {
+    name: 'protect portaled menu clicks from editor mousedown bubble clear',
+    file: 'src/ui/selection-bubble.ts',
+    find: "'.mdstudio-ai-inline-card, .mdstudio-skill-split, .mdstudio-slash, .mdstudio-outline, ' + PORTALED_MENU_SELECTOR",
+    replace: "'.mdstudio-ai-inline-card, .mdstudio-skill-split, .mdstudio-slash, .mdstudio-outline'",
+    test: 'test/architecture.test.ts',
+  },
 ];
 
 let survived = 0;

@@ -11,13 +11,18 @@ interface PointerPoint {
   at: number;
 }
 
-function isOverlayEventTarget(target: EventTarget | null): boolean {
+export const PORTALED_MENU_SELECTOR = '.mdstudio-menu, .mdstudio-menu-scrim, [role="menu"], [data-menu-material]';
+export const EDITOR_OVERLAY_SELECTOR =
+  '.mdstudio-ai-inline-card, .mdstudio-skill-split, .mdstudio-slash, .mdstudio-outline, ' + PORTALED_MENU_SELECTOR;
+export const BUBBLE_INTERACTIVE_SELECTOR = '.mdstudio-editor-wrap, .mdstudio-skill-split, ' + PORTALED_MENU_SELECTOR;
+
+function matchesTargetSelector(target: EventTarget | null, selector: string): boolean {
   const el = target as Element | null;
-  return Boolean(
-    el &&
-      typeof el.closest === 'function' &&
-      el.closest('.mdstudio-ai-inline-card, .mdstudio-skill-split, .mdstudio-slash, .mdstudio-outline'),
-  );
+  return Boolean(el && typeof el.closest === 'function' && el.closest(selector));
+}
+
+function isOverlayEventTarget(target: EventTarget | null): boolean {
+  return matchesTargetSelector(target, EDITOR_OVERLAY_SELECTOR);
 }
 
 function resolveBubbleViewportPoint(
@@ -56,12 +61,7 @@ function hasSelectedProse(
 }
 
 function isBubbleInteractiveTarget(target: EventTarget | null): boolean {
-  const el = target as Element | null;
-  return Boolean(
-    el &&
-      typeof el.closest === 'function' &&
-      el.closest('.mdstudio-editor-wrap, .mdstudio-skill-split, .mdstudio-menu, [role="menu"], [data-menu-material]'),
-  );
+  return matchesTargetSelector(target, BUBBLE_INTERACTIVE_SELECTOR);
 }
 
 function clampBubbleCoords(

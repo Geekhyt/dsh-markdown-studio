@@ -383,6 +383,41 @@ for (const editorHostFile of ['src/ui/css-workbench.ts', 'src/ui/skill-manager-d
   );
 }
 
+// React 18 synthetic portal mousedown invariant: editor overlay guard and outside-click guard
+// must both recognize portaled menus/scrims so clicking floating SkillSplitTrigger menu items
+// never unmounts the menu before `click` fires.
+const { EDITOR_OVERLAY_SELECTOR, BUBBLE_INTERACTIVE_SELECTOR } = await import('../src/ui/selection-bubble');
+for (const token of ['.mdstudio-menu', '.mdstudio-menu-scrim', '[role="menu"]', '[data-menu-material]']) {
+  assert.ok(
+    EDITOR_OVERLAY_SELECTOR.includes(token),
+    `EDITOR_OVERLAY_SELECTOR must include portaled menu token ${token}`,
+  );
+  assert.ok(
+    BUBBLE_INTERACTIVE_SELECTOR.includes(token),
+    `BUBBLE_INTERACTIVE_SELECTOR must include portaled menu token ${token}`,
+  );
+}
+
+// Unified body-portal layer: all 4 fixed fallback primitives (Tooltip, Toast, Modal, Menu)
+// must route through `portalOverlay(` so none are trapped inside host stacking contexts.
+const primitivesSrc = stripComments(fs.readFileSync(path.join(root, 'src/ui/dsh-primitives.ts'), 'utf8'));
+const portalCallCount = (primitivesSrc.match(/\bportalOverlay\(/g) || []).length;
+assert.ok(
+  portalCallCount >= 5,
+  `src/ui/dsh-primitives.ts must define portalOverlay and route all 4 fixed overlays through it (found ${portalCallCount} occurrences)`,
+);
+
+// Mobile 44px touch-target overrides must target interactive `button.*` chips/tabs, never
+// non-interactive `span.is-draft` status badges.
+assert.ok(
+  !/,\s*\.mdstudio-css-workbench\s+\.mdstudio-custom-chip\b/.test(CHROME_CSS),
+  'CHROME_CSS must scope 44px touch-target override to button.mdstudio-custom-chip (not span.is-draft)',
+);
+assert.ok(
+  !/,\s*\.mdstudio-skill-item\s*\{\s*min-height:\s*44px/.test(CHROME_CSS),
+  'CHROME_CSS must scope coarse-pointer 44px override to button.mdstudio-skill-item (not span.is-draft)',
+);
+
 // i18n hygiene: zh / en dictionaries stay in exact key parity and every key is referenced by
 // runtime source (dynamic `theme.<id>.name|desc` and `code.<id>.name` lookups are allowlisted).
 const { UI_STRINGS_ZH, UI_STRINGS_EN } = await import('../src/locales/ui-strings');

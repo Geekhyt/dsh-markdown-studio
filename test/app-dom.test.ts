@@ -1835,7 +1835,15 @@ await act(async () => {
   await new Promise((resolve) => setTimeout(resolve, 80));
 });
 await settle(80);
-assert.ok(query('.mdstudio-conflict'), 'external file changes surface a conflict');
+assert.ok(
+  query('.mdstudio-file-banner .mdstudio-conflict'),
+  'external file changes surface in dedicated .mdstudio-file-banner',
+);
+assert.equal(
+  Boolean(container.querySelector('.mdstudio-toolbar .mdstudio-conflict')),
+  false,
+  'conflict alert is never placed inside horizontally scrolling .mdstudio-toolbar',
+);
 assert.ok(editorValue().includes('# Folder note'), 'conflict does not overwrite the editor silently');
 await act(async () => {
   query('.mdstudio-conflict').click();
@@ -3046,6 +3054,104 @@ console.log('ok - English locale boots with English sample article and zero Chin
       Boolean(comboContainer.querySelector('.mdstudio-slash')),
       false,
       'manual scroll after animation frame dismisses SlashMenu',
+    );
+
+    // 16. SettingsDrawer opened from More Menu -> Shortcuts restores focus to visible More trigger on Escape
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('[data-mdstudio-menu-trigger="more"]')?.click();
+    });
+    await settle(20);
+    const shortcutsItem = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find((el) =>
+      (el.textContent || '').includes('快捷键与使用说明'),
+    );
+    assert.ok(shortcutsItem, 'More menu contains Shortcuts entry');
+    await act(async () => {
+      shortcutsItem!.click();
+    });
+    await settle(30);
+    assert.ok(comboContainer.querySelector('.mdstudio-drawer'), 'Shortcuts menu entry opens SettingsDrawer');
+    await act(async () => {
+      window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    });
+    await settle(30);
+    assert.equal(Boolean(comboContainer.querySelector('.mdstudio-drawer')), false, 'Escape closes SettingsDrawer');
+    assert.equal(
+      document.activeElement,
+      comboContainer.querySelector('[data-mdstudio-menu-trigger="more"]'),
+      'closing SettingsDrawer opened from More Menu restores focus to More trigger (not document.body)',
+    );
+
+    // 17. Active Split click inside CssWorkbench retains workbench & draft
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-style-btn')?.click();
+    });
+    await settle(20);
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-section-action')?.click();
+    });
+    await settle(20);
+    assert.ok(comboContainer.querySelector('.mdstudio-css-workbench'), 'CssWorkbench opens from SettingsDrawer');
+    await act(async () => {
+      comboContainer.querySelectorAll<HTMLButtonElement>('.mdstudio-segmented button')[0]?.click();
+    });
+    await settle(20);
+    assert.ok(
+      comboContainer.querySelector('.mdstudio-css-workbench'),
+      'clicking already-active Split button retains CssWorkbench',
+    );
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-css-back-btn')?.click();
+    });
+    await settle(20);
+
+    // 18. Open Outline suppresses floating SelectionBubble even on keyboard text selection
+    await act(async () => {
+      setTaVal?.call(ta2, '# Heading One\n\nSelectable prose paragraph here.');
+      ta2.dispatchEvent(new window.Event('input', { bubbles: true }));
+    });
+    await settle(20);
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-outline-anchor button')?.click();
+    });
+    await settle(20);
+    assert.ok(comboContainer.querySelector('.mdstudio-outline'), 'Outline popover opens');
+    await act(async () => {
+      ta2.focus();
+      ta2.setSelectionRange(15, 38);
+      ta2.dispatchEvent(new window.Event('select', { bubbles: true }));
+    });
+    await settle(20);
+    assert.equal(
+      Boolean(comboContainer.querySelector('.mdstudio-skill-split.is-floating')),
+      false,
+      'open Outline suppresses floating SelectionBubble during keyboard selection',
+    );
+    await act(async () => {
+      document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    });
+    await settle(20);
+
+    // 19. PreviewPane Mobile -> PC switch preserves scroll ratio without yanking editor
+    const screen = comboContainer.querySelector<HTMLDivElement>('.mdstudio-device-screen');
+    assert.ok(screen, 'preview screen exists in split view');
+    Object.defineProperty(screen, 'clientHeight', { configurable: true, get: () => 400 });
+    Object.defineProperty(screen, 'scrollHeight', {
+      configurable: true,
+      get: () => (screen.closest('.mdstudio-device')?.classList.contains('is-desktop') ? 1200 : 2000),
+    });
+    const deviceBtns = comboContainer.querySelectorAll<HTMLButtonElement>('.mdstudio-device-btn');
+    await act(async () => {
+      deviceBtns[0]?.click(); // Mobile (scrollHeight = 2000, max = 1600)
+    });
+    await settle(20);
+    screen.scrollTop = 800; // ratio = 800 / 1600 = 0.5
+    await act(async () => {
+      deviceBtns[1]?.click(); // Desktop (scrollHeight = 1200, max = 800)
+    });
+    await settle(40);
+    assert.ok(
+      Math.abs(screen.scrollTop - 400) <= 2,
+      `Mobile->PC relayout preserves 50% scroll ratio (expected ~400, got ${screen.scrollTop})`,
     );
   } finally {
     await act(async () => {

@@ -20,6 +20,7 @@ export interface PreviewPaneProps {
   onPreviewScroll: () => void;
   onPreviewClick: (event: ReactNamespace.MouseEvent<HTMLElement>) => void;
   onPreviewMounted?: () => void;
+  onPreviewRelayout?: () => void;
 }
 
 export function PreviewPane(props: PreviewPaneProps): ReactNode {
@@ -47,6 +48,7 @@ export function PreviewPane(props: PreviewPaneProps): ReactNode {
     applyDark: applyDarkPreview,
     cleanupDark: cleanupDarkPreview,
     onMountSurface: props.onPreviewMounted,
+    onPreviewRelayout: props.onPreviewRelayout,
   });
 
   return h(

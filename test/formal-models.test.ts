@@ -111,6 +111,7 @@ const STUDIO_EVENTS: StudioSurfaceEvent[] = [
   { type: 'AI_ERROR' },
   { type: 'CANCEL_AI' },
   { type: 'OPEN_PARENT_MODAL', modal: 'library' },
+  { type: 'OPEN_PARENT_MODAL', modal: 'skills' },
   { type: 'CLOSE_PARENT_MODAL' },
   { type: 'OPEN_CHILD_MODAL', modal: 'confirm' },
   { type: 'CLOSE_CHILD_MODAL' },
@@ -258,6 +259,51 @@ assert.ok(studioReport.states >= 500, `explored rich studio overlay state space 
   s = stepStudioSurface(s, { type: 'OPEN_CSS_WORKBENCH' });
   s = stepStudioSurface(s, { type: 'REPLACE_DOCUMENT' });
   assert.equal(s.cssWorkbenchOpen, false, 'replacing document closes CssWorkbench');
+
+  // 8. Clicking active Split button while in CssWorkbench preserves workbench draft
+  s = initialStudioSurfaceState(false);
+  s = stepStudioSurface(s, { type: 'OPEN_CSS_WORKBENCH' });
+  s = stepStudioSurface(s, { type: 'SET_VIEW', view: 'split' });
+  assert.equal(s.cssWorkbenchOpen, true, 'no-op Split click keeps CssWorkbench open');
+  assert.equal(s.view, 'split');
+
+  // 9. Narrow CssWorkbench -> Preview -> Edit -> Widen > 720px restores split live preview
+  s = initialStudioSurfaceState(true);
+  s = stepStudioSurface(s, { type: 'OPEN_CSS_WORKBENCH' });
+  s = stepStudioSurface(s, { type: 'SET_VIEW', view: 'preview' });
+  s = stepStudioSurface(s, { type: 'SET_VIEW', view: 'edit' });
+  assert.equal(s.cssWorkbenchOpen, true, 'narrow edit retains CssWorkbench draft');
+  s = stepStudioSurface(s, { type: 'RESIZE', narrow: false });
+  assert.equal(s.view, 'split', 'widening from narrow CssWorkbench edit restores split view');
+  assert.equal(s.cssWorkbenchOpen, true);
+  assert.deepEqual(checkStudioSurfaceInvariants(s), []);
+
+  // 10. Outline, SlashMenu, and HeaderMenu mutually exclude SelectionBubble
+  s = initialStudioSurfaceState(false);
+  s = stepStudioSurface(s, { type: 'TOGGLE_OUTLINE' });
+  s = stepStudioSurface(s, { type: 'SHOW_BUBBLE' });
+  assert.equal(effectiveBubbleVisible(s), false, 'open Outline suppresses floating SelectionBubble');
+  s = stepStudioSurface(s, { type: 'OPEN_SLASH' });
+  s = stepStudioSurface(s, { type: 'SHOW_BUBBLE' });
+  assert.equal(effectiveBubbleVisible(s), false, 'open SlashMenu suppresses floating SelectionBubble');
+  s = stepStudioSurface(s, { type: 'TOGGLE_MENU' });
+  s = stepStudioSurface(s, { type: 'SHOW_BUBBLE' });
+  assert.equal(effectiveBubbleVisible(s), false, 'open HeaderMenu suppresses floating SelectionBubble');
+
+  // 11. Immersive Write -> SkillManagerDialog -> LIFO Escape closes modal first, then exits Immersive
+  s = initialStudioSurfaceState(false);
+  s = stepStudioSurface(s, { type: 'ENTER_IMMERSIVE' });
+  s = stepStudioSurface(s, { type: 'SHOW_BUBBLE' });
+  s = stepStudioSurface(s, { type: 'OPEN_PARENT_MODAL', modal: 'skills' });
+  assert.equal(s.parentModal, 'skills', 'SkillManagerDialog can open from Immersive Write');
+  assert.equal(s.immersive, 'write', 'opening SkillManagerDialog preserves Immersive Write');
+  assert.equal(effectiveBubbleVisible(s), false, 'SkillManagerDialog suppresses SelectionBubble');
+  s = stepStudioSurface(s, { type: 'ESCAPE', target: 'document' });
+  assert.equal(s.parentModal, 'none', 'first Esc closes SkillManagerDialog');
+  assert.equal(s.immersive, 'write', 'first Esc keeps Immersive Write active');
+  s = stepStudioSurface(s, { type: 'ESCAPE', target: 'document' });
+  assert.equal(s.immersive, null, 'second Esc exits Immersive Write');
+  assert.deepEqual(checkStudioSurfaceInvariants(s), []);
   assert.equal(computePaneVisibility(s.immersive, s.view, s.cssWorkbenchOpen).showMarkdownEditor, true);
 
   // 8. Modal-guarded editor focus policy & container resize invalidating Outline popover
