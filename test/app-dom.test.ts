@@ -2806,13 +2806,13 @@ console.log('ok - English locale boots with English sample article and zero Chin
       'mousedown in PreviewPane dismisses floating AI selection pill',
     );
 
-    // 8. Slash menu closes immediately on editor scroll
+    // 8. Slash menu closes immediately on editor scroll (after initial layout-scroll rAF completes)
     await act(async () => {
       setTaVal?.call(ta2, '/');
       ta2.setSelectionRange(1, 1);
       ta2.dispatchEvent(new window.Event('input', { bubbles: true }));
     });
-    await settle(20);
+    await settle(50);
     assert.ok(comboContainer.querySelector('.mdstudio-slash'), 'slash menu opens on /');
     await act(async () => {
       ta2.dispatchEvent(new window.Event('scroll'));
@@ -3037,7 +3037,7 @@ console.log('ok - English locale boots with English sample article and zero Chin
       comboContainer.querySelector('.mdstudio-slash'),
       'same-frame post-edit layout scroll refreshes SlashMenu instead of killing it',
     );
-    await settle(30);
+    await settle(50);
     await act(async () => {
       ta2.dispatchEvent(new window.Event('scroll', { bubbles: false }));
     });

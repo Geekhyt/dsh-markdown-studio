@@ -50,11 +50,21 @@ function Probe() {
   });
   return null;
 }
+async function waitFor(predicate: () => boolean, timeoutMs = 1500): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) break;
+    await React.act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+  }
+}
+
 async function mount() {
   root = createRoot(document.getElementById('test')!);
   await React.act(async () => {
     root.render(React.createElement(Probe));
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 40));
   });
 }
 async function unmount() {
@@ -97,7 +107,12 @@ assert.equal(api.conflict, false);
 await React.act(async () => {
   assert.equal(await api.writeFile(handle, 'saved content'), 'saved');
 });
-await new Promise((resolve) => setTimeout(resolve, 10));
+await waitFor(() =>
+  Boolean(
+    (idb.get('document-ref') as { ref?: { version?: { fingerprint?: string } } } | undefined)?.ref?.version
+      ?.fingerprint,
+  ),
+);
 const saved = idb.get('document-ref') as { ref: { articleId: string; version: { fingerprint: string } } };
 assert.equal(saved.ref.articleId, 'A');
 assert.match(saved.ref.version.fingerprint, /^[a-f0-9]{64}$/);
@@ -105,6 +120,7 @@ await unmount();
 current.markdown = 'saved content';
 disk = 'external overwrite'; // deliberately leave mtime unchanged
 await mount();
+await waitFor(() => api.conflict);
 assert.equal(api.conflict, true);
 await React.act(async () => {
   assert.equal(await api.writeFile(handle, current.markdown), 'conflict');
