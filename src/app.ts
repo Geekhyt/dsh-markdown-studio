@@ -62,6 +62,7 @@ import type { MergeConflict, MergeDecision } from './domain/library-backup';
 import { sanitizeSettings } from './domain/settings';
 import { canStartAutosave } from './domain/file-session.machine';
 import {
+  canFocusMarkdownEditor,
   canHandleImmersiveShortcutPolicy,
   computePaneVisibility,
   isParentModalOpen,
@@ -76,6 +77,7 @@ import type { WritingSkill } from './domain/writing-skills';
 import { createStudioLocaleController } from './locales/ui-strings';
 import { useElementBinding } from './runtime/dom-surfaces';
 import {
+  useDebouncedKeyTask,
   useDocumentEvent,
   useExternalStore,
   useLatest,
@@ -386,6 +388,11 @@ export function createClientPlugin(
       selectionBubble.clear();
       selectionBubble.clearPointer();
       window.requestAnimationFrame(() => {
+        if (!canFocusEditorRef.current()) {
+          lastSelectionRef.current = { start, end };
+          codeMirrorApiRef.current?.revealRange?.(start, end);
+          return;
+        }
         if (codeMirrorApiRef.current) {
           codeMirrorApiRef.current.focusRange(start, end);
           lastSelectionRef.current = { start, end };
@@ -404,6 +411,7 @@ export function createClientPlugin(
     }
 
     function focusEditor(): void {
+      if (!canFocusEditorRef.current()) return;
       if (codeMirrorApiRef.current) codeMirrorApiRef.current.focus();
       else textareaRef.current?.focus();
     }
@@ -542,7 +550,8 @@ export function createClientPlugin(
       textareaRef,
       onCodeMirrorReady: (api) => {
         if (!api) return;
-        api.focusRange(0, 0);
+        if (canFocusEditorRef.current()) api.focusRange(0, 0);
+        else api.revealRange?.(0, 0);
         lastSelectionRef.current = { start: 0, end: 0 };
       },
     });
@@ -980,6 +989,7 @@ export function createClientPlugin(
       selectionBubble.clear();
       selectionBubble.clearPointer();
       slashMenu.close();
+      setOutlineOpen(false);
       if (shouldRestoreSplitOnResize(cssWorkbench.open, view, width)) {
         store.updateActive({ view: 'split' });
       }
@@ -1181,6 +1191,17 @@ export function createClientPlugin(
         writingSkills.managerOpen,
       ].some(Boolean);
     }
+
+    const canFocusEditorRef = useLatest(
+      React,
+      () =>
+        canFocusMarkdownEditor({
+          hasModal: hasActiveModal(),
+          showMarkdownEditor: panes.showMarkdownEditor,
+        }) && !document.querySelector('[aria-modal="true"]'),
+    );
+
+    useDebouncedKeyTask(React, 'editor-scroll-restore', 0, panes.showMarkdownEditor, scrollSync.restoreEditorScroll);
 
     function canHandleImmersiveShortcut(action: 'toggle' | 'exit'): boolean {
       return canHandleImmersiveShortcutPolicy(
@@ -1537,7 +1558,7 @@ export function createClientPlugin(
               cmScrollCleanupRef.current = api
                 ? api.onScroll(() => {
                     selectionBubble.clear();
-                    slashMenu.close();
+                    slashMenu.onEditorScroll();
                   })
                 : null;
               scrollSync.registerCodeMirror(api);
@@ -1581,7 +1602,7 @@ export function createClientPlugin(
             },
             onTextareaScroll: () => {
               selectionBubble.clear();
-              slashMenu.close();
+              slashMenu.onEditorScroll();
               scrollSync.syncPreviewFromEditor();
             },
             onRefreshSlash: slashMenu.refreshFromCaret,

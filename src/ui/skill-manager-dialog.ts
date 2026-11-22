@@ -294,12 +294,14 @@ function SkillManagerDialogContent(props: SkillManagerDialogProps): ReactNode {
       t('ai.exampleSkillBody'),
     ),
   );
+  const [editorEpoch, setEditorEpoch] = React.useState(0);
 
   const currentSkill = form.selectedId ? props.skills.find((s) => s.id === form.selectedId) || null : null;
   const isBuiltin = Boolean(currentSkill?.builtin);
   const closeLabel = t('close');
 
   function selectExisting(item: WritingSkill): void {
+    if (item.id !== form.selectedId) setEditorEpoch((value) => value + 1);
     setForm({
       selectedId: item.id,
       name: item.name,
@@ -311,6 +313,7 @@ function SkillManagerDialogContent(props: SkillManagerDialogProps): ReactNode {
 
   function startNewDraft(seed?: { name: string; description: string; instructions: string }): void {
     const customs = props.skills.filter((s) => !s.builtin);
+    setEditorEpoch((value) => value + 1);
     setForm({
       selectedId: null,
       name: seed?.name || nextCustomSkillName(customs, t('ai.defaultCustomName')),
@@ -498,7 +501,7 @@ function SkillManagerDialogContent(props: SkillManagerDialogProps): ReactNode {
         : null,
       renderInstructionsSurface(
         React,
-        form.selectedId || 'draft',
+        'skill-ed-' + editorEpoch,
         form.instructions,
         isBuiltin,
         t('ai.skillBodyPlaceholder'),

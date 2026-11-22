@@ -360,6 +360,29 @@ assert.ok(
   '.mdstudio-immersive-dock::before owns the frosted glass backdrop-filter layer',
 );
 
+// Single-pane drawer docking invariant: @container (max-width: 1140px) must ONLY convert
+// .mdstudio-drawer to an overlay in split view, keeping single-pane Edit/Preview docked.
+const midDrawerQuery = CHROME_CSS.match(/@container\s+mdstudio\s*\(max-width:\s*1140px\)\s*\{([\s\S]*?)\n\}/);
+assert.ok(midDrawerQuery, 'CHROME_CSS defines @container mdstudio (max-width: 1140px)');
+assert.ok(
+  midDrawerQuery[1].includes('[data-mdstudio-view="split"] .mdstudio-drawer'),
+  '@container (max-width: 1140px) scopes overlay drawer strictly to split view',
+);
+assert.ok(
+  !/^\s*\.mdstudio-drawer\s*\{/m.test(midDrawerQuery[1]),
+  '@container (max-width: 1140px) must not force unscoped .mdstudio-drawer to overlay single-pane views',
+);
+
+// Stable editor-session key invariant: draft-to-saved transitions in CSS Workbench & Skill Manager
+// must not key CodeMirror directly on mutable entity IDs (which unmounts the editor on first save).
+for (const editorHostFile of ['src/ui/css-workbench.ts', 'src/ui/skill-manager-dialog.ts']) {
+  const hostSrc = fs.readFileSync(path.join(root, editorHostFile), 'utf8');
+  assert.ok(
+    hostSrc.includes('editorEpoch'),
+    `${editorHostFile} uses a monotonic editorEpoch key instead of mutable draft/saved IDs`,
+  );
+}
+
 // i18n hygiene: zh / en dictionaries stay in exact key parity and every key is referenced by
 // runtime source (dynamic `theme.<id>.name|desc` and `code.<id>.name` lookups are allowlisted).
 const { UI_STRINGS_ZH, UI_STRINGS_EN } = await import('../src/locales/ui-strings');

@@ -244,11 +244,16 @@ function CssWorkbenchContent(props: CssWorkbenchProps): ReactNode {
   const [draft, setDraft] = React.useState(() =>
     resolveTargetDraft(settings, props.targetId, t('drawer.defaultCustomName'), cssLocale),
   );
+  const [editorEpoch, setEditorEpoch] = React.useState(0);
   const { editingId, nameDraft, cssDraft } = draft;
   const nameInputRef = React.useRef<HTMLInputElement | null>(null);
 
-  function commitDraft(next: { editingId: string | null; nameDraft: string; cssDraft: string }): void {
+  function commitDraft(
+    next: { editingId: string | null; nameDraft: string; cssDraft: string },
+    resetEditorSession = false,
+  ): void {
     setDraft(next);
+    if (resetEditorSession) setEditorEpoch((value) => value + 1);
     props.onDraftCssChange(next.cssDraft);
   }
 
@@ -280,13 +285,16 @@ function CssWorkbenchContent(props: CssWorkbenchProps): ReactNode {
   useDebouncedKeyTask(React, editingId || '', 0, editingMissing, function () {
     const fallback = customList[0] || null;
     if (fallback) {
-      commitDraft({ editingId: fallback.id, nameDraft: fallback.name, cssDraft: fallback.css });
+      commitDraft({ editingId: fallback.id, nameDraft: fallback.name, cssDraft: fallback.css }, true);
     } else {
-      commitDraft({
-        editingId: null,
-        nameDraft: nextCustomThemeName(customList, t('drawer.defaultCustomName')),
-        cssDraft: themes.exampleCss(cssLocale),
-      });
+      commitDraft(
+        {
+          editingId: null,
+          nameDraft: nextCustomThemeName(customList, t('drawer.defaultCustomName')),
+          cssDraft: themes.exampleCss(cssLocale),
+        },
+        true,
+      );
     }
   });
 
@@ -295,15 +303,18 @@ function CssWorkbenchContent(props: CssWorkbenchProps): ReactNode {
   const status = resolveCustomStatus(editing, settings.theme, dirty, t);
 
   function selectCustomTheme(item: CustomTheme): void {
-    commitDraft({ editingId: item.id, nameDraft: item.name, cssDraft: item.css });
+    commitDraft({ editingId: item.id, nameDraft: item.name, cssDraft: item.css }, item.id !== editingId);
   }
 
   function startNewCustomTheme(): void {
-    commitDraft({
-      editingId: null,
-      nameDraft: nextCustomThemeName(customList, t('drawer.defaultCustomName')),
-      cssDraft: themes.exampleCss(cssLocale),
-    });
+    commitDraft(
+      {
+        editingId: null,
+        nameDraft: nextCustomThemeName(customList, t('drawer.defaultCustomName')),
+        cssDraft: themes.exampleCss(cssLocale),
+      },
+      true,
+    );
     window.setTimeout(function () {
       nameInputRef.current?.focus();
     }, 20);
@@ -327,13 +338,16 @@ function CssWorkbenchContent(props: CssWorkbenchProps): ReactNode {
     });
     const fallback = nextList[0] || null;
     if (fallback) {
-      commitDraft({ editingId: fallback.id, nameDraft: fallback.name, cssDraft: fallback.css });
+      commitDraft({ editingId: fallback.id, nameDraft: fallback.name, cssDraft: fallback.css }, true);
     } else {
-      commitDraft({
-        editingId: null,
-        nameDraft: nextCustomThemeName(nextList, t('drawer.defaultCustomName')),
-        cssDraft: themes.exampleCss(cssLocale),
-      });
+      commitDraft(
+        {
+          editingId: null,
+          nameDraft: nextCustomThemeName(nextList, t('drawer.defaultCustomName')),
+          cssDraft: themes.exampleCss(cssLocale),
+        },
+        true,
+      );
     }
     props.onNotify(t('toast.customThemeDeleted'));
   }
@@ -446,7 +460,7 @@ function CssWorkbenchContent(props: CssWorkbenchProps): ReactNode {
     h(
       'div',
       { className: 'mdstudio-editor-wrap mdstudio-css-editor-wrap' },
-      renderCssSurface(props, editing ? editing.id : 'new', cssDraft, updateCssDraft, onEditorKeyDown),
+      renderCssSurface(props, 'css-ed-' + editorEpoch, cssDraft, updateCssDraft, onEditorKeyDown),
     ),
     h(
       'div',

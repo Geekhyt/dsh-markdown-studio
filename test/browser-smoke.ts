@@ -1690,7 +1690,7 @@ await page.waitForTimeout(60);
   await page.locator('.mdstudio-immersive-exit').click();
   await page.waitForTimeout(80);
 
-  // 2. Edit view (860px) + Overlay SettingsDrawer vs Outline non-overlap
+  // 2. Edit view (860px) keeps SettingsDrawer docked (unobstructed editor) & Outline stays clear
   await page.setViewportSize({ width: 860, height: 820 });
   await page.waitForTimeout(80);
   await page.locator('.mdstudio-segmented button[aria-label="编辑"]').click();
@@ -1699,16 +1699,38 @@ await page.waitForTimeout(60);
   await page.locator('.mdstudio-outline-anchor button').click();
   await page.waitForSelector('.mdstudio-outline', { timeout: 3000 });
   const outlineVsDrawer = await page.evaluate(() => {
-    const d = document.querySelector('.mdstudio-drawer')!.getBoundingClientRect();
+    const d = document.querySelector('.mdstudio-drawer')!;
+    const dr = d.getBoundingClientRect();
     const o = document.querySelector('.mdstudio-outline')!.getBoundingClientRect();
-    return { outlineRight: Math.round(o.right), drawerLeft: Math.round(d.left) };
+    return {
+      drawerPos: getComputedStyle(d).position,
+      outlineRight: Math.round(o.right),
+      drawerLeft: Math.round(dr.left),
+    };
   });
+  assert.equal(outlineVsDrawer.drawerPos, 'relative', 'single-pane Edit view at 860px keeps SettingsDrawer docked');
   assert.ok(
     outlineVsDrawer.outlineRight <= outlineVsDrawer.drawerLeft,
-    `Outline avoids overlay SettingsDrawer (${JSON.stringify(outlineVsDrawer)})`,
+    `Outline avoids SettingsDrawer (${JSON.stringify(outlineVsDrawer)})`,
   );
   await page.keyboard.press('Escape');
   await page.locator('.mdstudio-drawer .mdstudio-icon-btn').click();
+
+  // 2b. Preview -> Edit -> Split preserves bidirectional scroll position
+  await page.setViewportSize({ width: 1280, height: 860 });
+  await page.locator('.mdstudio-segmented button[aria-label="预览"]').click();
+  await page.waitForSelector('.mdstudio-device-screen', { timeout: 3000 });
+  await page.evaluate(() => {
+    const pv = document.querySelector('.mdstudio-device-screen') as HTMLElement | null;
+    if (pv) pv.scrollTop = pv.scrollHeight;
+  });
+  await page.waitForTimeout(120);
+  await page.locator('.mdstudio-segmented button[aria-label="编辑"]').click();
+  await page.waitForTimeout(160);
+  const restoredEditTop = await page.evaluate(
+    () => (document.querySelector('.mdstudio-editor-pane .cm-scroller') as HTMLElement | null)?.scrollTop || 0,
+  );
+  assert.ok(restoredEditTop > 100, `Preview -> Edit restores editor scroll (${restoredEditTop}px)`);
 
   // 3. SearchBar focused Mod+F prevents native find & re-selects query
   await page.setViewportSize({ width: 1280, height: 860 });
@@ -1747,11 +1769,20 @@ await page.waitForTimeout(60);
   await page.setViewportSize({ width: 1280, height: 860 });
   await page.waitForTimeout(80);
 
-  // 5. Open CssWorkbench before final Clear Article to verify document replacement resets workbench
+  // 5. Open CssWorkbench, verify first save keeps CodeMirror DOM node alive, then Clear Article resets workbench
   await page.locator('.mdstudio-style-btn').click();
   await page.waitForSelector('.mdstudio-drawer', { timeout: 3000 });
   await page.locator('.mdstudio-section-action').click();
-  await page.waitForSelector('.mdstudio-css-workbench', { timeout: 3000 });
+  await page.waitForSelector('.mdstudio-css-workbench .cm-editor', { timeout: 3000 });
+  await page.evaluate(() => {
+    document.querySelector('.mdstudio-css-workbench .cm-editor')?.setAttribute('data-mdstudio-smoke-cm', '1');
+  });
+  await page.locator('.mdstudio-css-toolbar button', { hasText: '保存并启用' }).click();
+  await page.waitForTimeout(160);
+  const sameWbCm = await page.evaluate(
+    () => document.querySelector('.mdstudio-css-workbench .cm-editor')?.getAttribute('data-mdstudio-smoke-cm') === '1',
+  );
+  assert.equal(sameWbCm, true, 'CssWorkbench first save keeps CodeMirror instance mounted');
 }
 
 await page.locator('button[aria-label="更多"]').click();

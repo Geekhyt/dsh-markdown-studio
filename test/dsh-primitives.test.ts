@@ -159,128 +159,132 @@ const h = React.createElement;
   let toastDone = false;
   let toolClicked = false;
 
-  await act(async () => {
-    root = ReactDOM.createRoot(container);
-    root.render(
+  function FallbackHarness() {
+    const [openMenu, setOpenMenu] = React.useState(true);
+    return h(
+      'div',
+      null,
+      h(kit.Icon, { name: 'folder' }),
+      h(kit.Icon, { name: 'copy' }),
+      h(kit.Icon, { name: 'sliders' }),
+      h(kit.Icon, { name: 'more' }),
+      h(kit.Icon, { name: 'close' }),
+      h(kit.Icon, { name: 'split' }),
+      h(kit.Icon, { name: 'eye' }),
+      h(kit.Icon, { name: 'link' }),
+      h(kit.Icon, { name: 'image' }),
+      h(kit.Icon, { name: 'listTree' }),
+      h(kit.Icon, { name: 'table' }),
+      h(kit.Icon, { name: 'save' }),
+      h(kit.Icon, { name: 'check' }),
+      h(kit.Icon, { name: 'undo' }),
+      h(kit.Icon, { name: 'redo' }),
+      h(kit.Button, { variant: 'primary', size: 'md', icon: h('span', null, '*') }, 'Primary'),
+      h(kit.Button, { variant: 'outline', size: 'sm', disabled: true }, 'Outline'),
+      h(kit.Button, { variant: 'ghost' }, 'Ghost'),
+      h(kit.Button, { variant: 'toolbar' }, 'Toolbar'),
+      h(kit.Checkbox, {
+        checked: false,
+        label: 'Merge import',
+        className: 'fb-check',
+        onChange: (next) => {
+          checkedBox = next;
+        },
+      }),
+      h(kit.Input, { defaultValue: 'plain', className: 'fb-plain-input', wrapClassName: 'fb-plain-wrap' }),
+      h(kit.Input, {
+        defaultValue: 'with-icon',
+        icon: h('span', null, '?'),
+        className: 'fb-icon-input',
+        wrapClassName: 'fb-icon-wrap',
+      }),
+      h(kit.Pill, { active: true }, 'Active Pill'),
+      h(kit.Pill, { active: false }, 'Idle Pill'),
+      h(kit.Tag, { tone: 'success' }, 'Applied'),
+      h(kit.Tag, { tone: 'warning' }, 'Dirty'),
+      h(kit.Tag, { tone: 'danger' }, 'Error'),
+      h(kit.Tag, { tone: 'info' }, 'Info'),
+      h(kit.Tag, {}, 'Default'),
+      h(kit.StateDot, { state: 'done', size: 8 }),
+      h(kit.StateDot, { state: 'warning' }),
+      h(kit.ToggleRow, {
+        label: 'Toggle feature',
+        checked: false,
+        onChange: (next) => {
+          switched = next;
+        },
+      }),
       h(
-        'div',
-        null,
-        h(kit.Icon, { name: 'folder' }),
-        h(kit.Icon, { name: 'copy' }),
-        h(kit.Icon, { name: 'sliders' }),
-        h(kit.Icon, { name: 'more' }),
-        h(kit.Icon, { name: 'close' }),
-        h(kit.Icon, { name: 'split' }),
-        h(kit.Icon, { name: 'eye' }),
-        h(kit.Icon, { name: 'link' }),
-        h(kit.Icon, { name: 'image' }),
-        h(kit.Icon, { name: 'listTree' }),
-        h(kit.Icon, { name: 'table' }),
-        h(kit.Icon, { name: 'save' }),
-        h(kit.Icon, { name: 'check' }),
-        h(kit.Icon, { name: 'undo' }),
-        h(kit.Icon, { name: 'redo' }),
-        h(kit.Button, { variant: 'primary', size: 'md', icon: h('span', null, '*') }, 'Primary'),
-        h(kit.Button, { variant: 'outline', size: 'sm', disabled: true }, 'Outline'),
-        h(kit.Button, { variant: 'ghost' }, 'Ghost'),
-        h(kit.Button, { variant: 'toolbar' }, 'Toolbar'),
-        h(kit.Checkbox, {
-          checked: false,
-          label: 'Merge import',
-          className: 'fb-check',
-          onChange: (next) => {
-            checkedBox = next;
+        kit.ToolButton,
+        {
+          title: 'Bold tool',
+          active: true,
+          onClick: () => {
+            toolClicked = true;
           },
-        }),
-        h(kit.Input, { defaultValue: 'plain', className: 'fb-plain-input' }),
-        h(kit.Input, {
-          defaultValue: 'with-icon',
-          icon: h('span', null, '?'),
-          className: 'fb-icon-input',
-          wrapClassName: 'fb-icon-wrap',
-        }),
-        h(kit.Pill, { active: true }, 'Active Pill'),
-        h(kit.Pill, { active: false }, 'Idle Pill'),
-        h(kit.Tag, { tone: 'success' }, 'Applied'),
-        h(kit.Tag, { tone: 'warning' }, 'Dirty'),
-        h(kit.Tag, { tone: 'danger' }, 'Error'),
-        h(kit.Tag, { tone: 'info' }, 'Info'),
-        h(kit.Tag, {}, 'Default'),
-        h(kit.StateDot, { state: 'done', size: 8 }),
-        h(kit.StateDot, { state: 'warning' }),
-        h(kit.ToggleRow, {
-          label: 'Toggle feature',
-          checked: false,
-          onChange: (next) => {
-            switched = next;
-          },
-        }),
-        h(
-          kit.ToolButton,
-          {
-            title: 'Bold tool',
-            active: true,
-            onClick: () => {
-              toolClicked = true;
-            },
-          },
-          'B',
-        ),
-        h(kit.Tooltip, {
-          label: () => 'Top dynamic tip',
-          side: 'top',
-          maxWidth: 200,
-          children: h('button', { type: 'button', id: 'dyn-tip-btn' }, 'Hover me'),
-        }),
-        h(kit.Toast, {
-          text: 'Saved',
-          tone: 'info',
-          holdMs: 20,
-          onDone: () => {
-            toastDone = true;
-          },
-        }),
-        h(kit.Toast, { text: 'Failed', tone: 'error', icon: h('span', null, '!'), holdMs: 500, onDone: () => {} }),
-        h(kit.Menu, {
+        },
+        'B',
+      ),
+      h(kit.Tooltip, {
+        label: () => 'Top dynamic tip',
+        side: 'top',
+        maxWidth: 200,
+        children: h('button', { type: 'button', id: 'dyn-tip-btn' }, 'Hover me'),
+      }),
+      h(kit.Toast, {
+        text: 'Saved',
+        tone: 'info',
+        holdMs: 20,
+        onDone: () => {
+          toastDone = true;
+        },
+      }),
+      h(kit.Toast, { text: 'Failed', tone: 'error', icon: h('span', null, '!'), holdMs: 500, onDone: () => {} }),
+      h(kit.Menu, {
+        open: openMenu,
+        align: 'start',
+        listClassName: 'custom-menu-list',
+        ariaLabel: 'Actions',
+        selectedId: 'a',
+        selectedIds: ['b'],
+        items: [
+          { type: 'label', id: 'lbl', text: 'Group' },
+          { id: 'a', label: 'Item A', icon: h('span', null, 'A'), shortcut: toMenuShortcut(['Ctrl+', '', 'S']) },
+          { id: 'b', label: 'Item B', shortcut: toMenuShortcut(['⌘', 'B']) },
+          { type: 'separator', id: 'sep' },
+          { id: 'c', label: 'Danger C', danger: true },
+        ],
+        footer: [{ id: 'foot', label: 'Footer action' }],
+        anchor: h('button', { type: 'button', id: 'menu-anchor' }, 'More'),
+        onSelect: (id) => {
+          selectedMenu = id;
+        },
+        onClose: () => {
+          menuClosed = true;
+          setOpenMenu(false);
+        },
+      }),
+      h(
+        kit.Modal,
+        {
           open: true,
-          align: 'start',
-          listClassName: 'custom-menu-list',
-          ariaLabel: 'Actions',
-          selectedId: 'a',
-          selectedIds: ['b'],
-          items: [
-            { type: 'label', id: 'lbl', text: 'Group' },
-            { id: 'a', label: 'Item A', icon: h('span', null, 'A'), shortcut: toMenuShortcut(['Ctrl+', '', 'S']) },
-            { id: 'b', label: 'Item B', shortcut: toMenuShortcut(['⌘', 'B']) },
-            { type: 'separator', id: 'sep' },
-            { id: 'c', label: 'Danger C', danger: true },
-          ],
-          footer: [{ id: 'foot', label: 'Footer action' }],
-          anchor: h('button', { type: 'button', id: 'menu-anchor' }, 'More'),
-          onSelect: (id) => {
-            selectedMenu = id;
-          },
+          tone: 'warning',
+          title: 'Test Modal',
+          description: 'Modal description',
+          closeLabel: 'Close modal',
           onClose: () => {
-            menuClosed = true;
+            modalClosed = true;
           },
-        }),
-        h(
-          kit.Modal,
-          {
-            open: true,
-            tone: 'warning',
-            title: 'Test Modal',
-            description: 'Modal description',
-            closeLabel: 'Close modal',
-            onClose: () => {
-              modalClosed = true;
-            },
-            footer: h('button', { type: 'button', id: 'modal-second-btn' }, 'Confirm'),
-          },
-          h('button', { type: 'button', id: 'modal-first-btn' }, 'Inside'),
-        ),
+          footer: h('button', { type: 'button', id: 'modal-second-btn' }, 'Confirm'),
+        },
+        h('button', { type: 'button', id: 'modal-first-btn' }, 'Inside'),
       ),
     );
+  }
+
+  await act(async () => {
+    root = ReactDOM.createRoot(container);
+    root.render(h(FallbackHarness));
   });
 
   await act(async () => {
@@ -288,7 +292,10 @@ const h = React.createElement;
   });
   assert.equal(toastDone, true, 'FallbackToast fires onDone after holdMs');
   assert.ok(container.querySelector('[role="alert"]'), 'error toast uses alert role');
-  assert.ok(container.querySelector('.fb-plain-input'), 'FallbackInput renders plain input');
+  assert.ok(
+    container.querySelector('.fb-plain-input.fb-plain-wrap'),
+    'FallbackInput preserves wrapClassName even when icon is omitted',
+  );
   assert.ok(container.querySelector('.fb-icon-wrap .fb-icon-input'), 'FallbackInput wraps input when icon is provided');
   assert.ok(
     container.querySelector('.mdstudio-fallback-modal.is-warning .mdstudio-modal-warn-icon'),
@@ -361,10 +368,17 @@ const h = React.createElement;
     menuItems[1].click();
   });
   assert.equal(selectedMenu, 'b');
+  // Clicking a non-focusable group header drops focus out of menuitems; capture-phase Escape must still
+  // close ONLY the open menu without leaking through to close the underlying modal (LIFO).
+  const groupLabel = menuEl.querySelector<HTMLElement>('.mdstudio-menu-group');
+  assert.ok(groupLabel);
   await act(async () => {
-    menuEl.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    groupLabel.click();
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    document.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
   });
-  assert.equal(menuClosed, true);
+  assert.equal(menuClosed, true, 'capture-phase Escape closes FallbackMenu even when focus leaves menuitems');
+  assert.equal(modalClosed, false, 'first Escape consumes FallbackMenu without dismissing underlying modal');
 
   const modalEl = container.querySelector<HTMLDivElement>('.mdstudio-modal');
   assert.ok(modalEl);
@@ -869,6 +883,123 @@ const h = React.createElement;
     container.remove();
   }
   console.log('ok - FallbackTooltip scroll dismissal, quiet window, and viewport alignment');
+}
+
+// 10. Portal layer escape for FallbackMenu + FallbackTooltip & vertical viewport flip clamping
+{
+  const reactDomLegacy = await import('react-dom');
+  const prevGlobalDom = (globalThis as { ReactDOM?: unknown }).ReactDOM;
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  let root: Root | null = null;
+  const kit = createUiKit(React, null);
+  const origRect = win.HTMLElement.prototype.getBoundingClientRect;
+  const origInnerWidth = win.innerWidth;
+  const origInnerHeight = win.innerHeight;
+  Object.defineProperty(win, 'innerWidth', { value: 800, configurable: true });
+  Object.defineProperty(win, 'innerHeight', { value: 400, configurable: true });
+  let mockAnchorTop = 365;
+  let mockAnchorBottom = 395;
+  win.HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement): DOMRect {
+    if (this.classList.contains('mdstudio-tooltip')) {
+      const styleLeft = Number.parseFloat(this.style.left || '0');
+      const styleTop = Number.parseFloat(this.style.top || '0');
+      const w = 100;
+      const ht = 28;
+      return {
+        left: styleLeft - w / 2,
+        right: styleLeft + w / 2,
+        top: styleTop,
+        bottom: styleTop + ht,
+        width: w,
+        height: ht,
+        x: styleLeft - w / 2,
+        y: styleTop,
+        toJSON: () => ({}),
+      } as DOMRect;
+    }
+    return {
+      left: 300,
+      right: 360,
+      top: mockAnchorTop,
+      bottom: mockAnchorBottom,
+      width: 60,
+      height: 30,
+      x: 300,
+      y: mockAnchorTop,
+      toJSON: () => ({}),
+    } as DOMRect;
+  };
+  let scrimClosed = false;
+  (globalThis as { ReactDOM?: unknown }).ReactDOM = { createPortal: reactDomLegacy.createPortal };
+  try {
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(
+        h(
+          'div',
+          { id: 'portal-host-wrap' },
+          h(kit.Menu, {
+            open: true,
+            items: [{ id: 'x', label: 'Portal item' }],
+            anchor: h('button', { type: 'button' }, 'Open'),
+            onSelect: () => {},
+            onClose: () => {
+              scrimClosed = true;
+            },
+          }),
+          h(kit.Tooltip, {
+            label: 'Bottom flip tip',
+            side: 'bottom',
+            children: h('button', { type: 'button', id: 'bottom-tip-btn' }, 'Bottom'),
+          }),
+          h(kit.Tooltip, {
+            label: 'Top flip tip',
+            side: 'top',
+            children: h('button', { type: 'button', id: 'top-tip-btn' }, 'Top'),
+          }),
+        ),
+      );
+    });
+    const portaledMenu = document.body.querySelector<HTMLElement>('.mdstudio-menu');
+    assert.ok(portaledMenu && portaledMenu.parentElement === document.body, 'FallbackMenu portals to document.body');
+    const scrim = document.body.querySelector<HTMLElement>('.mdstudio-menu-scrim');
+    assert.ok(scrim && scrim.parentElement === document.body, 'FallbackMenu scrim portals to document.body');
+    await act(async () => {
+      scrim.click();
+    });
+    assert.equal(scrimClosed, true, 'portaled scrim click triggers onClose');
+
+    // Bottom-edge tooltip flips above anchor
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('#bottom-tip-btn')!.focus();
+    });
+    const bottomTip = document.body.querySelector<HTMLElement>('.mdstudio-tooltip');
+    assert.ok(bottomTip && bottomTip.parentElement === document.body, 'FallbackTooltip portals to document.body');
+    assert.ok(Number.parseFloat(bottomTip.style.top) < mockAnchorTop, 'bottom-edge tooltip flips above anchor');
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('#bottom-tip-btn')!.blur();
+    });
+
+    // Top-edge side='top' tooltip flips below anchor
+    mockAnchorTop = 6;
+    mockAnchorBottom = 34;
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('#top-tip-btn')!.focus();
+    });
+    const topTip = document.body.querySelector<HTMLElement>('.mdstudio-tooltip');
+    assert.ok(topTip && Number.parseFloat(topTip.style.top) > mockAnchorBottom, 'top-edge tooltip flips below anchor');
+  } finally {
+    (globalThis as { ReactDOM?: unknown }).ReactDOM = prevGlobalDom;
+    win.HTMLElement.prototype.getBoundingClientRect = origRect;
+    Object.defineProperty(win, 'innerWidth', { value: origInnerWidth, configurable: true });
+    Object.defineProperty(win, 'innerHeight', { value: origInnerHeight, configurable: true });
+    await act(async () => {
+      root?.unmount();
+    });
+    container.remove();
+  }
+  console.log('ok - FallbackMenu/FallbackTooltip portal escape and vertical flip clamping');
 }
 
 win.close();

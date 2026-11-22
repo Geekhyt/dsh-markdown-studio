@@ -11,7 +11,12 @@ import {
 } from '../src/domain/images';
 import { MAX_CUSTOM_CSS_CHARS } from '../src/domain/custom-themes';
 import { clamp, parseThemePatch, sanitizeSettings } from '../src/domain/settings';
-import { computeSafePopoverPos, computeUnobstructedWidth, type SurfaceRect } from '../src/domain/surface-geometry';
+import {
+  computeCaretPopoverPos,
+  computeSafePopoverPos,
+  computeUnobstructedWidth,
+  type SurfaceRect,
+} from '../src/domain/surface-geometry';
 import { DEFAULT_SETTINGS, getTheme } from '../src/themes';
 
 assert.equal(deriveTitle('---\ntitle: 标题\n---\n\n正文', '未命名'), '标题');
@@ -275,4 +280,53 @@ const stuckFallback = computeSafePopoverPos({
 });
 assert.equal(stuckFallback.left, 10, 'returns clamped coordinates cleanly when no shift fits');
 
-console.log('40 settings, asset & surface-geometry edge checks passed.');
+// Caret-anchored popover (SlashMenu) must stay clear of the caret line & bound maxHeight in short viewports
+const shortSurface: SurfaceRect = { left: 0, top: 0, right: 600, bottom: 440, width: 600, height: 440 };
+const midSlashAbove = computeCaretPopoverPos({
+  surface: shortSurface,
+  caretTop: 280,
+  caretBottom: 298,
+  caretLeft: 24,
+  width: 320,
+  maxMenuHeight: 348,
+  gap: 6,
+  pad: 10,
+  obstacles: [],
+});
+assert.equal(midSlashAbove.top, undefined, 'mid-page short viewport anchors SlashMenu from bottom above caret');
+assert.equal(midSlashAbove.bottom, 440 - (280 - 6), 'bottom anchor leaves exact gap above caretTop');
+assert.ok(
+  midSlashAbove.maxHeight <= 280 - 6 - 10,
+  `maxHeight (${midSlashAbove.maxHeight}) bounds height above caret so menu never overlaps caret line`,
+);
+
+const topSlashBelow = computeCaretPopoverPos({
+  surface: shortSurface,
+  caretTop: 40,
+  caretBottom: 58,
+  caretLeft: 24,
+  width: 320,
+  maxMenuHeight: 348,
+  gap: 6,
+  pad: 10,
+  obstacles: [],
+});
+assert.equal(topSlashBelow.bottom, undefined, 'upper-viewport caret opens SlashMenu below caret');
+assert.equal(topSlashBelow.top, 64, 'top anchor sits gap below caretBottom');
+assert.equal(topSlashBelow.maxHeight, 348, 'abundant space below preserves full 348px ceiling');
+
+const dockObstacle: SurfaceRect = { left: 420, top: 12, right: 590, bottom: 52, width: 170, height: 40 };
+const nearDockBelow = computeCaretPopoverPos({
+  surface: shortSurface,
+  caretTop: 18,
+  caretBottom: 34,
+  caretLeft: 380,
+  width: 200,
+  maxMenuHeight: 348,
+  gap: 6,
+  pad: 10,
+  obstacles: [dockObstacle],
+});
+assert.ok((nearDockBelow.top ?? 0) >= 58, 'below-caret SlashMenu shifts beneath overlapping top-right dock');
+
+console.log('44 settings, asset & surface-geometry edge checks passed.');

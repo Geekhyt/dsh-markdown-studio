@@ -2,6 +2,30 @@
 
 All notable changes to `dsh-markdown-studio` are documented in this file.
 
+## [0.1.14] - 2026-11-23
+
+### Fixed
+- **Single-Pane-Aware Drawer Docking & Container-Resize Popover Invalidation**:
+  - Scoped `@container mdstudio (max-width: 1140px)` overlay `.mdstudio-drawer` strictly to `.mdstudio-body[data-mdstudio-view="split"] .mdstudio-drawer`, keeping single-pane `edit` and `preview` views docked (`336px`, compact `308px` at `<= 820px`, full-screen overlay at `<= 720px`) (`src/ui/styles.ts`). Eliminates SettingsDrawer covering AI inline diff `拒绝/采纳` controls, SearchBar actions, and PreviewHead `同步` / `手机/PC` toggles on `721–1140px` surfaces (including real DeepSeek Harness sidebar-expanded windows).
+  - Dismissed open `Outline` popovers inside `handleSurfaceResize()` and modeled `outlineOpen: false` in `RESIZE` (`src/app.ts`, `src/domain/studio-overlay.machine.ts`) so host sidebar resizing via `ResizeObserver` never leaves stale overlapping outlines.
+- **Stacking-Context-Free Fallback Portals, Capture-Phase Menu Escape LIFO & Vertical Tooltip Clamping**:
+  - Added `portalOverlay()` in `src/ui/dsh-primitives.ts` so `FallbackMenu` and `FallbackTooltip` portal to `document.body` when `ReactDOM.createPortal` is available, escaping ancestor stacking contexts (such as `SkillSplitTrigger` at `z-index: 32` vs `SettingsDrawer` at `z-index: 40`).
+  - Registered a capture-phase `document` `keydown` `Escape` handler in `FallbackMenuPanel` so pressing `Escape` after focus leaves `[role="menuitem"]` (e.g., clicking a non-focusable group header) still closes the open menu first and restores focus to its trigger without leaking through to close underlying `SearchBar` or `FallbackModal`.
+  - Added vertical viewport edge flipping and clamping (`computeTooltipTop`) in `alignFixedTooltip` (`src/ui/dsh-primitives.ts`) and body-portal typography/box-sizing rules (`src/ui/styles.ts`).
+- **Modal-Guarded Background Editor Focus Handoff**:
+  - Added pure shared predicate `canFocusMarkdownEditor({ hasModal, showMarkdownEditor })` (`src/domain/studio-overlay.machine.ts`) and guarded `focusRange`, `focusEditor`, and `onCodeMirrorReady` (`src/app.ts`) so deleting the active article inside `LibraryDialog` never steals focus out of the open modal into the background editor.
+- **Continuous CodeMirror Editing Sessions Across First Save (`editorEpoch`)**:
+  - Replaced mutable draft/saved entity IDs on CodeMirror `key` with monotonic `editorEpoch` session keys in `CssWorkbench` (`src/ui/css-workbench.ts`) and `SkillManagerDialog` (`src/ui/skill-manager-dialog.ts`), preserving the DOM instance, cursor focus, scroll offset, and undo stack on first `⌘/Ctrl+S` save.
+- **Caret-Safe Bounded `SlashMenu`, Single-Frame Layout-Scroll Guard & Bidirectional Hidden-Pane Scroll Continuity**:
+  - Added pure solver `computeCaretPopoverPos()` (`src/domain/surface-geometry.ts`) wired into `useSlashMenu` (`src/application/use-slash-menu.ts`) and `EditorPane` (`src/ui/editor-pane.ts`) so short-viewport mid-page `/` popovers bound `maxHeight` to free space and anchor by `bottom` above the caret line without covering it.
+  - Added a spec-aligned single-animation-frame `requestAnimationFrame` layout-scroll guard (`onEditorScroll`) in `useSlashMenu` so post-edit document shrinking or `scrollIntoView` does not dismiss a freshly opened slash menu while subsequent user scrolls still dismiss it immediately.
+  - Tracked `pendingEditorSyncRef` and added `restoreEditorScroll()` in `useScrollSync` (`src/application/use-scroll-sync.ts`) wired via `useDebouncedKeyTask` (`src/app.ts`) so scrolling while the editor is hidden (`Preview → Edit → Split`, `Immersive Write → Preview → Write`) restores the matching editor scroll ratio bidirectionally.
+- **`FallbackInput` `wrapClassName` Parity & Immersive Narrow SearchBar Clearance**:
+  - Preserved `wrapClassName` on iconless `FallbackInput` controls (`src/ui/dsh-primitives.ts`), raised `.mdstudio-searchbar .mdstudio-searchbar-field` specificity (`min-width: 96px; height: 28px;`), and dropped immersive SearchBar below top chrome at `<= 720px` (and `<= 920px` when `[data-mdstudio-host-titlebar]` is present) (`src/ui/styles.ts`).
+
+### Verification & Regression Gates
+- Added permanent gates across `test/architecture.test.ts` (split-scoped 1140px overlay drawer CSS check & `editorEpoch` session-key contract), `test/domain.test.ts` (`computeCaretPopoverPos` bounds & obstacle tests), `test/formal-models.test.ts` (`canFocusMarkdownEditor` & `RESIZE` outline invalidation), `test/dsh-primitives.test.ts` (portal escape, capture-phase LIFO Escape, `FallbackInput` `wrapClassName`, and vertical tooltip flip), `test/app-dom.test.ts` (`LibraryDialog` active-delete focus retention & single-frame slash scroll guard), `test/browser-smoke.ts` (single-pane 860px docked drawer, `Preview → Edit` scroll restore, and `CssWorkbench` first-save continuity), and `scripts/mutation-smoke.ts` (17/17 killed mutants).
+
 ## [0.1.13] - 2026-11-22
 
 ### Fixed

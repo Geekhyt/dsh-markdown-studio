@@ -2976,7 +2976,77 @@ console.log('ok - English locale boots with English sample article and zero Chin
         null,
         'opening CssWorkbench cleanly resets active AI diff session',
       );
+      await act(async () => {
+        comboContainer.querySelector<HTMLButtonElement>('.mdstudio-css-back-btn')?.click();
+      });
+      await settle(20);
     }
+
+    // 14. Deleting active article inside LibraryDialog must NOT steal focus into background editor
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-library-btn')?.click();
+    });
+    await settle(30);
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-library-new-btn')?.click();
+    });
+    await settle(40);
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-library-btn')?.click();
+    });
+    await settle(30);
+    const activeDelBtn = comboContainer.querySelector<HTMLButtonElement>(
+      '.mdstudio-library-row.is-active .mdstudio-library-icon-action.is-danger',
+    );
+    assert.ok(activeDelBtn, 'active article row exposes delete action');
+    await act(async () => {
+      activeDelBtn.click();
+    });
+    await settle(30);
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-dialog-submit')?.click();
+    });
+    await settle(80);
+    const libraryModalAfterDel = comboContainer.querySelector<HTMLElement>('.mdstudio-library-modal');
+    assert.ok(libraryModalAfterDel, 'LibraryDialog stays open after deleting active article');
+    const activeAfterDel = document.activeElement as Element | null;
+    assert.ok(
+      activeAfterDel !== ta2 && libraryModalAfterDel.contains(activeAfterDel),
+      'background resetEditorTo focusRange does not steal focus out of open LibraryDialog',
+    );
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-library-head .mdstudio-modal-close')?.click();
+    });
+    await settle(20);
+
+    // 15. SlashMenu same-frame layout-scroll guard keeps SlashMenu alive on edit-triggered scroll, closes next frame
+    await act(async () => {
+      setTaVal?.call(ta2, 'Line 1\n/');
+      ta2.focus();
+      ta2.setSelectionRange(8, 8);
+      ta2.dispatchEvent(new window.Event('input', { bubbles: true }));
+    });
+    // Re-trigger same-frame layout scroll immediately on input before rAF fires
+    await act(async () => {
+      setTaVal?.call(ta2, 'Line 1\n/h');
+      ta2.setSelectionRange(9, 9);
+      ta2.dispatchEvent(new window.Event('input', { bubbles: true }));
+      ta2.dispatchEvent(new window.Event('scroll', { bubbles: false }));
+    });
+    assert.ok(
+      comboContainer.querySelector('.mdstudio-slash'),
+      'same-frame post-edit layout scroll refreshes SlashMenu instead of killing it',
+    );
+    await settle(30);
+    await act(async () => {
+      ta2.dispatchEvent(new window.Event('scroll', { bubbles: false }));
+    });
+    await settle(15);
+    assert.equal(
+      Boolean(comboContainer.querySelector('.mdstudio-slash')),
+      false,
+      'manual scroll after animation frame dismisses SlashMenu',
+    );
   } finally {
     await act(async () => {
       comboRoot.unmount();

@@ -93,3 +93,53 @@ export function computeSafePopoverPos(spec: PopoverPlacementSpec): { top: number
   }
   return { top, left, availWidth };
 }
+
+export interface CaretPopoverSpec {
+  surface: SurfaceRect;
+  caretTop: number;
+  caretBottom: number;
+  caretLeft: number;
+  width: number;
+  maxMenuHeight: number;
+  gap?: number;
+  pad?: number;
+  obstacles?: readonly SurfaceRect[];
+}
+
+/**
+ * Caret-anchored popover solver (`SlashMenu`). Bounds `maxHeight` to the free
+ * vertical span on the chosen side of the caret so the popup never covers the
+ * line being typed or overflows the editor viewport.
+ */
+export function computeCaretPopoverPos(spec: CaretPopoverSpec): {
+  top?: number;
+  bottom?: number;
+  left: number;
+  maxHeight: number;
+} {
+  const gap = spec.gap ?? 6;
+  const pad = spec.pad ?? 10;
+  const spaceBelow = Math.floor(spec.surface.bottom - spec.caretBottom - gap - pad);
+  const spaceAbove = Math.floor(spec.caretTop - spec.surface.top - gap - pad);
+  const preferBelow = spaceBelow >= Math.min(220, spec.maxMenuHeight) || spaceBelow >= spaceAbove;
+  const freeSpan = preferBelow ? spaceBelow : spaceAbove;
+  const maxHeight = Math.max(72, Math.min(spec.maxMenuHeight, freeSpan));
+  const caretTopRel = spec.caretTop - spec.surface.top;
+  const preferredTop = preferBelow
+    ? Math.round(spec.caretBottom - spec.surface.top + gap)
+    : Math.max(pad, Math.round(caretTopRel - gap - maxHeight));
+  const placed = computeSafePopoverPos({
+    surface: spec.surface,
+    width: spec.width,
+    height: maxHeight,
+    preferredLeft: spec.caretLeft - spec.surface.left,
+    preferredTop,
+    pad,
+    obstacles: spec.obstacles,
+  });
+  if (!preferBelow && placed.top === preferredTop) {
+    const bottom = Math.max(pad, Math.round(spec.surface.height - (caretTopRel - gap)));
+    return { bottom, left: placed.left, maxHeight };
+  }
+  return { top: placed.top, left: placed.left, maxHeight };
+}

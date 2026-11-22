@@ -61,6 +61,10 @@ export function shouldApplyAiPreview(cssOpen: boolean, hasAiSession: boolean): b
   return !cssOpen && hasAiSession;
 }
 
+export function canFocusMarkdownEditor(flags: { hasModal: boolean; showMarkdownEditor: boolean }): boolean {
+  return !flags.hasModal && flags.showMarkdownEditor;
+}
+
 export function computePaneVisibility(immersive: SurfaceImmersiveMode, view: string, cssOpen: boolean): PaneVisibility {
   const leftVisible = immersive ? immersive === 'write' : view !== 'preview';
   const showPreview = immersive ? immersive === 'preview' : view !== 'edit';
@@ -353,6 +357,7 @@ function stepViewOrWorkbenchEvent(state: StudioSurfaceState, event: StudioSurfac
         ...state,
         narrow: event.narrow,
         slashOpen: false,
+        outlineOpen: false,
         bubbleVisible: false,
         view: restoreSplit ? 'split' : state.view,
       };

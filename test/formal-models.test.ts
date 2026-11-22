@@ -13,6 +13,7 @@ import {
   stepFileSession,
 } from '../src/domain/file-session.machine';
 import {
+  canFocusMarkdownEditor,
   checkStudioSurfaceInvariants,
   computePaneVisibility,
   effectiveBubbleVisible,
@@ -258,6 +259,16 @@ assert.ok(studioReport.states >= 500, `explored rich studio overlay state space 
   s = stepStudioSurface(s, { type: 'REPLACE_DOCUMENT' });
   assert.equal(s.cssWorkbenchOpen, false, 'replacing document closes CssWorkbench');
   assert.equal(computePaneVisibility(s.immersive, s.view, s.cssWorkbenchOpen).showMarkdownEditor, true);
+
+  // 8. Modal-guarded editor focus policy & container resize invalidating Outline popover
+  assert.equal(canFocusMarkdownEditor({ hasModal: true, showMarkdownEditor: true }), false);
+  assert.equal(canFocusMarkdownEditor({ hasModal: false, showMarkdownEditor: false }), false);
+  assert.equal(canFocusMarkdownEditor({ hasModal: false, showMarkdownEditor: true }), true);
+  s = initialStudioSurfaceState(false);
+  s = stepStudioSurface(s, { type: 'TOGGLE_OUTLINE' });
+  assert.equal(s.outlineOpen, true);
+  s = stepStudioSurface(s, { type: 'RESIZE', narrow: true });
+  assert.equal(s.outlineOpen, false, 'container resize dismisses stale Outline popover');
   assert.deepEqual(checkStudioSurfaceInvariants(s), []);
 
   // 8. Active AI diff preview stays consistent across Split <-> Preview-only view toggles

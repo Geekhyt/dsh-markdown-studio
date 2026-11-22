@@ -72,7 +72,7 @@ export interface EditorSlashModel {
   open: boolean;
   items: SlashItem[];
   selected: number;
-  pos?: { top: number; left: number } | null;
+  pos?: { top?: number; bottom?: number; left: number; maxHeight?: number } | null;
   onSelect: (index: number) => void;
   onApply: (index: number) => void;
 }
@@ -540,6 +540,19 @@ function renderFloatingSkillTrigger(props: EditorPaneProps): ReactNode {
   });
 }
 
+function slashPopoverStyle(pos: EditorSlashModel['pos']): ReactNamespace.CSSProperties | undefined {
+  if (!pos) return undefined;
+  const style: ReactNamespace.CSSProperties = { left: pos.left };
+  if (pos.bottom !== undefined) {
+    style.top = 'auto';
+    style.bottom = pos.bottom;
+  } else if (pos.top !== undefined) {
+    style.top = pos.top;
+  }
+  if (pos.maxHeight !== undefined) style.maxHeight = pos.maxHeight;
+  return style;
+}
+
 function renderSlashMenu(props: EditorPaneProps): ReactNode {
   const h = props.React.createElement;
   const { t, ui: icons, slash } = props;
@@ -548,7 +561,7 @@ function renderSlashMenu(props: EditorPaneProps): ReactNode {
     'div',
     {
       className: 'mdstudio-slash',
-      style: slash.pos ? { top: slash.pos.top, left: slash.pos.left } : undefined,
+      style: slashPopoverStyle(slash.pos),
       onMouseDown: function (event: ReactNamespace.MouseEvent<HTMLDivElement>) {
         event.preventDefault();
       },

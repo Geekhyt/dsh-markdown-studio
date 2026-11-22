@@ -120,6 +120,20 @@ const mutations: Mutation[] = [
     replace: 'if (false && !op.overwrite && (state.conflict || externalChanged)) {',
     test: 'test/formal-models.test.ts',
   },
+  {
+    name: 'studio overlay modal-focus guard blocks background editor focus when modal is open',
+    file: 'src/domain/studio-overlay.machine.ts',
+    find: 'return !flags.hasModal && flags.showMarkdownEditor;',
+    replace: 'return flags.showMarkdownEditor;',
+    test: 'test/formal-models.test.ts',
+  },
+  {
+    name: 'caret popover bounds maxHeight above caret so SlashMenu never covers the caret line',
+    file: 'src/domain/surface-geometry.ts',
+    find: 'const maxHeight = Math.max(72, Math.min(spec.maxMenuHeight, freeSpan));',
+    replace: 'const maxHeight = spec.maxMenuHeight;',
+    test: 'test/domain.test.ts',
+  },
 ];
 
 let survived = 0;

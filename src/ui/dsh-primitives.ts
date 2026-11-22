@@ -147,17 +147,47 @@ function withInputRef(
   };
 }
 
-function alignFixedTooltip(el: HTMLSpanElement | null, targetLeft: number, targetTop: number): void {
+type TipAnchor = {
+  left: number;
+  top: number;
+  anchorTop: number;
+  anchorBottom: number;
+  side?: 'right' | 'bottom' | 'top';
+};
+
+function portalOverlay(node: ReactNode, enabled = true): ReactNode {
+  if (!enabled || typeof document === 'undefined' || !document.body) return node;
+  const dom = (globalThis as { ReactDOM?: { createPortal?: (child: ReactNode, container: Element) => ReactNode } })
+    .ReactDOM;
+  return typeof dom?.createPortal === 'function' ? dom.createPortal(node, document.body) : node;
+}
+
+function computeTooltipTop(
+  anchorTop: number,
+  anchorBottom: number,
+  height: number,
+  vh: number,
+  preferTop: boolean,
+): number {
+  let top = preferTop ? anchorTop - height - 8 : anchorBottom + 8;
+  if (!preferTop && top + height > vh - 8 && anchorTop - height - 8 >= 8) top = anchorTop - height - 8;
+  else if (preferTop && top < 8 && anchorBottom + 8 + height <= vh - 8) top = anchorBottom + 8;
+  return Math.min(Math.max(top, 8), Math.max(8, vh - height - 8));
+}
+
+function alignFixedTooltip(el: HTMLSpanElement | null, tip: TipAnchor): void {
   if (!el || typeof window === 'undefined') return;
   const rect = el.getBoundingClientRect();
   if (!rect.width) return;
   const vw = window.innerWidth || 1024;
+  const vh = window.innerHeight || 768;
   const half = rect.width / 2;
-  const clampedCenter = Math.min(Math.max(targetLeft, half + 8), Math.max(half + 8, vw - half - 8));
+  const clampedCenter = Math.min(Math.max(tip.left, half + 8), Math.max(half + 8, vw - half - 8));
+  const desiredTop = computeTooltipTop(tip.anchorTop, tip.anchorBottom, rect.height || 26, vh, tip.side === 'top');
   const shiftX = Math.round(clampedCenter - (rect.left + half));
-  const shiftY = Math.round(targetTop - rect.top);
-  if (Math.abs(shiftX) > 1) el.style.left = Math.round(targetLeft + shiftX) + 'px';
-  if (Math.abs(shiftY) > 1) el.style.top = Math.round(targetTop + shiftY) + 'px';
+  const shiftY = Math.round(desiredTop - rect.top);
+  if (Math.abs(shiftX) > 1) el.style.left = Math.round(tip.left + shiftX) + 'px';
+  if (Math.abs(shiftY) > 1) el.style.top = Math.round(tip.top + shiftY) + 'px';
 }
 
 export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPrimitivesModule | null) {
@@ -206,11 +236,12 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
 
   const FallbackInput = withInputRef(React, function FallbackInputInner(props, ref) {
     const { icon, className, wrapClassName, ...rest } = props;
+    const baseCls = joinClass('mdstudio-input', className);
     const inputNode = h('input', {
       ...rest,
       'data-mdstudio-autofocus': rest.autoFocus ? 'true' : undefined,
       ref,
-      className: joinClass('mdstudio-input', className),
+      className: icon == null ? joinClass(baseCls, wrapClassName) : baseCls,
     });
     if (icon == null) return inputNode;
     return h(
@@ -279,7 +310,7 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
   let tooltipScrollQuietUntil = 0;
 
   function FallbackTooltip(props: DshTooltipProps): ReactElement {
-    const [tip, setTip] = React.useState<{ left: number; top: number } | null>(null);
+    const [tip, setTip] = React.useState<TipAnchor | null>(null);
     const [tipId] = React.useState(() => 'mdstudio-tip-' + Math.random().toString(36).slice(2, 8));
     const child = props.children as ReactElement<{
       title?: string;
@@ -295,7 +326,7 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
       const rect = target.getBoundingClientRect();
       const left = Math.min(Math.max(rect.left + rect.width / 2, 76), Math.max(76, window.innerWidth - 76));
       const top = props.side === 'top' ? Math.max(8, rect.top - 34) : rect.bottom + 8;
-      setTip({ left, top });
+      setTip({ left, top, anchorTop: rect.top, anchorBottom: rect.bottom, side: props.side });
     };
     const hide = function (): void {
       setTip(null);
@@ -317,6 +348,24 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
     useWindowEvent(React, 'scroll', hideOnScroll, Boolean(tip), true);
     const resolved = tip ? (typeof props.label === 'function' ? props.label() : props.label) : '';
     const visible = Boolean(!props.disabled && tip && resolved);
+    const tipNode =
+      visible && tip
+        ? portalOverlay(
+            h(
+              'span',
+              {
+                id: tipId,
+                ref: function (el: HTMLSpanElement | null): void {
+                  alignFixedTooltip(el, tip);
+                },
+                className: 'mdstudio-tooltip',
+                role: 'tooltip',
+                style: { left: tip.left, top: tip.top, ...(props.maxWidth ? { maxWidth: props.maxWidth } : {}) },
+              },
+              resolved,
+            ),
+          )
+        : null;
     return h(
       React.Fragment,
       null,
@@ -345,21 +394,7 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
           child.props.onClick?.(event);
         },
       }),
-      visible && tip
-        ? h(
-            'span',
-            {
-              id: tipId,
-              ref: function (el: HTMLSpanElement | null): void {
-                alignFixedTooltip(el, tip.left, tip.top);
-              },
-              className: 'mdstudio-tooltip',
-              role: 'tooltip',
-              style: { left: tip.left, top: tip.top, ...(props.maxWidth ? { maxWidth: props.maxWidth } : {}) },
-            },
-            resolved,
-          )
-        : null,
+      tipNode,
     );
   }
 
@@ -585,8 +620,28 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
       if (event && event.type === 'scroll' && event.target === el) return;
       positionFixedMenu(el, panelProps.wrapRef.current || el.parentElement, panelProps.align, panelProps.side);
     };
+    const closeAndFocusTrigger = function (): void {
+      panelProps.onClose();
+      const btn = panelProps.wrapRef.current?.querySelector<HTMLElement>('button');
+      if (btn)
+        window.setTimeout(function () {
+          btn.focus();
+        }, 0);
+    };
     useWindowEvent(React, 'resize', reposition, true);
     useWindowEvent(React, 'scroll', reposition, true, true);
+    useDocumentEvent(
+      React,
+      'keydown',
+      function (event: KeyboardEvent) {
+        if (event.isComposing || event.keyCode === 229 || event.defaultPrevented || event.key !== 'Escape') return;
+        event.preventDefault();
+        event.stopPropagation();
+        closeAndFocusTrigger();
+      },
+      true,
+      true,
+    );
     const attachMenuRef = React.useCallback(
       function (el: HTMLDivElement | null): void {
         menuElRef.current = el;
@@ -610,12 +665,7 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
       if (event.key === 'Escape') {
         event.preventDefault();
         event.stopPropagation();
-        panelProps.onClose();
-        const btn = panelProps.wrapRef.current?.querySelector<HTMLElement>('button');
-        if (btn)
-          window.setTimeout(function () {
-            btn.focus();
-          }, 0);
+        closeAndFocusTrigger();
         return;
       }
       const next = nextMenuIndex(event.key, items.indexOf(document.activeElement as HTMLElement), items.length);
@@ -632,6 +682,9 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
         className: menuCls,
         role: 'menu',
         'aria-label': panelProps.ariaLabel,
+        onClick: function (event: ReactNamespace.MouseEvent<HTMLDivElement>) {
+          event.stopPropagation();
+        },
         onKeyDown: onMenuKeyDown,
       },
       panelProps.items.map(function (entry) {
@@ -650,18 +703,29 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
 
   function FallbackMenu(props: BridgedMenuProps): ReactElement {
     const wrapRef = React.useRef<HTMLDivElement | null>(null);
+    const overlay = props.open
+      ? portalOverlay(
+          h(
+            React.Fragment,
+            null,
+            h('div', {
+              className: 'mdstudio-menu-scrim',
+              'aria-hidden': 'true',
+              onClick: function (event: ReactNamespace.MouseEvent<HTMLDivElement>) {
+                event.stopPropagation();
+                props.onClose();
+              },
+            }),
+            h(FallbackMenuPanel, { ...props, wrapRef }),
+          ),
+          props.portal !== false,
+        )
+      : null;
     return h(
       'div',
       { ref: wrapRef, className: joinClass('mdstudio-menu-wrap', props.className) },
       props.anchor,
-      props.open
-        ? h('div', {
-            className: 'mdstudio-menu-scrim',
-            'aria-hidden': 'true',
-            onClick: props.onClose,
-          })
-        : null,
-      props.open ? h(FallbackMenuPanel, { ...props, wrapRef }) : null,
+      overlay,
     );
   }
 

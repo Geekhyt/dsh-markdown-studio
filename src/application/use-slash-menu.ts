@@ -1,9 +1,9 @@
 import type * as ReactNamespace from 'react';
 import type { SelectionRange } from '../domain/article';
 import { clamp } from '../domain/settings';
-import { computeSafePopoverPos, computeUnobstructedWidth } from '../domain/surface-geometry';
+import { computeCaretPopoverPos, computeUnobstructedWidth } from '../domain/surface-geometry';
 import { collectSurfaceObstacles } from '../runtime/dom-surfaces';
-import { useDocumentEvent } from '../runtime/react-lifecycle';
+import { useDocumentEvent, useLatest, useMountDisposable } from '../runtime/react-lifecycle';
 
 export type SlashIconKey =
   | 'quote'
@@ -34,12 +34,19 @@ export interface SlashCommandEntry {
   selectEnd?: number;
 }
 
+export interface SlashPopoverPos {
+  top?: number;
+  bottom?: number;
+  left: number;
+  maxHeight?: number;
+}
+
 interface SlashState {
   start: number;
   end: number;
   query: string;
   selected: number;
-  pos: { top: number; left: number } | null;
+  pos: SlashPopoverPos | null;
 }
 
 export interface SlashMenuOptions {
@@ -58,8 +65,9 @@ export interface SlashMenuApi {
   open: boolean;
   items: SlashCommandEntry[];
   selected: number;
-  pos: { top: number; left: number } | null;
+  pos: SlashPopoverPos | null;
   close: () => void;
+  onEditorScroll: () => void;
   selectIndex: (index: number) => void;
   syncAtCaret: (value: string, caret: number) => void;
   refreshFromCaret: () => void;
@@ -304,21 +312,11 @@ function matchSlashItems(items: SlashCommandEntry[], rawQuery: string): SlashCom
   });
 }
 
-function resolveSlashTop(coords: { top: number; bottom: number }, wrapTop: number, wrapHeight: number): number {
-  const maxTop = Math.max(8, Math.round(wrapHeight - 120));
-  const rawBelow = Math.round(coords.bottom - wrapTop + 6);
-  const spaceBelow = wrapHeight - rawBelow;
-  const spaceAbove = coords.top - wrapTop - 6;
-  const preferBelow = spaceBelow >= Math.min(220, wrapHeight - 16) || spaceBelow >= spaceAbove;
-  if (preferBelow) return clamp(rawBelow, 8, maxTop);
-  return clamp(Math.round(coords.top - wrapTop - Math.min(348, spaceAbove) - 6), 8, maxTop);
-}
-
 function computeSlashPos(
   rootEl: HTMLElement | null,
   coordsAtPos: SlashMenuOptions['coordsAtPos'],
   pos: number,
-): { top: number; left: number } | null {
+): SlashPopoverPos | null {
   const wrap = rootEl?.querySelector<HTMLElement>('.mdstudio-editor-wrap');
   const coords = coordsAtPos?.(pos);
   if (!wrap || !coords) return null;
@@ -327,17 +325,17 @@ function computeSlashPos(
   const obstacles = collectSurfaceObstacles(rootEl);
   const availWidth = computeUnobstructedWidth(rect, obstacles);
   const menuW = Math.min(320, Math.max(180, availWidth - 20));
-  const preferredTop = resolveSlashTop(coords, rect.top, rect.height);
-  const placed = computeSafePopoverPos({
+  return computeCaretPopoverPos({
     surface: rect,
+    caretTop: coords.top,
+    caretBottom: coords.bottom,
+    caretLeft: coords.left,
     width: menuW,
-    height: Math.min(220, Math.max(120, rect.height - 16)),
-    preferredLeft: coords.left - rect.left,
-    preferredTop,
+    maxMenuHeight: 348,
+    gap: 6,
     pad: 10,
     obstacles,
   });
-  return { top: placed.top, left: placed.left };
 }
 
 function scrollActiveSlashItem(rootEl: HTMLElement | null): void {
@@ -357,6 +355,18 @@ function scrollActiveSlashItem(rootEl: HTMLElement | null): void {
 export function useSlashMenu(options: SlashMenuOptions): SlashMenuApi {
   const { React, t, rootRef } = options;
   const [slash, setSlash] = React.useState<SlashState | null>(null);
+  const layoutScrollGuardRef = React.useRef(false);
+  const guardRafRef = React.useRef<number | null>(null);
+  const openRef = useLatest(React, Boolean(slash));
+
+  useMountDisposable(React, function () {
+    return function () {
+      if (guardRafRef.current !== null && typeof window !== 'undefined') {
+        window.cancelAnimationFrame(guardRafRef.current);
+        guardRafRef.current = null;
+      }
+    };
+  });
 
   const matches = slash ? matchSlashItems(buildSlashCommands(t), slash.query) : [];
   const selected = slash ? clamp(slash.selected, 0, Math.max(0, matches.length - 1)) : 0;
@@ -393,6 +403,14 @@ export function useSlashMenu(options: SlashMenuOptions): SlashMenuApi {
     }
     const slashStart = lineStart + line.indexOf('/');
     options.closeOutline();
+    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+      layoutScrollGuardRef.current = true;
+      if (guardRafRef.current !== null) window.cancelAnimationFrame(guardRafRef.current);
+      guardRafRef.current = window.requestAnimationFrame(function () {
+        guardRafRef.current = null;
+        layoutScrollGuardRef.current = false;
+      });
+    }
     const pos = computeSlashPos(rootRef.current, options.coordsAtPos, slashStart);
     setSlash({ start: slashStart, end: caret, query: match[1], selected: 0, pos });
     scrollActiveSlashItem(rootRef.current);
@@ -405,6 +423,23 @@ export function useSlashMenu(options: SlashMenuOptions): SlashMenuApi {
       return;
     }
     syncAtCaret(options.editorValue(), range.start);
+  }
+
+  function refreshPosOnly(): void {
+    setSlash(function (prev) {
+      if (!prev) return prev;
+      return { ...prev, pos: computeSlashPos(rootRef.current, options.coordsAtPos, prev.start) };
+    });
+  }
+
+  const refreshPosRef = useLatest(React, refreshPosOnly);
+  function onEditorScroll(): void {
+    if (!openRef.current) return;
+    if (layoutScrollGuardRef.current) {
+      refreshPosRef.current();
+      return;
+    }
+    setSlash(null);
   }
 
   function applyCommand(index: number): void {
@@ -461,6 +496,7 @@ export function useSlashMenu(options: SlashMenuOptions): SlashMenuApi {
     selected,
     pos: slash ? slash.pos : null,
     close,
+    onEditorScroll,
     selectIndex,
     syncAtCaret,
     refreshFromCaret,
