@@ -2,6 +2,7 @@ import type * as ReactNamespace from 'react';
 import { fileFingerprint } from '../adapters/file-version';
 import { loadDocumentRef, storeDocumentRef } from '../adapters/storage';
 import type { DocumentRef, FileVersion } from '../domain/document-ref';
+import { isGenerationCurrent, isReloadRequestValid, normalizePermissionState } from '../domain/file-session.machine';
 import { useDocumentEvent, useLatest, useMountDisposable, useWindowEvent } from '../runtime/react-lifecycle';
 
 type Notify = (text: string, tone?: 'success' | 'error' | 'info') => void;
@@ -81,11 +82,11 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
     }
     try {
       const result = await handle.queryPermission({ mode: 'readwrite' });
-      const next = result === 'granted' ? 'granted' : result === 'denied' ? 'denied' : 'prompt';
-      if (generation === generationRef.current) setPermission(next);
+      const next = normalizePermissionState(result);
+      if (isGenerationCurrent(generation, generationRef.current)) setPermission(next);
       return next;
-    } catch (error) {
-      if (generation === generationRef.current) setPermission('prompt');
+    } catch {
+      if (isGenerationCurrent(generation, generationRef.current)) setPermission('prompt');
       return 'prompt';
     }
   }
@@ -95,16 +96,16 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
     const handle = permissionHandle();
     if (!handle) return true;
     if (typeof handle.requestPermission !== 'function') {
-      if (generation === generationRef.current) setPermission('granted');
+      if (isGenerationCurrent(generation, generationRef.current)) setPermission('granted');
       return true;
     }
     try {
       const result = await handle.requestPermission({ mode: 'readwrite' });
-      if (generation !== generationRef.current) return false;
-      setPermission(result === 'granted' ? 'granted' : result === 'denied' ? 'denied' : 'prompt');
+      if (!isGenerationCurrent(generation, generationRef.current)) return false;
+      setPermission(normalizePermissionState(result));
       return result === 'granted';
-    } catch (error) {
-      if (generation === generationRef.current) setPermission('prompt');
+    } catch {
+      if (isGenerationCurrent(generation, generationRef.current)) setPermission('prompt');
       return false;
     }
   }
@@ -153,7 +154,7 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
       if (generation !== generationRef.current) return true;
       if (stamp && stamp.handle === handle && fingerprint === stamp.fingerprint) return false;
       markConflict();
-    } catch (error) {
+    } catch {
       if (generation === generationRef.current) markConflict('file.missing');
     }
     return true;
@@ -263,9 +264,16 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
     const article = optionsRef.current.getDocument();
     const originalText = article.markdown;
     const valid = () =>
-      currentRequest(generation, article.id) &&
-      request === reloadRef.current &&
-      originalText === optionsRef.current.getDocument().markdown;
+      isReloadRequestValid({
+        capturedGeneration: generation,
+        currentGeneration: generationRef.current,
+        capturedRequest: request,
+        currentRequest: reloadRef.current,
+        capturedArticleId: article.id,
+        currentArticleId: optionsRef.current.getDocument().id,
+        originalText,
+        currentText: optionsRef.current.getDocument().markdown,
+      });
     try {
       await writesRef.current;
       if (!valid()) return;
@@ -277,7 +285,7 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
       dismissConflict();
       optionsRef.current.onReload(text, file);
       optionsRef.current.notify(optionsRef.current.t('file.reloaded'));
-    } catch (error) {
+    } catch {
       if (valid()) optionsRef.current.notify(optionsRef.current.t('file.openFailed'), 'error');
     }
   }
@@ -301,7 +309,7 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
       if (!currentRequest(generation, article.id)) return;
       if (fingerprint !== expected) markConflict();
       else rememberFile(handle, file, fingerprint);
-    } catch (error) {
+    } catch {
       if (currentRequest(generation, article.id)) markConflict('file.missing');
     }
   }

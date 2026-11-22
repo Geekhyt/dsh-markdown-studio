@@ -860,7 +860,7 @@ try {
       try {
         const blob = await items[0].getType('text/html');
         (window as unknown as { __mdsCopyHtml?: string }).__mdsCopyHtml = await blob.text();
-      } catch (error) {
+      } catch {
         /* fall through to the real write */
       }
       return original(items);

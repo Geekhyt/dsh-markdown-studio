@@ -5,13 +5,13 @@
 import { invertedInlineRules, rule } from '../core';
 import { v } from '../palette';
 
-var MATH = '.mdstudio-math[data-mdstudio-display="1"], .mdstudio-math-block';
-var NOTES = '.mdstudio-references, .mdstudio-footnotes, .mdstudio-notes';
-var NOTES_TITLE = '.mdstudio-refs-title, .mdstudio-footnotes-title, .mdstudio-notes-title';
+const MATH = '.mdstudio-math[data-mdstudio-display="1"], .mdstudio-math-block';
+const NOTES = '.mdstudio-references, .mdstudio-footnotes, .mdstudio-notes';
+const NOTES_TITLE = '.mdstudio-refs-title, .mdstudio-footnotes-title, .mdstudio-notes-title';
 
 /* ----------------------------------------------------------------- meta -- */
 
-export var META = {
+export const META = {
   muted: function () {
     return [];
   },
@@ -31,7 +31,7 @@ export var META = {
 
 /* ----------------------------------------------------------------- tldr -- */
 
-export var TLDR = {
+export const TLDR = {
   card: function () {
     return [rule('.mdstudio-tldr', 'border-radius: 12px;')];
   },
@@ -74,7 +74,7 @@ function topQuoteMark(colorExpr: string): string {
   );
 }
 
-export var PULL = {
+export const PULL = {
   quoteMark: function () {
     return [rule('.mdstudio-pull::before', topQuoteMark(v('accentDeep')))];
   },
@@ -133,7 +133,7 @@ export var PULL = {
 
 /* ----------------------------------------------------------------- sign -- */
 
-export var SIGN = {
+export const SIGN = {
   quiet: function () {
     return [];
   },
@@ -141,7 +141,7 @@ export var SIGN = {
 
 /* ---------------------------------------------------------- block math -- */
 
-export var BLOCK_MATH = {
+export const BLOCK_MATH = {
   plate: function () {
     return [
       rule(MATH, 'background-color: ' + v('soft') + '; border-radius: ' + v('radius') + '; padding: 0.75em 0.95em;'),
@@ -178,7 +178,7 @@ export var BLOCK_MATH = {
 
 /* ------------------------------------------------- footnotes / references -- */
 
-export var NOTES_ATOM = {
+export const NOTES_ATOM = {
   rule: function () {
     return [rule(NOTES, 'border-top: 1px solid ' + v('border') + ';'), rule(NOTES_TITLE, 'color: ' + v('muted') + ';')];
   },
@@ -186,7 +186,7 @@ export var NOTES_ATOM = {
 
 /* ------------------------------------------------------------- h5 / h6 -- */
 
-export var MINOR = {
+export const MINOR = {
   plain: function () {
     return [rule('h5, h6', 'color: ' + v('heading') + ';')];
   },

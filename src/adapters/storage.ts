@@ -44,7 +44,7 @@ export function loadWritingSkills(storage?: Pick<Storage, 'getItem'>): WritingSk
     const store = storage || window.localStorage;
     const raw = store.getItem(WRITING_SKILLS_KEY);
     return raw ? sanitizeWritingSkillState(JSON.parse(raw)) : defaultWritingSkillState();
-  } catch (error) {
+  } catch {
     return defaultWritingSkillState();
   }
 }
@@ -54,7 +54,7 @@ export function saveWritingSkills(state: WritingSkillState, storage?: Pick<Stora
     const store = storage || window.localStorage;
     store.setItem(WRITING_SKILLS_KEY, JSON.stringify(sanitizeWritingSkillState(state)));
     return true;
-  } catch (error) {
+  } catch {
     return false;
   }
 }
@@ -119,7 +119,7 @@ function parsePersistedLibrary(raw: string | null): LibraryState | null {
         ? data.activeId
         : docs[0].id;
     return { activeId, docs, trash };
-  } catch (error) {
+  } catch {
     return null;
   }
 }
@@ -158,7 +158,7 @@ function restoreStorageKey(key: string, previous: string | null): void {
 function writePrimaryWithQuotaRetry(payload: string): void {
   try {
     window.localStorage.setItem(LIBRARY_KEY_V2, payload);
-  } catch (firstError) {
+  } catch {
     // Snapshot backup/unreadable keys before eviction so a still-failing retry does not destroy recovery data.
     const prevBackup = safeStorageGet(LIBRARY_BACKUP_KEY);
     const prevUnreadable = safeStorageGet(LIBRARY_UNREADABLE_KEY);
@@ -220,7 +220,7 @@ export function savePersistedLibrary(value: LibraryState): boolean {
       }
     }
     return true;
-  } catch (error) {
+  } catch {
     return false;
   }
 }
@@ -270,7 +270,7 @@ async function writeDocumentRef(ref: DocumentRef): Promise<void> {
     } finally {
       db.close();
     }
-  } catch (error) {
+  } catch {
     /* handles may not be cloneable or IDB unavailable */
   }
 }
@@ -298,7 +298,7 @@ export async function loadDocumentRef(): Promise<DocumentRef | null> {
     )
       return record.ref;
     return null;
-  } catch (error) {
+  } catch {
     return null;
   }
 }
@@ -317,7 +317,7 @@ export async function storeWorkspaceHandle(handle: FileSystemDirectoryHandle): P
     } finally {
       db.close();
     }
-  } catch (error) {
+  } catch {
     /* IDB may be unavailable */
   }
 }
@@ -341,7 +341,7 @@ export async function loadWorkspaceHandle(): Promise<FileSystemDirectoryHandle |
     return record && record.handle && typeof record.handle === 'object'
       ? (record.handle as FileSystemDirectoryHandle)
       : null;
-  } catch (error) {
+  } catch {
     return null;
   }
 }

@@ -124,7 +124,7 @@ async function fileExists(directory: FileSystemDirectoryHandle, name: string): P
   try {
     await directory.getFileHandle(name);
     return true;
-  } catch (error) {
+  } catch {
     return false;
   }
 }
@@ -141,7 +141,7 @@ async function directoryExists(directory: FileSystemDirectoryHandle, name: strin
   try {
     await directory.getDirectoryHandle(name);
     return true;
-  } catch (error) {
+  } catch {
     return false;
   }
 }
@@ -263,7 +263,7 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
       await storeWorkspaceHandle(directory);
       options.onMenuClose();
       return true;
-    } catch (error) {
+    } catch {
       return false;
     }
   }

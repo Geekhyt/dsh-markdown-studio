@@ -100,9 +100,9 @@ export function renderArticle(
   settings: themes.ThemeSettings,
   options: RenderArticleOptions,
 ): RenderedArticle {
-  var forPreview = !!options.forPreview;
-  var imageBaseUrl = String(options.imageBaseUrl || '').replace(/\/+$/, '');
-  var result = engine.renderMarkdown(markdown, {
+  const forPreview = !!options.forPreview;
+  const imageBaseUrl = String(options.imageBaseUrl || '').replace(/\/+$/, '');
+  const result = engine.renderMarkdown(markdown, {
     locale: options.locale,
     linkFootnotes: settings.linkFootnotes,
     footnotesTitle: options.footnotesTitle,
@@ -110,24 +110,24 @@ export function renderArticle(
     scrollVerticalHint: options.scrollVerticalHint,
     scrollHorizontalHint: options.scrollHorizontalHint,
   });
-  var css = themes.buildCss(settings);
-  var host = document.createElement('div');
+  const css = themes.buildCss(settings);
+  const host = document.createElement('div');
   host.innerHTML =
     '<section id="mdstudio" class="mdstudio-content" data-tool="dsh-markdown-studio">' + result.html + '</section>';
-  var root = host.firstElementChild as HTMLElement | null;
+  const root = host.firstElementChild as HTMLElement | null;
   if (!root) return { html: '', text: '', refs: 0, localImages: 0, bg: '#ffffff', paper: false, stageBg: '#ffffff' };
   applyThemeTldrTitles(root, settings.theme, options.locale);
-  var localImages = 0;
-  var mermaidAssets = options.mermaidAssets;
+  let localImages = 0;
+  const mermaidAssets = options.mermaidAssets;
   if (mermaidAssets && imageBaseUrl) {
     const assets = mermaidAssets;
     const mermaidTheme = themes.mermaidThemeFor(settings);
     Array.from(root.querySelectorAll<HTMLElement>('pre > code.mdstudio-lang-mermaid')).forEach(function (codeNode) {
-      var pre = codeNode.parentNode;
-      var source = String(codeNode.textContent || '').trim();
-      var entry = assets.get(themes.mermaidCacheKey(source, mermaidTheme));
+      const pre = codeNode.parentNode;
+      const source = String(codeNode.textContent || '').trim();
+      const entry = assets.get(themes.mermaidCacheKey(source, mermaidTheme));
       if (entry && entry.status === 'ready' && entry.filename) {
-        var image = document.createElement('img');
+        const image = document.createElement('img');
         image.setAttribute('src', imageBaseUrl + '/uploads/' + entry.filename);
         image.setAttribute('alt', 'Mermaid diagram');
         image.setAttribute('data-mdstudio-local', 'true');
@@ -135,7 +135,7 @@ export function renderArticle(
       }
     });
   }
-  var mathNodes = Array.from(root.querySelectorAll<HTMLElement>('.mdstudio-math'));
+  const mathNodes = Array.from(root.querySelectorAll<HTMLElement>('.mdstudio-math'));
   const math = typeof window !== 'undefined' ? window.__MDSTUDIO_MATH__ : undefined;
   if (mathNodes.length && math) {
     const mathLabelPrefix = options.locale === 'en' ? 'Formula: ' : '公式：';
@@ -147,34 +147,34 @@ export function renderArticle(
           mathLabelPrefix,
         );
         node.setAttribute('data-mdstudio-math', 'true');
-      } catch (error) {
+      } catch {
         node.textContent = node.getAttribute('data-mdstudio-tex') || '';
       }
     });
   }
 
   function localPlaceholder(img: HTMLImageElement, src: string): void {
-    var alt = (img.getAttribute('alt') || '').trim();
-    var name = alt;
+    const alt = (img.getAttribute('alt') || '').trim();
+    let name = alt;
     if (!name) {
-      var base =
+      const base =
         String(src || '')
           .split('/')
           .pop() || '';
       try {
         name = decodeURIComponent(base.split('?')[0]);
-      } catch (error) {
+      } catch {
         name = base.split('?')[0];
       }
     }
-    var placeholder = document.createElement('section');
+    const placeholder = document.createElement('section');
     placeholder.className = 'mdstudio-img-placeholder';
-    var placeholderPrefix =
+    const placeholderPrefix =
       options.imagePlaceholderPrefix || (options.locale === 'en' ? '🖼 Insert image here: ' : '🖼 此处插入图片：');
-    var placeholderFallback =
+    const placeholderFallback =
       options.imagePlaceholderFallback || (options.locale === 'en' ? 'Local image' : '本地图片');
     placeholder.textContent = placeholderPrefix + (name || placeholderFallback);
-    var parent = img.parentElement;
+    const parent = img.parentElement;
     if (parent && parent.tagName === 'P') {
       parent.classList.remove('mdstudio-figure');
       if (parent.nextElementSibling?.classList.contains('mdstudio-caption')) {
@@ -192,8 +192,8 @@ export function renderArticle(
   }
 
   Array.from(root.querySelectorAll<HTMLImageElement>('img')).forEach(function (img) {
-    var src = img.getAttribute('src') || '';
-    var resolved = resolveArticleImageSrc(src, imageBaseUrl);
+    const src = img.getAttribute('src') || '';
+    const resolved = resolveArticleImageSrc(src, imageBaseUrl);
     if (resolved) {
       localImages++;
       img.setAttribute('src', resolved);
@@ -226,7 +226,7 @@ export function renderArticle(
     removeEmptyZeroHeightContainers(root);
     stripFontFamilies(root);
   }
-  var codeBlockAria = options.codeBlockAriaLabel || (options.locale === 'en' ? 'Code block' : '代码块');
+  const codeBlockAria = options.codeBlockAriaLabel || (options.locale === 'en' ? 'Code block' : '代码块');
   const preNodes = Array.from(root.querySelectorAll<HTMLPreElement>('pre'));
   preNodes.forEach(function (pre) {
     if (!pre.style.getPropertyValue('overflow-x')) pre.style.setProperty('overflow-x', 'auto');
@@ -237,10 +237,10 @@ export function renderArticle(
   markPreviewScrollRegions(root, options);
   if (settings.codeNbsp && document.createTreeWalker) {
     Array.from(root.querySelectorAll<HTMLPreElement>('pre')).forEach(function (pre) {
-      var walker = document.createTreeWalker(pre, NodeFilter.SHOW_TEXT);
-      var nodes = [];
+      const walker = document.createTreeWalker(pre, NodeFilter.SHOW_TEXT);
+      const nodes = [];
       while (walker.nextNode()) {
-        var node = walker.currentNode;
+        const node = walker.currentNode;
         const value = node.nodeValue;
         if (value && value.indexOf(' ') !== -1) nodes.push(node);
       }

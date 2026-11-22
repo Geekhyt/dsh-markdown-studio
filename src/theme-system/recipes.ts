@@ -14,7 +14,7 @@ function sameHex(a: string, b: string): boolean {
   return a.toLowerCase() === b.toLowerCase();
 }
 
-export var RECIPES: Recipe[] = [
+export const RECIPES: Recipe[] = [
   {
     id: 'classic',
     accent: '#3d57e6',
@@ -35,7 +35,7 @@ export var RECIPES: Recipe[] = [
         literal: '#0550ae',
       },
       adjust: function (p) {
-        var isDef = sameHex(p.accent, '#3d57e6');
+        const isDef = sameHex(p.accent, '#3d57e6');
         p.point = isDef ? '#4d6bfe' : p.accent;
         p.muted = '#6b7280';
         p.soft = '#f5f6f8';
@@ -104,7 +104,7 @@ export var RECIPES: Recipe[] = [
         literal: '#854d0e',
       },
       adjust: function (p) {
-        var isDef = sameHex(p.accent, '#ae3a0b');
+        const isDef = sameHex(p.accent, '#ae3a0b');
         p.paperRadius = '2px';
         p.muted = '#66635d';
         p.soft = '#ffffff';
@@ -174,7 +174,7 @@ export var RECIPES: Recipe[] = [
         literal: '#79c0ff',
       },
       adjust: function (p) {
-        var isDef = sameHex(p.accent, '#6d28d9');
+        const isDef = sameHex(p.accent, '#6d28d9');
         p.muted = '#64748b';
         p.soft = '#f6f8fb';
         p.tldrBg = isDef ? '#f5f2ff' : mix(p.accent, '#ffffff', 0.92);
@@ -242,7 +242,7 @@ export var RECIPES: Recipe[] = [
         literal: '#9a3b14',
       },
       adjust: function (p) {
-        var isDef = sameHex(p.accent, '#27694c');
+        const isDef = sameHex(p.accent, '#27694c');
         p.paperRadius = '18px';
         p.point = isDef ? '#d9793d' : p.accent;
         p.muted = '#687066';
@@ -315,7 +315,7 @@ export var RECIPES: Recipe[] = [
         literal: '#f0a37a',
       },
       adjust: function (p) {
-        var isDef = sameHex(p.accent, '#e3b25c');
+        const isDef = sameHex(p.accent, '#e3b25c');
         p.paperRadius = '16px';
         p.muted = '#99958c';
         p.soft = '#1f2026';
@@ -383,7 +383,7 @@ export var RECIPES: Recipe[] = [
         literal: '#6b3fa0',
       },
       adjust: function (p) {
-        var isDef = sameHex(p.accent, '#146c78');
+        const isDef = sameHex(p.accent, '#146c78');
         p.paperRadius = '4px';
         p.muted = '#5d7073';
         p.soft = '#ebf2f1';
@@ -451,7 +451,7 @@ export var RECIPES: Recipe[] = [
         literal: '#1d4ed8',
       },
       adjust: function (p) {
-        var isDef = sameHex(p.accent, '#c01b1b');
+        const isDef = sameHex(p.accent, '#c01b1b');
         p.muted = '#676c74';
         p.soft = '#f5f5f6';
         p.tldrBg = isDef ? '#fdf1f0' : mix(p.accent, '#ffffff', 0.92);
@@ -521,7 +521,7 @@ export var RECIPES: Recipe[] = [
         literal: '#93c5fd',
       },
       adjust: function (p) {
-        var isDef = sameHex(p.accent, '#c2410c');
+        const isDef = sameHex(p.accent, '#c2410c');
         p.point = isDef ? '#ea580c' : p.accent;
         p.muted = '#66666e';
         p.soft = '#f4f4f5';

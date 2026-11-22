@@ -7,10 +7,10 @@
  */
 import { contrast, ensureContrast, isDark, mix, readableOn, rgba } from './color';
 
-export var SANS =
+export const SANS =
   '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif';
-export var SERIF = 'Georgia, "Songti SC", "Noto Serif SC", "Source Han Serif SC", "Times New Roman", serif';
-export var MONO = 'ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", "Courier New", monospace';
+export const SERIF = 'Georgia, "Songti SC", "Noto Serif SC", "Source Han Serif SC", "Times New Roman", serif';
+export const MONO = 'ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", "Courier New", monospace';
 
 export interface TokenColors {
   keyword: string;
@@ -103,7 +103,7 @@ export interface Tone {
   adjust?: (p: Palette) => void;
 }
 
-var LIGHT_TOKENS: TokenColors = {
+const LIGHT_TOKENS: TokenColors = {
   keyword: '#cf222e',
   string: '#0a3069',
   comment: '#6e7781',
@@ -114,7 +114,7 @@ var LIGHT_TOKENS: TokenColors = {
   literal: '#0550ae',
 };
 
-var DARK_TOKENS: TokenColors = {
+const DARK_TOKENS: TokenColors = {
   keyword: '#7dd3fc',
   string: '#a5f3b4',
   comment: '#8b95a7',
@@ -125,7 +125,7 @@ var DARK_TOKENS: TokenColors = {
   literal: '#fbbf24',
 };
 
-var DARK_CODE = { bg: '#16181d', text: '#e6e8ee', border: '#2a2e37' };
+const DARK_CODE = { bg: '#16181d', text: '#e6e8ee', border: '#2a2e37' };
 
 function pickToneWeights(dark: boolean) {
   return dark
@@ -158,25 +158,25 @@ function pickToneWeights(dark: boolean) {
 }
 
 export function derivePalette(tone: Tone, accent: string, fontSize: number, lineHeight: number): Palette {
-  var paper = tone.paper;
-  var ink = tone.ink;
-  var dark = isDark(paper);
-  var w = pickToneWeights(dark);
-  var radius = tone.radius || '8px';
-  var accent2 = tone.accent2 || accent;
-  var text = tone.text || mix(ink, paper, 0.16);
-  var font = tone.font === 'serif' ? SERIF : SANS;
-  var accentSoft = mix(accent, paper, w.accentSoft);
-  var soft = mix(accent, paper, w.soft);
-  var inlineBg = mix(accent, paper, w.inlineBg);
-  var markBg = mix(accent2, paper, w.mark);
+  const paper = tone.paper;
+  const ink = tone.ink;
+  const dark = isDark(paper);
+  const w = pickToneWeights(dark);
+  const radius = tone.radius || '8px';
+  const accent2 = tone.accent2 || accent;
+  const text = tone.text || mix(ink, paper, 0.16);
+  const font = tone.font === 'serif' ? SERIF : SANS;
+  const accentSoft = mix(accent, paper, w.accentSoft);
+  const soft = mix(accent, paper, w.soft);
+  const inlineBg = mix(accent, paper, w.inlineBg);
+  const markBg = mix(accent2, paper, w.mark);
   // Accent text must stay readable on the strongest tint it is placed on.
-  var accentText = ensureContrast(accent, accentSoft, 4.5);
-  var border = mix(mix(ink, paper, 0.88), accent, 0.06);
-  var borderStrong = mix(mix(ink, paper, 0.76), accent, 0.1);
-  var codeDark = tone.code === 'dark';
-  var fgContrastBase = dark ? '#111111' : ink;
-  var p: Palette = {
+  const accentText = ensureContrast(accent, accentSoft, 4.5);
+  const border = mix(mix(ink, paper, 0.88), accent, 0.06);
+  const borderStrong = mix(mix(ink, paper, 0.76), accent, 0.1);
+  const codeDark = tone.code === 'dark';
+  const fgContrastBase = dark ? '#111111' : ink;
+  const p: Palette = {
     accent: accent,
     accentDeep: accentText,
     accentSoft: accentSoft,
@@ -249,7 +249,7 @@ function isHex(value: string): boolean {
 
 /** True when every text/background pair the atoms rely on is readable. */
 export function paletteContrastIssues(p: Palette): string[] {
-  var pairs: Array<[string, string, string, number]> = [
+  const pairs: Array<[string, string, string, number]> = [
     ['text', p.text, p.bg, 4.5],
     ['heading', p.heading, p.bg, 4.5],
     ['accentDeep', p.accentDeep, p.bg, 4.5],
@@ -271,7 +271,7 @@ export function paletteContrastIssues(p: Palette): string[] {
     });
 }
 
-export var CSS_VARS: Record<string, string> = {
+export const CSS_VARS: Record<string, string> = {
   accent: '--mdstudio-accent',
   accentDeep: '--mdstudio-accent-deep',
   accentSoft: '--mdstudio-accent-soft',
@@ -354,7 +354,7 @@ function paletteValue(p: Palette, key: string): string {
 }
 
 export function cssVariables(p: Palette): string {
-  var lines = Object.keys(CSS_VARS).map(function (key) {
+  const lines = Object.keys(CSS_VARS).map(function (key) {
     return '  ' + CSS_VARS[key] + ': ' + paletteValue(p, key) + ';';
   });
   return ['.mdstudio-content {'].concat(lines, ['}']).join('\n');

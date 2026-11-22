@@ -1,5 +1,24 @@
 import { DARK_STAGE_DEFAULT, DARK_STAGE_PAPER } from '../theme-system/color';
 
+/**
+ * Single source of truth for strictly monotonic overlay stacking order.
+ * Verified by `test/architecture.test.ts` (no raw numeric `z-index` allowed in CHROME_CSS).
+ */
+export const Z_LAYERS = {
+  toolbarFade: 2,
+  drawerDocked: 20,
+  outline: 30,
+  slash: 31,
+  selectionBubble: 32,
+  drawerOverlay: 40,
+  immersiveDock: 55,
+  modalScrim: 70,
+  menuScrim: 74,
+  menu: 75,
+  toast: 85,
+  tooltip: 90,
+} as const;
+
 /* View-only CSS for the Markdown Studio panel — aligned with DeepSeek Harness (--dsw-* / --dsh-* / --ds-*). */
 export const CHROME_CSS: string = [
   ':root, body, .mdstudio-root {',
@@ -243,7 +262,7 @@ export const CHROME_CSS: string = [
   '.mdstudio-root[data-mdstudio-immersive="preview"] .mdstudio-body .mdstudio-preview-pane { display: flex; flex: 1 1 100%; width: 100%; }',
   '.mdstudio-root[data-mdstudio-immersive="preview"] .mdstudio-stage { padding-top: 52px; }',
 
-  '.mdstudio-immersive-dock { position: absolute; z-index: 55; top: max(12px, var(--dsh-frame-chrome-top, 12px)); right: 16px; display: flex; align-items: center; gap: 3px; padding: 4px; border: 0; border-radius: 18px; background: var(--mdstudio-ui-menu); backdrop-filter: var(--dsw-menu-backdrop-filter, var(--dsw-mask-blur, blur(20px))); -webkit-backdrop-filter: var(--dsw-menu-backdrop-filter, var(--dsw-mask-blur, blur(20px))); box-shadow: var(--mdstudio-ui-shadow-prominent); opacity: 0.92; transition: opacity var(--mdstudio-ui-dur) var(--mdstudio-ui-ease); }',
+  `.mdstudio-immersive-dock { position: absolute; z-index: ${Z_LAYERS.immersiveDock}; top: max(12px, var(--dsh-frame-chrome-top, 12px)); right: 16px; display: flex; align-items: center; gap: 3px; padding: 4px; border: 0; border-radius: 18px; background: var(--mdstudio-ui-menu); backdrop-filter: var(--dsw-menu-backdrop-filter, var(--dsw-mask-blur, blur(20px))); -webkit-backdrop-filter: var(--dsw-menu-backdrop-filter, var(--dsw-mask-blur, blur(20px))); box-shadow: var(--mdstudio-ui-shadow-prominent); opacity: 0.92; transition: opacity var(--mdstudio-ui-dur) var(--mdstudio-ui-ease); }`,
   '.mdstudio-immersive-dock:hover, .mdstudio-immersive-dock:focus-within { opacity: 1; }',
   '.mdstudio-root[data-mdstudio-immersive="write"] .mdstudio-searchbar { padding-left: max(10px, var(--dsh-frame-leading-clearance, 0px), var(--mdstudio-host-inset, 0px)); padding-right: calc(var(--mdstudio-immersive-dock-w, 220px) + 16px); }',
   '.mdstudio-immersive-modes { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border-radius: 16px; background: var(--mdstudio-ui-seg-track); }',
@@ -279,10 +298,10 @@ export const CHROME_CSS: string = [
   '.mdstudio-heading-caret { display: inline-flex; align-items: center; opacity: 0.72; }',
   '.mdstudio-menu-text-icon { font-family: var(--mdstudio-ui-font-code); font-size: 10px; font-weight: 600; line-height: 1; letter-spacing: -0.03em; }',
 
-  '.mdstudio-tooltip { position: fixed; z-index: 90; transform: translateX(-50%); padding: 5px 9px; border-radius: var(--mdstudio-ui-radius-sm); background: var(--mdstudio-ui-tooltip-bg); color: var(--mdstudio-ui-tooltip-fg); box-shadow: var(--mdstudio-ui-shadow-panel); font-size: 11.5px; font-weight: 500; line-height: 1.35; white-space: nowrap; pointer-events: none; }',
+  `.mdstudio-tooltip { position: fixed; z-index: ${Z_LAYERS.tooltip}; transform: translateX(-50%); padding: 5px 9px; border-radius: var(--mdstudio-ui-radius-sm); background: var(--mdstudio-ui-tooltip-bg); color: var(--mdstudio-ui-tooltip-fg); box-shadow: var(--mdstudio-ui-shadow-panel); font-size: 11.5px; font-weight: 500; line-height: 1.35; white-space: nowrap; pointer-events: none; }`,
   '.mdstudio-outline-anchor { display: inline-flex; flex: none; }',
 
-  '.mdstudio-slash { position: absolute; z-index: 31; top: 6px; left: 10px; width: min(320px, calc(100% - 20px)); max-height: 348px; overflow: auto; padding: 4px; border: 0; border-radius: var(--mdstudio-ui-radius-lg); background: var(--mdstudio-ui-menu); backdrop-filter: var(--dsw-menu-backdrop-filter, var(--dsw-mask-blur, blur(20px))); -webkit-backdrop-filter: var(--dsw-menu-backdrop-filter, var(--dsw-mask-blur, blur(20px))); box-shadow: var(--mdstudio-ui-shadow-prominent); }',
+  `.mdstudio-slash { position: absolute; z-index: ${Z_LAYERS.slash}; top: 6px; left: 10px; width: min(320px, calc(100% - 20px)); max-height: 348px; overflow: auto; padding: 4px; border: 0; border-radius: var(--mdstudio-ui-radius-lg); background: var(--mdstudio-ui-menu); backdrop-filter: var(--dsw-menu-backdrop-filter, var(--dsw-mask-blur, blur(20px))); -webkit-backdrop-filter: var(--dsw-menu-backdrop-filter, var(--dsw-mask-blur, blur(20px))); box-shadow: var(--mdstudio-ui-shadow-prominent); }`,
   '.mdstudio-slash-icon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; flex: none; border: 0.5px solid var(--mdstudio-ui-border-3); border-radius: 7px; background: var(--mdstudio-ui-bg-1); color: var(--mdstudio-ui-fg-2); font-family: var(--mdstudio-ui-font-code); font-size: 10px; font-weight: 600; }',
   '.mdstudio-slash-icon .mdstudio-icon { width: 15px; height: 15px; }',
   '.mdstudio-slash-copy { flex: 1; min-width: 0; }',
@@ -291,7 +310,7 @@ export const CHROME_CSS: string = [
   '.mdstudio-slash-empty { padding: 16px 10px; color: var(--mdstudio-ui-fg-2); font-size: 12px; text-align: center; }',
   '.mdstudio-slash-foot { margin-top: 4px; padding: 6px 10px 4px; border-top: 0.5px solid var(--mdstudio-ui-border-3); color: var(--mdstudio-ui-fg-3); font-size: 10.5px; }',
 
-  '.mdstudio-outline { position: absolute; z-index: 30; top: 6px; left: 10px; width: min(280px, calc(100% - 20px)); max-height: 348px; overflow: auto; padding: 4px; border: 0; border-radius: var(--mdstudio-ui-radius-lg); background: var(--mdstudio-ui-menu); backdrop-filter: var(--dsw-menu-backdrop-filter, var(--dsw-mask-blur, blur(20px))); -webkit-backdrop-filter: var(--dsw-menu-backdrop-filter, var(--dsw-mask-blur, blur(20px))); box-shadow: var(--mdstudio-ui-shadow-prominent); }',
+  `.mdstudio-outline { position: absolute; z-index: ${Z_LAYERS.outline}; top: 6px; left: 10px; width: min(280px, calc(100% - 20px)); max-height: 348px; overflow: auto; padding: 4px; border: 0; border-radius: var(--mdstudio-ui-radius-lg); background: var(--mdstudio-ui-menu); backdrop-filter: var(--dsw-menu-backdrop-filter, var(--dsw-mask-blur, blur(20px))); -webkit-backdrop-filter: var(--dsw-menu-backdrop-filter, var(--dsw-mask-blur, blur(20px))); box-shadow: var(--mdstudio-ui-shadow-prominent); }`,
   '.mdstudio-outline-empty { margin: 0; padding: 16px 10px; color: var(--mdstudio-ui-fg-3); font-size: 12px; text-align: center; }',
   '.mdstudio-outline-item { display: flex; align-items: center; gap: 6px; min-height: 32px; padding: 5px 8px; font-size: 12.5px; line-height: 1.4; }',
   '.mdstudio-outline-lvl { flex: none; font-family: var(--mdstudio-ui-font-code); font-size: 10px; font-weight: 600; color: var(--mdstudio-ui-fg-3); }',
@@ -351,7 +370,7 @@ export const CHROME_CSS: string = [
   '.mdstudio-preview-article img[data-mdstudio-local="true"] { outline: 2px dashed rgba(245, 158, 11, 0.7); outline-offset: 3px; }',
 
   /* Settings Inspector (Q1 Option A: Right-side 336px DSH Native Column) */
-  '.mdstudio-drawer { position: relative; z-index: 20; order: 3; flex: 0 0 336px; width: 336px; min-width: 0; display: flex; flex-direction: column; background: var(--mdstudio-ui-sidebar); border-left: 0.5px solid var(--mdstudio-ui-border-3); }',
+  `.mdstudio-drawer { position: relative; z-index: ${Z_LAYERS.drawerDocked}; order: 3; flex: 0 0 336px; width: 336px; min-width: 0; display: flex; flex-direction: column; background: var(--mdstudio-ui-sidebar); border-left: 0.5px solid var(--mdstudio-ui-border-3); }`,
   '.mdstudio-drawer-head { flex: none; display: flex; align-items: center; justify-content: space-between; height: 46px; padding: 0 10px 0 16px; border-bottom: 0.5px solid var(--mdstudio-ui-border-3); }',
   '.mdstudio-drawer-title { font-size: 13.5px; font-weight: 600; color: var(--mdstudio-ui-fg-1); }',
 
@@ -504,9 +523,9 @@ export const CHROME_CSS: string = [
   '.mdstudio-progress span { display: block; height: 100%; border-radius: 999px; background: var(--mdstudio-ui-brand); transition: width var(--mdstudio-ui-dur) var(--mdstudio-ui-ease); }',
 
   /* Menus & Dropdown Rows (1:1 parity with native DSH MenuSurface & MenuItem) */
-  '.mdstudio-menu-scrim { position: fixed; inset: 0; z-index: 74; background: transparent; border: 0; padding: 0; cursor: default; }',
+  `.mdstudio-menu-scrim { position: fixed; inset: 0; z-index: ${Z_LAYERS.menuScrim}; background: transparent; border: 0; padding: 0; cursor: default; }`,
   '.mdstudio-menu-wrap { position: relative; flex: none; display: inline-flex; }',
-  '.mdstudio-menu { position: fixed; z-index: 75; top: 48px; right: 12px; width: 244px; max-height: min(calc(100vh - 112px), 640px); overflow: auto; padding: 4px; border: 0; border-radius: var(--mdstudio-ui-radius-lg); background: var(--mdstudio-ui-menu); backdrop-filter: var(--dsw-menu-backdrop-filter, var(--dsw-mask-blur, blur(20px))); -webkit-backdrop-filter: var(--dsw-menu-backdrop-filter, var(--dsw-mask-blur, blur(20px))); box-shadow: var(--mdstudio-ui-shadow-prominent); }',
+  `.mdstudio-menu { position: fixed; z-index: ${Z_LAYERS.menu}; top: 48px; right: 12px; width: 244px; max-height: min(calc(100vh - 112px), 640px); overflow: auto; padding: 4px; border: 0; border-radius: var(--mdstudio-ui-radius-lg); background: var(--mdstudio-ui-menu); backdrop-filter: var(--dsw-menu-backdrop-filter, var(--dsw-mask-blur, blur(20px))); -webkit-backdrop-filter: var(--dsw-menu-backdrop-filter, var(--dsw-mask-blur, blur(20px))); box-shadow: var(--mdstudio-ui-shadow-prominent); }`,
   '.mdstudio-menu.is-align-start { left: 0; right: auto; }',
   '[data-menu-material].mdstudio-header-menu { max-height: min(760px, 100%); }',
   '[data-menu-material].mdstudio-format-menu { max-height: min(560px, 100%); }',
@@ -527,7 +546,7 @@ export const CHROME_CSS: string = [
   '.mdstudio-drop-item.is-danger:hover { background: var(--mdstudio-ui-danger-hover); color: var(--mdstudio-ui-error); }',
 
   /* Modals, Dialog Host, Library & Workspace (zero padding/bg override on native DSH Modal) */
-  '.mdstudio-modal-scrim { position: fixed; z-index: 70; inset: 0; display: flex; align-items: center; justify-content: center; padding: max(20px, var(--dsh-frame-overlay-top, 20px)) 20px 20px; background: var(--mdstudio-ui-mask); backdrop-filter: var(--dsw-mask-blur, blur(6px)); -webkit-backdrop-filter: var(--dsw-mask-blur, blur(6px)); }',
+  `.mdstudio-modal-scrim { position: fixed; z-index: ${Z_LAYERS.modalScrim}; inset: 0; display: flex; align-items: center; justify-content: center; padding: max(20px, var(--dsh-frame-overlay-top, 20px)) 20px 20px; background: var(--mdstudio-ui-mask); backdrop-filter: var(--dsw-mask-blur, blur(6px)); -webkit-backdrop-filter: var(--dsw-mask-blur, blur(6px)); }`,
   '.mdstudio-modal { color: var(--mdstudio-ui-fg-1); font-family: var(--mdstudio-ui-font-ui); }',
   '.mdstudio-fallback-modal { width: min(520px, calc(100vw - 32px)); max-height: min(640px, calc(100vh - 40px)); display: flex; flex-direction: column; padding: 20px 24px 24px; border: 0; border-radius: var(--mdstudio-ui-radius-panel); background: var(--mdstudio-ui-modal-bg); box-shadow: var(--mdstudio-ui-shadow-prominent); }',
   '.mdstudio-modal-content { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }',
@@ -618,7 +637,7 @@ export const CHROME_CSS: string = [
   '.mdstudio-workspace-row .mdstudio-library-main { flex: 1; min-width: 0; gap: 7px; }',
 
   /* Fallback Toast (DSH Toast Tokens) */
-  '.mdstudio-toast { position: fixed; z-index: 85; left: 50%; bottom: 20px; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 8px; max-width: min(520px, calc(100% - 32px)); padding: 8px 16px; border: 0; border-radius: 999px; background: var(--mdstudio-ui-toast-bg); color: var(--mdstudio-ui-toast-fg); box-shadow: var(--mdstudio-ui-shadow-prominent); font-size: 12.5px; font-weight: 500; line-height: 1.35; pointer-events: none; }',
+  `.mdstudio-toast { position: fixed; z-index: ${Z_LAYERS.toast}; left: 50%; bottom: 20px; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 8px; max-width: min(520px, calc(100% - 32px)); padding: 8px 16px; border: 0; border-radius: 999px; background: var(--mdstudio-ui-toast-bg); color: var(--mdstudio-ui-toast-fg); box-shadow: var(--mdstudio-ui-shadow-prominent); font-size: 12.5px; font-weight: 500; line-height: 1.35; pointer-events: none; }`,
   '.mdstudio-toast-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--mdstudio-ui-success); }',
   '.mdstudio-toast.is-error .mdstudio-toast-dot { background: var(--mdstudio-ui-error); }',
   '.mdstudio-toast-icon { display: inline-flex; align-items: center; flex: none; color: var(--mdstudio-ui-success); }',
@@ -630,7 +649,7 @@ export const CHROME_CSS: string = [
 
   /* Writing Skills Split Trigger, Inline Push-Down Cards & Skill Manager Modal */
   '.mdstudio-skill-split { display: inline-flex; align-items: center; min-width: 0; flex: 0 1 auto; height: 28px; border: 0; border-radius: var(--mdstudio-ui-radius-sm); background: transparent; }',
-  '.mdstudio-skill-split.is-floating { position: absolute; z-index: 32; flex: none; height: 32px; padding: 2px; border: 0.5px solid var(--mdstudio-ui-border-2); border-radius: 10px; background: var(--mdstudio-ui-card-bg); box-shadow: var(--mdstudio-ui-shadow-panel); }',
+  `.mdstudio-skill-split.is-floating { position: absolute; z-index: ${Z_LAYERS.selectionBubble}; flex: none; height: 32px; padding: 2px; border: 0.5px solid var(--mdstudio-ui-border-2); border-radius: 10px; background: var(--mdstudio-ui-card-bg); box-shadow: var(--mdstudio-ui-shadow-panel); }`,
   '.mdstudio-skill-split.is-busy { opacity: 0.6; }',
   '.mdstudio-skill-run-btn { gap: 3px; min-width: 26px; padding: 0 5px 0 6px; border-radius: 8px 4px 4px 8px; flex: 0 1 auto; overflow: hidden; white-space: nowrap; }',
   '.mdstudio-skill-run-btn .mdstudio-icon { width: 14px; height: 14px; flex: none; }',
@@ -745,7 +764,7 @@ export const CHROME_CSS: string = [
   /* Container-Driven Responsive Layout & Accessibility Queries */
   '@container mdstudio (min-width: 900px) { .mdstudio-stage:not(.is-desktop) { padding: 14px 16px 40px; } }',
   '@container mdstudio (max-width: 1080px) {',
-  '  .mdstudio-drawer { position: absolute; top: 0; right: 0; bottom: 0; z-index: 40; flex: none; width: min(356px, 100%); box-shadow: var(--mdstudio-ui-shadow-prominent); }',
+  `  .mdstudio-drawer { position: absolute; top: 0; right: 0; bottom: 0; z-index: ${Z_LAYERS.drawerOverlay}; flex: none; width: min(356px, 100%); box-shadow: var(--mdstudio-ui-shadow-prominent); }`,
   '}',
   '@container mdstudio (max-width: 960px) {',
   '  .mdstudio-brand-name { display: none; }',
@@ -778,9 +797,9 @@ export const CHROME_CSS: string = [
   '  .mdstudio-preview-tools { flex: 1 1 auto; gap: 4px; }',
   '  .mdstudio-sync-btn { width: 30px; flex: none; justify-content: center; gap: 0; padding: 0; }',
   '  .mdstudio-device-btn { padding: 0 6px; white-space: nowrap; }',
-  '  .mdstudio-drawer { position: absolute; inset: 0; z-index: 40; flex: none; width: 100%; max-width: none; border-left: 0; box-shadow: none; }',
+  `  .mdstudio-drawer { position: absolute; inset: 0; z-index: ${Z_LAYERS.drawerOverlay}; flex: none; width: 100%; max-width: none; border-left: 0; box-shadow: none; }`,
   '  .mdstudio-toolbar { padding-right: 26px; }',
-  '  .mdstudio-editor-pane:not(.mdstudio-css-workbench)::after { content: ""; position: absolute; top: 0; right: 0; z-index: 2; width: 28px; height: 39px; pointer-events: none; background: linear-gradient(to right, transparent, var(--mdstudio-ui-bg-base)); }',
+  `  .mdstudio-editor-pane:not(.mdstudio-css-workbench)::after { content: ""; position: absolute; top: 0; right: 0; z-index: ${Z_LAYERS.toolbarFade}; width: 28px; height: 39px; pointer-events: none; background: linear-gradient(to right, transparent, var(--mdstudio-ui-bg-base)); }`,
   '  .mdstudio-root[data-mdstudio-immersive="write"] .mdstudio-editor-pane::after { display: none; }',
   '  .mdstudio-device.is-desktop .mdstudio-device-screen { padding: 20px 16px 40px; }',
   '  .mdstudio-stage { padding: 12px 10px 40px; }',

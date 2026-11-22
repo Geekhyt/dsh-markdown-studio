@@ -14,7 +14,7 @@ export async function importFolderAssets(
   let assetsDir: FileSystemDirectoryHandle;
   try {
     assetsDir = await dirHandle.getDirectoryHandle('assets');
-  } catch (error) {
+  } catch {
     return { text, imported: 0 };
   }
   const mapping = new Map<string, string>();
@@ -37,7 +37,7 @@ export async function importFolderAssets(
           const assetPath = stored.assetPath || 'assets/' + stored.filename;
           if (assetPath !== 'assets/' + filename) mapping.set('assets/' + filename.toLowerCase(), assetPath);
           imported++;
-        } catch (error) {
+        } catch {
           /* skip missing or unsupported assets */
         }
       }),
@@ -77,7 +77,7 @@ export async function writeFolderAssets(
         await writable.write(bytes);
         await writable.close();
         written++;
-      } catch (error) {
+      } catch {
         /* keep going */
       }
     }),

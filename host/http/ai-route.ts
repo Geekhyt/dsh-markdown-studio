@@ -41,7 +41,7 @@ function isAllowedOrigin(origin: string, host: string, site: string): boolean {
       return ALLOWED_DESKTOP_PROTOCOLS.has(parsed.protocol);
     }
     return parsed.host.toLowerCase() === host.toLowerCase() && LOOPBACK_HOSTS.has(parsed.hostname.toLowerCase());
-  } catch (error) {
+  } catch {
     return false;
   }
 }
@@ -108,7 +108,7 @@ async function readJsonObject(req: IncomingMessage, limit: number): Promise<Reco
           return;
         }
         resolve(parsed as Record<string, unknown>);
-      } catch (error) {
+      } catch {
         reject(new AiHostError('BAD_JSON', '请求 JSON 无法解析'));
       }
     };

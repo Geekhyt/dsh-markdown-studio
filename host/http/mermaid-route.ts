@@ -44,7 +44,7 @@ export async function mermaidRoute(req: IncomingMessage, res: ServerResponse): P
       'x-content-type-options': 'nosniff',
     });
     res.end(headOnly ? undefined : source);
-  } catch (error) {
+  } catch {
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
     res.end(headOnly ? undefined : 'mermaid bundle not built');
   }

@@ -191,7 +191,7 @@ export class ImageHostService {
     try {
       const parsed: unknown = JSON.parse(raw);
       this.manifestCache = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Manifest) : {};
-    } catch (error) {
+    } catch {
       const backup = this.manifestPath() + '.corrupt.' + Date.now();
       await rename(this.manifestPath(), backup).catch(() => undefined);
       this.manifestCache = {};
@@ -239,7 +239,7 @@ export class ImageHostService {
         const info = await stat(file);
         // A size mismatch means an earlier write was interrupted; rewrite it.
         exists = info.isFile() && info.size === image.buffer.length;
-      } catch (error) {
+      } catch {
         exists = false;
       }
       if (!exists) {
@@ -301,7 +301,7 @@ export class ImageHostService {
         mime: name.endsWith('.png') ? 'image/png' : 'image/jpeg',
         filename: name,
       };
-    } catch (error) {
+    } catch {
       return null;
     }
   }
@@ -311,7 +311,7 @@ export class ImageHostService {
       let names: string[] = [];
       try {
         names = await readdir(this.assetsDir());
-      } catch (error) {
+      } catch {
         names = [];
       }
       const manifest = await this.loadManifest();
@@ -321,7 +321,7 @@ export class ImageHostService {
         let bytes = 0;
         try {
           bytes = (await stat(path.join(this.assetsDir(), filename))).size;
-        } catch (error) {
+        } catch {
           continue;
         }
         const entry = manifest[filename];

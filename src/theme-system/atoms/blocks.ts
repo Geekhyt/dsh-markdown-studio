@@ -6,11 +6,11 @@
 import { invertedInlineRules, rule } from '../core';
 import { v } from '../palette';
 
-var QUOTE_RESET = 'border: 0; ';
+const QUOTE_RESET = 'border: 0; ';
 
 /* --------------------------------------------------------------- quote -- */
 
-export var QUOTE = {
+export const QUOTE = {
   /** Soft tinted borderless card (classic). */
   softCard: function () {
     return [
@@ -131,7 +131,7 @@ export var QUOTE = {
 
 /* ----------------------------------------------------------------- pre -- */
 
-export var PRE = {
+export const PRE = {
   /** Soft rounded code surface (classic). */
   soft: function () {
     return [rule('pre', 'border: 0; border-radius: 12px;')];
@@ -177,7 +177,7 @@ export var PRE = {
 
 /* --------------------------------------------------------------- table -- */
 
-export var TABLE = {
+export const TABLE = {
   /** Soft accent-tinted header with clean horizontal hairlines (classic). */
   tintedHead: function () {
     return [rule('th', 'background-color: ' + v('tldrBg') + '; border-bottom: 1px solid ' + v('linkUnderline') + ';')];
@@ -239,9 +239,9 @@ export var TABLE = {
 
 /* ------------------------------------------------------------------ hr -- */
 
-var HR_RESET = 'border: 0; border-radius: 0; background-color: transparent; ';
+const HR_RESET = 'border: 0; border-radius: 0; background-color: transparent; ';
 
-export var HR = {
+export const HR = {
   /** Quiet full-width hairline (classic). */
   fullLine: function () {
     return [rule('hr', HR_RESET + 'width: 100%; height: 1px; background-color: ' + v('border') + ';')];
@@ -298,7 +298,7 @@ export var HR = {
 
 /* --------------------------------------------------------------- image -- */
 
-export var IMAGE = {
+export const IMAGE = {
   /** Clean 10px rounded image (classic / tech / night). */
   rounded: function () {
     return [rule('img', 'border-radius: 10px;')];

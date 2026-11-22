@@ -41,7 +41,9 @@ export function useCopyActions(options: CopyActionsOptions): CopyActionsApi {
   function copyViaHolder(applyContent: (holder: HTMLDivElement) => void): boolean {
     const holder = options.copyRef.current;
     if (!holder) return false;
-    const prevActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const rawActive = document.activeElement;
+    const prevActive =
+      rawActive && typeof (rawActive as HTMLElement).focus === 'function' ? (rawActive as HTMLElement) : null;
     applyContent(holder);
     try {
       holder.focus();
@@ -54,7 +56,7 @@ export function useCopyActions(options: CopyActionsOptions): CopyActionsApi {
       const ok = document.execCommand('copy');
       selection.removeAllRanges();
       return ok;
-    } catch (error) {
+    } catch {
       return false;
     } finally {
       holder.innerHTML = '';
@@ -122,7 +124,7 @@ export function useCopyActions(options: CopyActionsOptions): CopyActionsApi {
       let ok = false;
       try {
         ok = await copyRichText(article.html, article.text);
-      } catch (error) {
+      } catch {
         ok = false;
       }
       options.notify(ok ? t('toast.copied') : t('toast.copyFailed'), ok ? 'success' : 'error');
@@ -142,7 +144,7 @@ export function useCopyActions(options: CopyActionsOptions): CopyActionsApi {
         await navigator.clipboard.writeText(text);
         ok = true;
       }
-    } catch (error) {
+    } catch {
       ok = false;
     }
     if (!ok) {

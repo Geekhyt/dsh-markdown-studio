@@ -77,6 +77,49 @@ const mutations: Mutation[] = [
     replace: 'patch.lineHeight = sourceValue.lineHeight;',
     test: 'test/domain.test.ts',
   },
+  {
+    name: 'keep external CSS @import rules',
+    file: 'src/domain/custom-css.ts',
+    find: 'if (isAtImportSegment(segment)) {',
+    replace: 'if (false && isAtImportSegment(segment)) {',
+    test: 'test/custom-css.test.ts',
+  },
+  {
+    name: 'bypass external CSS URL fallback strip',
+    file: 'src/domain/custom-css.ts',
+    find: "out += hasExternalCssUrl(replaced) ? '' : replaced;",
+    replace: 'out += replaced;',
+    test: 'test/fuzz-and-perf.test.ts',
+  },
+  {
+    name: 'skip WeChat HTML style-tag detection',
+    file: 'src/domain/wechat-html-lint.ts',
+    find: "['html', /<style\\b/i, 'style-tag', '复制 HTML 仍包含 style 标签'],",
+    replace: "['html', /(?!)/, 'style-tag', '复制 HTML 仍包含 style 标签'],",
+    test: 'test/wechat-html.test.ts',
+  },
+  {
+    name: 'disable ZIP budget enforcement',
+    file: 'src/adapters/zip.ts',
+    find: "throw new Error('ZIP_LIMIT_EXCEEDED');",
+    replace: 'return;',
+    test: 'test/zip.test.ts',
+  },
+  {
+    name: 'allow orphaned search bar on immersive exit to preview',
+    file: 'src/domain/studio-overlay.machine.ts',
+    find: "case 'EXIT_IMMERSIVE':\n      if (!state.immersive || hasSurfaceModal(state)) return state;\n      return { ...dismissTransient(state, { keepSearch: state.view !== 'preview' }), immersive: null };",
+    replace:
+      "case 'EXIT_IMMERSIVE':\n      if (!state.immersive || hasSurfaceModal(state)) return state;\n      return { ...dismissTransient(state, { keepSearch: true }), immersive: null };",
+    test: 'test/formal-models.test.ts',
+  },
+  {
+    name: 'allow silent overwrite of conflicted disk file',
+    file: 'src/domain/file-session.machine.ts',
+    find: 'if (!op.overwrite && (state.conflict || externalChanged)) {',
+    replace: 'if (false && !op.overwrite && (state.conflict || externalChanged)) {',
+    test: 'test/formal-models.test.ts',
+  },
 ];
 
 let survived = 0;

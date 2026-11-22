@@ -64,7 +64,7 @@ async function readJsonBody(req: IncomingMessage, limit: number): Promise<Record
           return;
         }
         resolve(parsed as Record<string, unknown>);
-      } catch (error) {
+      } catch {
         reject(new ImageHostError('BAD_JSON', '请求 JSON 无法解析'));
       }
     }
@@ -133,7 +133,7 @@ function isAllowedOrigin(origin: string, host: string, site: string): boolean {
   let parsed: URL;
   try {
     parsed = new URL(origin);
-  } catch (error) {
+  } catch {
     return false;
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {

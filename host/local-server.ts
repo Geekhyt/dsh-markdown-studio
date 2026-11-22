@@ -97,7 +97,7 @@ export function createLocalImageServer(options: { service: LocalAssetReader }): 
       );
       if (headOnly) res.end();
       else res.end(asset.buffer);
-    } catch (error) {
+    } catch {
       if (!res.headersSent) sendText(res, 500, 'internal error', headOnly);
       else res.end();
     }
@@ -163,7 +163,7 @@ export function startLocalImageServer(options: {
             });
             result.server.closeIdleConnections?.();
             result.server.closeAllConnections?.();
-          } catch (error) {
+          } catch {
             resolve();
           }
         });

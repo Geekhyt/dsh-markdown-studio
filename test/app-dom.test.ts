@@ -134,7 +134,7 @@ type MockResponse = {
 function setGlobal(name: string, value: unknown): void {
   try {
     Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });
-  } catch (error) {
+  } catch {
     (globalThis as Record<string, unknown>)[name] = value;
   }
 }

@@ -2,6 +2,29 @@
 
 All notable changes to `dsh-markdown-studio` are documented in this file.
 
+## [0.1.12] - 2026-11-22
+
+### Fixed
+- **Orphaned Search Bar on Immersive Exit to Preview (Caught by Formal BFS Model Checking)**:
+  - Fixed `exitImmersive()` in `src/app.ts` to preserve Find & Replace only when returning to an editor-bearing view (`keepSearch: view !== 'preview'`), eliminating the 5-step counterexample (`preview → Enter Immersive → Immersive Write → ⌘/Ctrl+F → Exit Immersive`) that left an orphaned search bar active in pure preview mode.
+- **Cross-Realm Focus Safety**:
+  - Replaced remaining `document.activeElement instanceof HTMLElement` checks in `src/app.ts` and `src/application/use-copy-actions.ts` with feature duck-typing (`typeof el.focus === 'function'`).
+
+### Engineering & Verification Hardening
+- **Pure Deterministic State Machines (`*.machine.ts`) & Exhaustive Bounded BFS Model Checking**:
+  - Extracted shared single-source-of-truth policy predicates and formal transition models into `src/domain/studio-overlay.machine.ts` and `src/domain/file-session.machine.ts` wired directly into `src/app.ts` and `src/application/use-file-context.ts`.
+  - Added `test/formal-models.test.ts` (`npm run verify:models`) covering 1,256 reachable `StudioOverlayMachine` states (37,680 transitions + `<= 8`-step `Escape` liveness convergence), 25,000 reachable `FileSessionMachine` states (475,000 transitions), deterministic multi-tab `DocumentStore` / `useDocumentHistory` replay, and an exhaustive 128-state `AssetGC` safety truth table with non-vacuity self-tests.
+  - Added optional deterministic `now` / `nextId` clock & ID injection to `DocumentStore`, `useDocumentHistory`, and `createAssetGarbageCollector`, and replaced `Date.now()` Mermaid render IDs with a monotonic sequence counter in `useMermaidAssets`.
+- **Permanent Automated Gates ("Bug → Rule") & Tightened Biome Rules**:
+  - Enabled 7 strict Biome `error` rules (`noVar`, `noUnusedVariables`, `noExplicitAny`, `noImplicitAnyLet`, `noShadowRestrictedNames`, `useConst`, `useNodejsImportProtocol`) across the codebase (cleaning 462 legacy `var` declarations and 60 unused `catch` bindings).
+  - Centralized overlay stacking order into a monotonic `Z_LAYERS` table (`src/ui/styles.ts`) and expanded `test/architecture.test.ts` with AST/contract gates enforcing pure `*.machine.ts` determinism, zero `instanceof Element/HTMLElement`, zero raw numeric `z-index`, mandatory `data-plugin="dsh-markdown-studio"` tagging on dynamic `<style>`/`<script>` tags, and container `.clientWidth` discipline over `window.innerWidth` breakpoints.
+  - Added dedicated AI engineering workflow skills in `.agents/skills/verify-state-machines/SKILL.md` and `.agents/skills/bug-to-rule/SKILL.md`.
+- **Fuzzing, Hot-Path Perf Budgets, Raw + Gzip Bundle Ceilings & Browser Resilience**:
+  - Added `test/fuzz-and-perf.test.ts` (`npm run test:fuzz`) with 300 seeded Markdown fuzz cases, 200 CSS attack vectors, 7 pathological ReDoS probes, dangerous URL rejection checks, and a ~15k-char large-document hot-path benchmark.
+  - Tightened cold-boot `dist/client.js` budget from `50 KiB` raw down to `12 KiB` raw / `5 KiB` gzip and enforced hard gzip ceilings across all 5 bundles (`scripts/bundle-budget.ts`).
+  - Expanded deterministic mutation testing (`scripts/mutation-smoke.ts`) from 9 to 15 killed mutants covering CSS sanitization, WeChat HTML lint, ZIP budgets, and both state machines.
+  - Added a narrow-container layout matrix (`360px` / `640px` / `720px` / `760px`) and a 36-step seeded interactive Monkey Bot with `Escape` convergence verification to `test/browser-smoke.ts`.
+
 ## [0.1.11] - 2026-11-22
 
 ### Fixed

@@ -98,10 +98,10 @@ function stripCssComments(css: string): string {
 }
 
 function findCssBlockEnd(css: string, openIndex: number): number {
-  var depth = 1;
-  var quote = null;
-  for (var i = openIndex + 1; i < css.length; i++) {
-    var ch = css[i];
+  let depth = 1;
+  let quote = null;
+  for (let i = openIndex + 1; i < css.length; i++) {
+    const ch = css[i];
     if (quote) {
       if (ch === '\\') {
         i++;
@@ -124,16 +124,16 @@ function findCssBlockEnd(css: string, openIndex: number): number {
 }
 
 export function parseDeclarations(body: string): Declaration[] {
-  var decls: Declaration[] = [];
+  const decls: Declaration[] = [];
   splitCssTopLevel(body, ';').forEach(function (part) {
     if (!part.trim()) return;
-    var split = /^\s*([^:]+?)\s*:\s*([\s\S]*)$/.exec(part);
+    const split = /^\s*([^:]+?)\s*:\s*([\s\S]*)$/.exec(part);
     if (!split) return;
-    var rawProp = split[1].trim();
-    var prop = rawProp.indexOf('--') === 0 ? rawProp : rawProp.toLowerCase();
-    var value = split[2].trim();
+    const rawProp = split[1].trim();
+    const prop = rawProp.indexOf('--') === 0 ? rawProp : rawProp.toLowerCase();
+    let value = split[2].trim();
     if (!prop || !value) return;
-    var important = false;
+    let important = false;
     if (/!\s*important\s*$/i.test(value)) {
       important = true;
       value = value.replace(/!\s*important\s*$/i, '').trim();
@@ -188,16 +188,16 @@ function findStatementAtRuleEnd(css: string, start: number): number {
 }
 
 export function parseRules(css: string): ParsedRule[] {
-  var clean = stripStatementAtRules(stripCssComments(css));
-  var rules: ParsedRule[] = [];
-  var i = 0;
-  var order = 0;
+  const clean = stripStatementAtRules(stripCssComments(css));
+  const rules: ParsedRule[] = [];
+  let i = 0;
+  let order = 0;
   while (i < clean.length) {
-    var open = clean.indexOf('{', i);
+    const open = clean.indexOf('{', i);
     if (open === -1) break;
-    var prelude = clean.slice(i, open).trim();
-    var close = findCssBlockEnd(clean, open);
-    var body = clean.slice(open + 1, close);
+    const prelude = clean.slice(i, open).trim();
+    const close = findCssBlockEnd(clean, open);
+    const body = clean.slice(open + 1, close);
     if (prelude && prelude.charAt(0) !== '@') {
       rules.push({
         selectors: splitCssTopLevel(prelude, ',')
@@ -215,7 +215,7 @@ export function parseRules(css: string): ParsedRule[] {
 }
 
 export function normalizeSelector(selector: string): string {
-  var value = String(selector || '').trim();
+  let value = String(selector || '').trim();
   if (!value) return '';
   value = value.replace(/(^|[\s>+~,])(?::root|html|body)(?=$|[\s>+~,.#[:])/gi, '$1#mdstudio');
   value = value.replace(/#mdstudio(\s+)#mdstudio/gi, '#mdstudio');
@@ -231,11 +231,10 @@ export function normalizeSelector(selector: string): string {
 }
 
 function splitPseudoElement(selector: string): { base: string; pseudo: string } | null {
-  var match = /^(.*?)::?(before|after)\s*$/i.exec(selector);
+  const match = /^(.*?)::?(before|after)\s*$/i.exec(selector);
   if (match) return { base: match[1].trim(), pseudo: match[2].toLowerCase() };
-  var unsupported = /::?(selection|placeholder|marker|first-line|first-letter|backdrop|file-selector-button)\s*$/i.exec(
-    selector,
-  );
+  const unsupported =
+    /::?(selection|placeholder|marker|first-line|first-letter|backdrop|file-selector-button)\s*$/i.exec(selector);
   if (unsupported) return { base: selector, pseudo: 'skip' };
   return null;
 }
@@ -275,7 +274,7 @@ function extractBalancedPseudo(selector: string, pattern: RegExp, onInner: (inne
 
 export function selectorSpecificity(selector: string): number {
   let bonus = 0;
-  var source = extractBalancedPseudo(selector, /:where\(/gi, function () {});
+  let source = extractBalancedPseudo(selector, /:where\(/gi, function () {});
   source = extractBalancedPseudo(source, /:(?:is|not|has)\(/gi, function (inner) {
     bonus += maxBranchSpecificity(inner);
   });
@@ -284,12 +283,12 @@ export function selectorSpecificity(selector: string): number {
     const ofMatch = /\bof\s+([\s\S]+)$/i.exec(inner);
     if (ofMatch) bonus += maxBranchSpecificity(ofMatch[1]);
   });
-  var pseudoElements = (source.match(/::[\w-]+/g) || []).length;
+  const pseudoElements = (source.match(/::[\w-]+/g) || []).length;
   source = source.replace(/::[\w-]+/g, ' ').replace(/\[[^\]]*\]/g, ' .attr ');
-  var ids = (source.match(/#[\w-]+/g) || []).length;
-  var classes = (source.match(/\.[\w-]+|:[\w-]+(?:\([^)]*\))?/g) || []).length;
+  const ids = (source.match(/#[\w-]+/g) || []).length;
+  const classes = (source.match(/\.[\w-]+|:[\w-]+(?:\([^)]*\))?/g) || []).length;
   source = source.replace(/:[\w-]+\([^)]*\)/g, ' ');
-  var types = (source.match(/(^|[\s>+~])([a-zA-Z][\w-]*)/g) || []).length;
+  const types = (source.match(/(^|[\s>+~])([a-zA-Z][\w-]*)/g) || []).length;
   return bonus + ids * 100 + classes * 10 + types + pseudoElements;
 }
 
@@ -300,10 +299,10 @@ function isStateSelector(selector: string): boolean {
 }
 
 function findTopLevelComma(value: string): number {
-  var depth = 0;
-  var quote = null;
-  for (var i = 0; i < value.length; i++) {
-    var ch = value[i];
+  let depth = 0;
+  let quote = null;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
     if (quote) {
       if (ch === '\\') {
         i++;
@@ -324,10 +323,10 @@ function findTopLevelComma(value: string): number {
 }
 
 function findMatchingParen(input: string, from: number): number {
-  var depthParen = 1;
-  var quote: string | null = null;
-  for (var j = from; j < input.length; j++) {
-    var ch = input[j];
+  let depthParen = 1;
+  let quote: string | null = null;
+  for (let j = from; j < input.length; j++) {
+    const ch = input[j];
     if (quote) {
       if (ch === '\\') {
         j++;
@@ -402,13 +401,13 @@ function resolveVarsInternal(
 }
 
 export function resolveVars(value: unknown, vars: Record<string, string>, depth?: number): string {
-  var input = String(value == null ? '' : value);
+  const input = String(value == null ? '' : value);
   return resolveVarsInternal(input, vars, depth || 0, new Set<string>(), { steps: 0 });
 }
 
 function decodeContentValue(value: string): string {
   if (!value) return '';
-  var match = /^(['"])([\s\S]*)\1$/.exec(String(value).trim());
+  const match = /^(['"])([\s\S]*)\1$/.exec(String(value).trim());
   if (!match) return '';
   return match[2].replace(/\\([0-9a-f]{1,6})[ \t\r\n\f]?|\\([\s\S])/gi, function (_, hex?: string, escaped?: string) {
     if (hex) {
@@ -424,15 +423,15 @@ function decodeContentValue(value: string): string {
 }
 
 function parseCounterList(raw: string, fallback: number): Array<[string, number]> {
-  var tokens = String(raw || '')
+  const tokens = String(raw || '')
     .trim()
     .split(/\s+/)
     .filter(Boolean);
   if (!tokens.length || tokens[0].toLowerCase() === 'none') return [];
-  var pairs: Array<[string, number]> = [];
-  for (var i = 0; i < tokens.length; i++) {
-    var name = tokens[i];
-    var next = i + 1 < tokens.length ? Number(tokens[i + 1]) : NaN;
+  const pairs: Array<[string, number]> = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const name = tokens[i];
+    const next = i + 1 < tokens.length ? Number(tokens[i + 1]) : NaN;
     if (!Number.isNaN(next) && /^-?\d+$/.test(tokens[i + 1])) {
       pairs.push([name, next]);
       i++;
@@ -451,11 +450,11 @@ function formatCounter(num: number, style: string): string {
 }
 
 function evaluatePseudoContent(raw: string, counters: Record<string, number> | undefined): string {
-  var input = String(raw || '').trim();
+  const input = String(raw || '').trim();
   if (!input || input === 'none' || input === 'normal') return '';
-  var tokenRe = /(['"])((?:\\.|(?!\1)[\s\S])*)\1|counter\(\s*([\w-]+)\s*(?:,\s*([\w-]+)\s*)?\)/gi;
-  var out = '';
-  var match: RegExpExecArray | null;
+  const tokenRe = /(['"])((?:\\.|(?!\1)[\s\S])*)\1|counter\(\s*([\w-]+)\s*(?:,\s*([\w-]+)\s*)?\)/gi;
+  let out = '';
+  let match: RegExpExecArray | null;
   while ((match = tokenRe.exec(input)) !== null) {
     if (match[1]) out += decodeContentValue(match[0]);
     else out += formatCounter((counters && counters[match[3]]) || 0, (match[4] || 'decimal').toLowerCase());
@@ -469,17 +468,17 @@ function snapshotCounters(
   pseudoTargets: Map<HTMLElement, unknown>,
   varsFor: (element: HTMLElement) => Record<string, string>,
 ): Map<HTMLElement, Record<string, number>> {
-  var snapshots = new Map<HTMLElement, Record<string, number>>();
+  const snapshots = new Map<HTMLElement, Record<string, number>>();
   if (!pseudoTargets.size) return snapshots;
-  var state: Record<string, number> = {};
-  var nodes: HTMLElement[] = [root];
-  var descendants = root.querySelectorAll('*');
-  for (var i = 0; i < descendants.length; i++) nodes.push(descendants[i] as HTMLElement);
+  const state: Record<string, number> = {};
+  const nodes: HTMLElement[] = [root];
+  const descendants = root.querySelectorAll('*');
+  for (let i = 0; i < descendants.length; i++) nodes.push(descendants[i] as HTMLElement);
   nodes.forEach(function (el) {
-    var props = styleMap.get(el);
-    var reset = props && props.get('counter-reset');
-    var inc = props && props.get('counter-increment');
-    var vars = reset || inc ? varsFor(el) : null;
+    const props = styleMap.get(el);
+    const reset = props && props.get('counter-reset');
+    const inc = props && props.get('counter-increment');
+    const vars = reset || inc ? varsFor(el) : null;
     if (reset && vars) {
       parseCounterList(resolveVars(reset.value, vars), 0).forEach(function (pair) {
         state[pair[0]] = pair[1];
@@ -504,25 +503,25 @@ function beats(candidate: StyleCandidate, candidateItem: CssEntry, previous: Sty
 function matchesElement(element: HTMLElement, selector: string): boolean {
   try {
     return element.matches(selector);
-  } catch (error) {
+  } catch {
     return false;
   }
 }
 
 function queryAll(root: HTMLElement, selector: string): HTMLElement[] {
-  var found: HTMLElement[] = [];
+  const found: HTMLElement[] = [];
   if (matchesElement(root, selector)) found.push(root);
-  var list: NodeListOf<Element>;
+  let list: NodeListOf<Element>;
   try {
     list = root.querySelectorAll(selector);
-  } catch (error) {
+  } catch {
     return found;
   }
-  for (var i = 0; i < list.length; i++) found.push(list[i] as HTMLElement);
+  for (let i = 0; i < list.length; i++) found.push(list[i] as HTMLElement);
   return found;
 }
 
-var VOID_TAGS = /^(img|input|br|hr|source|track|wbr|video|audio|iframe|embed|area|base|col|link|meta|param)$/i;
+const VOID_TAGS = /^(img|input|br|hr|source|track|wbr|video|audio|iframe|embed|area|base|col|link|meta|param)$/i;
 
 function buildElementVars(
   element: HTMLElement,
@@ -557,13 +556,13 @@ function buildElementVars(
 export function inlineCss<T extends HTMLElement>(root: T, css: string, options?: InlineCssOptions): T {
   if (!root || !css) return root;
   const allowExternal = Boolean(options?.allowExternalCssResources);
-  var rawRules = parseRules(css);
-  var entries: CssEntry[] = [];
+  const rawRules = parseRules(css);
+  const entries: CssEntry[] = [];
   rawRules.forEach(function (rule) {
     rule.selectors.forEach(function (selector) {
-      var normalized = normalizeSelector(selector);
+      const normalized = normalizeSelector(selector);
       if (!normalized) return;
-      var pseudo = splitPseudoElement(normalized);
+      const pseudo = splitPseudoElement(normalized);
       entries.push({
         selector: pseudo ? pseudo.base : normalized,
         pseudo: pseudo ? pseudo.pseudo : null,
@@ -574,20 +573,20 @@ export function inlineCss<T extends HTMLElement>(root: T, css: string, options?:
     });
   });
 
-  var styleMap = new Map<HTMLElement, Map<string, StyleValue>>();
-  var varMap = new Map<HTMLElement, Map<string, StyleValue>>();
+  const styleMap = new Map<HTMLElement, Map<string, StyleValue>>();
+  const varMap = new Map<HTMLElement, Map<string, StyleValue>>();
   entries.forEach(function (entry) {
     if (entry.pseudo) return;
     if (isStateSelector(entry.selector)) return;
-    var elements = queryAll(root, entry.selector);
+    const elements = queryAll(root, entry.selector);
     elements.forEach(function (element) {
       entry.decls.forEach(function (decl, index) {
         const targetMap = decl.prop.indexOf('--') === 0 ? varMap : styleMap;
-        var existingProps = targetMap.get(element);
-        var props: Map<string, StyleValue> = existingProps || new Map<string, StyleValue>();
+        const existingProps = targetMap.get(element);
+        const props: Map<string, StyleValue> = existingProps || new Map<string, StyleValue>();
         if (!existingProps) targetMap.set(element, props);
-        var previous = props.get(decl.prop);
-        var candidate: StyleCandidate = { value: decl.value, important: decl.important };
+        const previous = props.get(decl.prop);
+        const candidate: StyleCandidate = { value: decl.value, important: decl.important };
         if (!previous || beats(candidate, entry, previous)) {
           props.set(decl.prop, {
             value: decl.value,
@@ -601,8 +600,8 @@ export function inlineCss<T extends HTMLElement>(root: T, css: string, options?:
     });
   });
 
-  var varCache = new Map<HTMLElement, Record<string, string>>();
-  var originalStyles = new Map<HTMLElement, CSSStyleDeclaration>();
+  const varCache = new Map<HTMLElement, Record<string, string>>();
+  const originalStyles = new Map<HTMLElement, CSSStyleDeclaration>();
   styleMap.forEach(function (_props, element) {
     originalStyles.set(element, (element.cloneNode(false) as HTMLElement).style);
   });
@@ -614,42 +613,42 @@ export function inlineCss<T extends HTMLElement>(root: T, css: string, options?:
     Array.from(props.entries())
       .sort(cascadeOrder)
       .forEach(function (pair) {
-        var prop = pair[0];
-        var decl = pair[1];
+        const prop = pair[0];
+        const decl = pair[1];
         if (/^counter-(?:reset|increment)$/i.test(prop)) return;
-        var existing = original ? original.getPropertyValue(prop) : '';
+        const existing = original ? original.getPropertyValue(prop) : '';
         if (existing) {
-          var existingImportant = original.getPropertyPriority(prop) === 'important';
+          const existingImportant = original.getPropertyPriority(prop) === 'important';
           if (!(decl.important && !existingImportant)) return;
         }
         const resolved = resolveVars(decl.value, elementVars);
         if (!allowExternal && hasExternalCssUrl(resolved)) return;
         try {
           element.style.setProperty(prop, resolved, decl.important ? 'important' : '');
-        } catch (error) {
+        } catch {
           /* invalid value: leave it to the browser */
         }
       });
   });
 
-  var pseudoMap = new Map<HTMLElement, Record<string, Map<string, StyleValue>>>();
+  const pseudoMap = new Map<HTMLElement, Record<string, Map<string, StyleValue>>>();
   entries.forEach(function (entry) {
     const pseudoName = entry.pseudo;
     if (!pseudoName || pseudoName === 'skip') return;
     if (isStateSelector(entry.selector)) return;
-    var elements = queryAll(root, entry.selector);
+    const elements = queryAll(root, entry.selector);
     elements.forEach(function (element) {
       if (VOID_TAGS.test(element.tagName || '')) return;
-      var record = pseudoMap.get(element);
+      let record = pseudoMap.get(element);
       if (!record) {
         record = {};
         pseudoMap.set(element, record);
       }
-      var props: Map<string, StyleValue> = record[pseudoName] || new Map<string, StyleValue>();
+      const props: Map<string, StyleValue> = record[pseudoName] || new Map<string, StyleValue>();
       record[pseudoName] = props;
       entry.decls.forEach(function (decl, index) {
-        var previous = props.get(decl.prop);
-        var candidate: StyleCandidate = { value: decl.value, important: decl.important };
+        const previous = props.get(decl.prop);
+        const candidate: StyleCandidate = { value: decl.value, important: decl.important };
         if (!previous || beats(candidate, entry, previous)) {
           props.set(decl.prop, {
             value: decl.value,
@@ -663,32 +662,32 @@ export function inlineCss<T extends HTMLElement>(root: T, css: string, options?:
     });
   });
 
-  var counters = snapshotCounters(root, styleMap, pseudoMap, function (el) {
+  const counters = snapshotCounters(root, styleMap, pseudoMap, function (el) {
     return buildElementVars(el, root, varMap, varCache);
   });
   pseudoMap.forEach(function (record, element) {
-    var elementCounters = counters.get(element);
-    var elementVars = buildElementVars(element, root, varMap, varCache);
+    const elementCounters = counters.get(element);
+    const elementVars = buildElementVars(element, root, varMap, varCache);
     Object.keys(record).forEach(function (pseudo) {
-      var props = record[pseudo];
-      var contentDecl = props.get('content');
+      const props = record[pseudo];
+      const contentDecl = props.get('content');
       if (!contentDecl) return;
-      var rawContent = resolveVars(contentDecl.value, elementVars).trim();
+      const rawContent = resolveVars(contentDecl.value, elementVars).trim();
       if (!rawContent || rawContent === 'none' || rawContent === 'normal') return;
-      var span = element.ownerDocument.createElement('span');
+      const span = element.ownerDocument.createElement('span');
       span.setAttribute('data-mdstudio-pseudo', pseudo);
-      var content = evaluatePseudoContent(rawContent, elementCounters);
+      const content = evaluatePseudoContent(rawContent, elementCounters);
       Array.from(props.entries())
         .sort(cascadeOrder)
         .forEach(function (pair) {
-          var prop = pair[0];
-          var decl = pair[1];
+          const prop = pair[0];
+          const decl = pair[1];
           if (prop === 'content' || prop.indexOf('--') === 0) return;
           const resolved = resolveVars(decl.value, elementVars);
           if (!allowExternal && hasExternalCssUrl(resolved)) return;
           try {
             span.style.setProperty(prop, resolved, decl.important ? 'important' : '');
-          } catch (error) {
+          } catch {
             /* ignore */
           }
         });

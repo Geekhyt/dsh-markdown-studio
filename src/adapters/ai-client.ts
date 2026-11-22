@@ -146,7 +146,7 @@ function consumeNdjsonLine(line: string, acc: StreamAccumulator, onDelta?: (delt
   let parsed: Record<string, unknown> | null = null;
   try {
     parsed = recordOf(JSON.parse(trimmed));
-  } catch (error) {
+  } catch {
     return;
   }
   if (!parsed) return;
@@ -238,7 +238,7 @@ export class AiClient {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ action: 'ai.status' }),
       });
-    } catch (error) {
+    } catch {
       return { available: false, provider: '', model: '', models: [] };
     }
     const contentType = response.headers.get('content-type') || '';
@@ -278,7 +278,7 @@ export class AiClient {
         }),
         signal: request.signal,
       });
-    } catch (error) {
+    } catch {
       if (request.signal?.aborted) throw new AiClientError('ABORTED', '已取消');
       throw new AiClientError('HOST_UNAVAILABLE', '无法连接宿主 AI 服务');
     }

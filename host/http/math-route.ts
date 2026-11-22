@@ -44,7 +44,7 @@ export async function mathRoute(req: IncomingMessage, res: ServerResponse): Prom
       'x-content-type-options': 'nosniff',
     });
     res.end(headOnly ? undefined : source);
-  } catch (error) {
+  } catch {
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
     res.end(headOnly ? undefined : 'math bundle not built');
   }

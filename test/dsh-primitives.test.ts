@@ -27,7 +27,7 @@ const win = dom.window;
 function setGlobal(name: string, value: unknown): void {
   try {
     Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });
-  } catch (_error) {
+  } catch {
     (globalThis as Record<string, unknown>)[name] = value;
   }
 }

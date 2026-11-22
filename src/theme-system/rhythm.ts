@@ -14,7 +14,7 @@ interface Rhythm {
   margins: [string, string, string, string, string];
 }
 
-export var RHYTHMS: Record<RhythmName, Rhythm> = {
+export const RHYTHMS: Record<RhythmName, Rhythm> = {
   compact: {
     lineHeight: 1.68,
     scale: ['1.48em', '1.2em', '1.06em'],
@@ -48,7 +48,7 @@ export function applyRhythmTokens(p: Palette, name: RhythmName): void {
 }
 
 export function rhythmRules(name: RhythmName): string[] {
-  var r = RHYTHMS[name];
+  const r = RHYTHMS[name];
   return [
     rule(
       'h1',

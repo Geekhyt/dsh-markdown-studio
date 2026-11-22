@@ -13,7 +13,7 @@ import { applyRhythmTokens, type RhythmName, resolveRhythmLineHeight, rhythmRule
 
 type AtomFn = (p: Palette) => string[];
 
-export var ATOM_LIBRARY = {
+export const ATOM_LIBRARY = {
   meta: META,
   h1: H1,
   lead: LEAD,
@@ -42,7 +42,7 @@ export type Slot = keyof typeof ATOM_LIBRARY;
 export type RecipeAtoms = { [K in Slot]: keyof (typeof ATOM_LIBRARY)[K] };
 
 /** Composition order is fixed so recipes never depend on declaration order. */
-export var SLOT_ORDER: Slot[] = [
+export const SLOT_ORDER: Slot[] = [
   'meta',
   'h1',
   'lead',
@@ -67,7 +67,7 @@ export var SLOT_ORDER: Slot[] = [
 ];
 
 /** Structural slots: the ones readers perceive as the theme's "shape". */
-export var STRUCTURAL_SLOTS: Slot[] = ['h1', 'h2', 'h3', 'quote', 'table', 'hr'];
+export const STRUCTURAL_SLOTS: Slot[] = ['h1', 'h2', 'h3', 'quote', 'table', 'hr'];
 
 export interface Recipe {
   id: string;
@@ -88,7 +88,7 @@ export interface ComposeSettings {
 }
 
 export function atomFor(slot: Slot, name: string): AtomFn {
-  var library = ATOM_LIBRARY[slot] as unknown as Record<string, AtomFn>;
+  const library = ATOM_LIBRARY[slot] as unknown as Record<string, AtomFn>;
   return library[name];
 }
 
@@ -136,8 +136,8 @@ function clampPaletteContrast(p: Palette): void {
 }
 
 export function recipePalette(recipe: Recipe, settings: ComposeSettings): Palette {
-  var resolvedLh = resolveRhythmLineHeight(recipe.rhythm, settings.lineHeight);
-  var p = derivePalette(recipe.tone, settings.accent || recipe.accent, settings.fontSize, resolvedLh);
+  const resolvedLh = resolveRhythmLineHeight(recipe.rhythm, settings.lineHeight);
+  const p = derivePalette(recipe.tone, settings.accent || recipe.accent, settings.fontSize, resolvedLh);
   applyRhythmTokens(p, recipe.rhythm);
   if (recipe.tone.adjust) recipe.tone.adjust(p);
   clampPaletteContrast(p);
@@ -145,8 +145,8 @@ export function recipePalette(recipe: Recipe, settings: ComposeSettings): Palett
 }
 
 export function composeRecipe(recipe: Recipe, settings: ComposeSettings): string {
-  var p = recipePalette(recipe, settings);
-  var lines: string[] = rhythmRules(recipe.rhythm);
+  const p = recipePalette(recipe, settings);
+  let lines: string[] = rhythmRules(recipe.rhythm);
   SLOT_ORDER.forEach(function (slot) {
     lines = lines.concat(atomFor(slot, String(recipe.atoms[slot]))(p));
   });

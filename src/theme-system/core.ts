@@ -4,14 +4,14 @@
  */
 import { cssVariables, MONO, type Palette, v } from './palette';
 
-export var ROOT = '.mdstudio-content';
+export const ROOT = '.mdstudio-content';
 
 /** Scope one or more comma-separated selectors to the article root. */
 export function rule(selector: string, body: string): string {
-  var scoped = selector
+  const scoped = selector
     .split(',')
     .map(function (part) {
-      var trimmed = part.trim();
+      const trimmed = part.trim();
       return trimmed ? ROOT + ' ' + trimmed : ROOT;
     })
     .join(', ');
@@ -24,7 +24,7 @@ export function rootRule(body: string): string {
 
 /** Force high-contrast foreground for all inline elements inside an inverted/colored surface. */
 export function invertedInlineRules(container: string, fgToken: string): string {
-  var children = [
+  const children = [
     'strong',
     'b',
     'em',
@@ -36,7 +36,7 @@ export function invertedInlineRules(container: string, fgToken: string): string 
     '.mdstudio-ref',
     '.mdstudio-footnote-ref',
   ];
-  var selector = children
+  const selector = children
     .map(function (child) {
       return container + ' ' + child;
     })

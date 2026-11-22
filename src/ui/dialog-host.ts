@@ -52,7 +52,7 @@ export function useDialogHost(
       el.focus();
       try {
         el.select();
-      } catch (_error) {
+      } catch {
         /* ignore */
       }
     }, 0);

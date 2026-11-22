@@ -17,6 +17,7 @@ export interface AssetGarbageCollectorOptions {
   mermaidFilenames?: () => ReadonlySet<string>;
   extraFilenames?: () => Iterable<string>;
   minAgeMs?: number;
+  now?: () => number;
 }
 
 export interface AssetPruneOptions {
@@ -35,6 +36,7 @@ function isWithinGraceWindow(storedAt: string | undefined, minAgeMs: number, now
 
 export function createAssetGarbageCollector(options: AssetGarbageCollectorOptions): AssetGarbageCollector {
   const minAgeMs = options.minAgeMs ?? DEFAULT_MIN_ASSET_AGE_MS;
+  const nowFn = options.now || Date.now;
   let inFlight: Promise<string[]> | null = null;
   let pendingRerun = false;
   const pendingBypass = new Set<string>();
@@ -67,7 +69,7 @@ export function createAssetGarbageCollector(options: AssetGarbageCollectorOption
       return [];
     }
     const after = liveReferences();
-    const now = Date.now();
+    const now = nowFn();
     const orphans = stored
       .filter(function (item) {
         if (before.has(item.filename) || after.has(item.filename)) return false;

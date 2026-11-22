@@ -10,7 +10,7 @@ export type Atom = (p: Palette) => string[];
 
 /* ------------------------------------------------------------------ h1 -- */
 
-export var H1 = {
+export const H1 = {
   /** Clean left-aligned title (classic). */
   clean: function () {
     return [rule('h1', 'color: ' + v('heading') + '; letter-spacing: 0.01em;')];
@@ -61,7 +61,7 @@ function numbered(prefixCss: string, content: string, extra: string): string[] {
   ];
 }
 
-export var H2 = {
+export const H2 = {
   /** Small 01 counter stacked above the section title (classic). */
   classicTopNum: function () {
     return numbered(
@@ -149,7 +149,7 @@ export var H2 = {
 
 /* ------------------------------------------------------------------ h3 -- */
 
-export var H3 = {
+export const H3 = {
   /** Clean ink sub-heading (classic). */
   plain: function () {
     return [rule('h3', 'color: ' + v('heading') + ';')];
@@ -207,7 +207,7 @@ export var H3 = {
 
 /* ------------------------------------------------------------------ h4 -- */
 
-export var H4 = {
+export const H4 = {
   /** Clean accent label (v2 default). */
   accent: function () {
     return [rule('h4', 'color: ' + v('accentDeep') + ';')];

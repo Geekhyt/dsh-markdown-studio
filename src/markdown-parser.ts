@@ -191,17 +191,17 @@ function tokenSpan(kind: string | null, text: string): string {
 }
 
 function highlightScript(code: string, keywords: Set<string>, language: string): string {
-  var hashComments = language === 'py' || language === 'sh' || language === 'yaml' || language === 'toml';
-  var re = hashComments
+  const hashComments = language === 'py' || language === 'sh' || language === 'yaml' || language === 'toml';
+  const re = hashComments
     ? /(#[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b\d[\w.]*\b|[A-Za-z_$][\w$]*)/g
     : /(\/\/[^\n]*|\/\*[\s\S]*?\*\/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b\d[\w.]*\b|[A-Za-z_$][\w$]*)/g;
-  var out = '';
-  var last = 0;
-  var m;
+  let out = '';
+  let last = 0;
+  let m: RegExpExecArray | null;
   while ((m = re.exec(code)) !== null) {
     out += escapeHtml(code.slice(last, m.index));
-    var token = m[0];
-    var kind = '';
+    const token = m[0];
+    let kind = '';
     if (
       (!hashComments && (token.indexOf('//') === 0 || token.indexOf('/*') === 0)) ||
       (hashComments && token.charAt(0) === '#')
@@ -216,7 +216,7 @@ function highlightScript(code: string, keywords: Set<string>, language: string):
     } else if (keywords.has(token)) {
       kind = 'keyword';
     } else if (/^[A-Za-z_$]/.test(token)) {
-      var after = code.slice(m.index + token.length);
+      const after = code.slice(m.index + token.length);
       if (/^\s*\(/.test(after)) kind = 'function';
     }
     out += tokenSpan(kind, token);
@@ -227,10 +227,10 @@ function highlightScript(code: string, keywords: Set<string>, language: string):
 }
 
 function highlightAttrs(source: string): string {
-  var re = /([A-Za-z_:][\w:.-]*)(\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)?/g;
-  var out = '';
-  var last = 0;
-  var m;
+  const re = /([A-Za-z_:][\w:.-]*)(\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)?/g;
+  let out = '';
+  let last = 0;
+  let m: RegExpExecArray | null;
   while ((m = re.exec(source)) !== null) {
     out += escapeHtml(source.slice(last, m.index));
     out += '<span class="mdstudio-tok-attr">' + escapeHtml(m[1]) + '</span>';
@@ -243,10 +243,10 @@ function highlightAttrs(source: string): string {
 }
 
 function highlightMarkup(code: string): string {
-  var re = /(<!--[\s\S]*?-->)|(<\/?)([A-Za-z][\w:-]*)([^>]*?)(\/?>)/g;
-  var out = '';
-  var last = 0;
-  var m;
+  const re = /(<!--[\s\S]*?-->)|(<\/?)([A-Za-z][\w:-]*)([^>]*?)(\/?>)/g;
+  let out = '';
+  let last = 0;
+  let m: RegExpExecArray | null;
   while ((m = re.exec(code)) !== null) {
     out += escapeHtml(code.slice(last, m.index));
     if (m[1]) {
@@ -263,15 +263,15 @@ function highlightMarkup(code: string): string {
 }
 
 function highlightCss(code: string): string {
-  var re =
+  const re =
     /(\/\*[\s\S]*?\*\/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|#[0-9a-fA-F]{3,8}\b|\b\d+(?:\.\d+)?(?:px|em|rem|%|vh|vw|s|ms|deg)?\b)/g;
-  var out = '';
-  var last = 0;
-  var m;
+  let out = '';
+  let last = 0;
+  let m: RegExpExecArray | null;
   while ((m = re.exec(code)) !== null) {
     out += escapeHtml(code.slice(last, m.index));
-    var token = m[0];
-    var kind = 'number';
+    const token = m[0];
+    let kind = 'number';
     if (/^\/\*/.test(token)) kind = 'comment';
     else if (/^["']/.test(token)) kind = 'string';
     out += tokenSpan(kind, token);
@@ -282,7 +282,7 @@ function highlightCss(code: string): string {
 }
 
 export function highlightCode(code: string, language?: string): string {
-  var lang = String(language || '').toLowerCase();
+  const lang = String(language || '').toLowerCase();
   if (!lang) return escapeHtml(code);
   if (/^(html|xml|svg|vue|markup)$/.test(lang)) return highlightMarkup(code);
   if (/^(css|scss|less|sass)$/.test(lang)) return highlightCss(code);
@@ -307,9 +307,9 @@ function normalizeLabel(label: string): string {
 }
 
 function addReference(ctx: RenderContext, label: string, href: string): number {
-  var existing = ctx.refIndex.get(href);
+  const existing = ctx.refIndex.get(href);
   if (existing) return existing;
-  var index = ctx.refs.length + 1;
+  const index = ctx.refs.length + 1;
   ctx.refs.push({ label: normalizeLabel(label) || href, url: href });
   ctx.refIndex.set(href, index);
   return index;
@@ -330,7 +330,7 @@ function renderLink(ctx: RenderContext, labelHtml: string, labelText: string, hr
       '</a>'
     );
   }
-  var index = addReference(ctx, labelText, href);
+  const index = addReference(ctx, labelText, href);
   return '<span class="mdstudio-link">' + labelHtml + '<sup class="mdstudio-ref">[' + index + ']</sup></span>';
 }
 
@@ -339,18 +339,18 @@ function unescapeLinkDest(value: string): string {
 }
 
 function parseDestination(raw: string): Destination {
-  var dest = String(raw || '').trim();
-  var href = '';
-  var title = '';
+  const dest = String(raw || '').trim();
+  let href = '';
+  let title = '';
   if (dest.charAt(0) === '<') {
-    var close = dest.indexOf('>');
+    const close = dest.indexOf('>');
     if (close !== -1) {
       href = unescapeLinkDest(dest.slice(1, close));
-      var rest = dest.slice(close + 1).trim();
+      const rest = dest.slice(close + 1).trim();
       title = unescapeLinkDest(stripQuotes(rest));
     }
   } else {
-    var split = /^(\S+)(?:\s+([\s\S]+))?$/.exec(dest);
+    const split = /^(\S+)(?:\s+([\s\S]+))?$/.exec(dest);
     if (split) {
       href = unescapeLinkDest(split[1]);
       title = unescapeLinkDest(stripQuotes((split[2] || '').trim()));
@@ -361,15 +361,15 @@ function parseDestination(raw: string): Destination {
 
 function stripQuotes(value: string): string {
   if (!value) return '';
-  var m = /^["'(]([\s\S]*)["')]$/.exec(value);
+  const m = /^["'(]([\s\S]*)["')]$/.exec(value);
   return m ? m[1] : value;
 }
 
 function findMatching(text: string, start: number, open: string, close: string): number {
-  var depth = 0;
-  var quote = null;
-  for (var i = start; i < text.length; i++) {
-    var ch = text[i];
+  let depth = 0;
+  let quote = null;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
     if (quote) {
       if (ch === '\\') {
         i++;
@@ -398,14 +398,14 @@ function findMatching(text: string, start: number, open: string, close: string):
 
 function findLinkBracketEnd(text: string, start: number): number {
   if (text.charAt(start) !== '[') return -1;
-  var depth = 0;
-  for (var i = start; i < text.length; i++) {
+  let depth = 0;
+  for (let i = start; i < text.length; i++) {
     const jumped = skipCodeOrMath(text, i);
     if (jumped > i) {
       i = jumped;
       continue;
     }
-    var ch = text[i];
+    const ch = text[i];
     if (ch === '\\') {
       i++;
       continue;
@@ -420,11 +420,11 @@ function findLinkBracketEnd(text: string, start: number): number {
 }
 
 function parseLinkAt(text: string, start: number): LinkMatch | null {
-  var end = findLinkBracketEnd(text, start);
+  const end = findLinkBracketEnd(text, start);
   if (end === -1 || text.charAt(end + 1) !== '(') return null;
-  var close = findMatching(text, end + 1, '(', ')');
+  const close = findMatching(text, end + 1, '(', ')');
   if (close === -1) return null;
-  var dest = parseDestination(text.slice(end + 2, close));
+  const dest = parseDestination(text.slice(end + 2, close));
   return {
     label: text.slice(start + 1, end),
     href: dest.href,
@@ -913,8 +913,8 @@ function isTableSeparatorLine(line: string): boolean {
 
 function isTableStart(lines: string[], index: number): boolean {
   if (index + 1 >= lines.length) return false;
-  var head = lines[index];
-  var sep = lines[index + 1];
+  const head = lines[index];
+  const sep = lines[index + 1];
   if (head.indexOf('|') === -1 || sep.indexOf('|') === -1) return false;
   if (!isTableSeparatorLine(sep)) return false;
   return splitTableRow(head).length === splitTableRow(sep).length;
@@ -973,7 +973,7 @@ function splitTableCells(row: string): string[] {
 }
 
 function splitTableRow(line: string): string[] {
-  var row = String(line || '').trim();
+  let row = String(line || '').trim();
   if (row.charAt(0) === '|') row = row.slice(1);
   if (row.charAt(row.length - 1) === '|' && !isOddBackslashEscaped(row, row.length - 1)) row = row.slice(0, -1);
   return splitTableCells(row);
@@ -993,33 +993,33 @@ function isTableInterrupt(line: string): boolean {
 }
 
 function renderTable(lines: string[], start: number, ctx: RenderContext): BlockResult {
-  var header = splitTableRow(lines[start]);
-  var divider = splitTableRow(lines[start + 1]);
-  var align = divider.map(function (cell) {
-    var value = cell.replace(/\s/g, '');
+  const header = splitTableRow(lines[start]);
+  const divider = splitTableRow(lines[start + 1]);
+  const align = divider.map(function (cell) {
+    const value = cell.replace(/\s/g, '');
     if (/^:-+:$/.test(value)) return 'center';
     if (/^-+:$/.test(value)) return 'right';
     if (/^:-+$/.test(value)) return 'left';
     return '';
   });
-  var rows: string[][] = [];
-  var i = start + 2;
+  const rows: string[][] = [];
+  let i = start + 2;
   while (i < lines.length && lines[i].trim() !== '' && lines[i].indexOf('|') !== -1 && !isTableInterrupt(lines[i])) {
     rows.push(splitTableRow(lines[i]));
     i++;
   }
   function cell(tag: string, content: string, index: number): string {
-    var style = align[index] ? ' style="text-align:' + align[index] + '"' : '';
+    const style = align[index] ? ' style="text-align:' + align[index] + '"' : '';
     return '<' + tag + style + '>' + renderInline(content, ctx) + '</' + tag + '>';
   }
-  var html = '<table><thead><tr>';
+  let html = '<table><thead><tr>';
   header.forEach(function (value, index) {
     html += cell('th', value, index);
   });
   html += '</tr></thead><tbody>';
   rows.forEach(function (row) {
     html += '<tr>';
-    for (var c = 0; c < header.length; c++) html += cell('td', row[c] || '', c);
+    for (let c = 0; c < header.length; c++) html += cell('td', row[c] || '', c);
     html += '</tr>';
   });
   html += '</tbody></table>';
@@ -1038,13 +1038,13 @@ function parseTaskLine(raw: string): { text: string; checked: boolean | null } {
 }
 
 function formatTaskItem(rawInner: string, checked: boolean, loose: boolean): string {
-  var box = checked
+  const box = checked
     ? '<span class="mdstudio-task-box is-checked">✓</span>'
     : '<span class="mdstudio-task-box">\u00a0</span>';
-  var leading = /^<p>([\s\S]*?)<\/p>/.exec(rawInner);
+  const leading = /^<p>([\s\S]*?)<\/p>/.exec(rawInner);
   if (leading) {
-    var inlineText = leading[1] ? '<span class="mdstudio-task-text">' + leading[1] + '</span>' : '';
-    var rest = rawInner.slice(leading[0].length);
+    const inlineText = leading[1] ? '<span class="mdstudio-task-text">' + leading[1] + '</span>' : '';
+    const rest = rawInner.slice(leading[0].length);
     return loose ? '<p>' + box + inlineText + '</p>' + rest : box + inlineText + rest;
   }
   return rawInner ? '<p>' + box + '</p>' + rawInner : box;
@@ -1057,25 +1057,25 @@ function renderListHtml(
   loose: boolean,
   ctx: RenderContext,
 ): string {
-  var allTasks =
+  const allTasks =
     !ordered &&
     items.length > 0 &&
     items.every(function (item) {
       return item.checked !== null;
     });
-  var html = ordered
+  let html = ordered
     ? '<ol' + (startNumber !== 1 ? ' start="' + startNumber + '"' : '') + '>'
     : '<ul' + (allTasks ? ' class="mdstudio-task-list"' : '') + '>';
   items.forEach(function (item) {
-    var rawInner = blocks(item.lines, ctx);
+    const rawInner = blocks(item.lines, ctx);
     if (item.checked !== null) {
-      var taskClass = item.checked ? ' class="mdstudio-task is-checked"' : ' class="mdstudio-task"';
+      const taskClass = item.checked ? ' class="mdstudio-task is-checked"' : ' class="mdstudio-task"';
       html += '<li' + taskClass + '>' + formatTaskItem(rawInner, item.checked, loose) + '</li>';
       return;
     }
-    var inner = rawInner;
+    let inner = rawInner;
     if (!loose) {
-      var leading = /^<p>([\s\S]*?)<\/p>/.exec(inner);
+      const leading = /^<p>([\s\S]*?)<\/p>/.exec(inner);
       if (leading) inner = leading[1] + inner.slice(leading[0].length);
     }
     html += '<li>' + inner + '</li>';
@@ -1111,24 +1111,24 @@ function appendListContinuationLine(
 }
 
 function parseList(lines: string[], start: number, ctx: RenderContext): BlockResult {
-  var marker = /^(\s*)([-+*]|\d{1,9}[.)])(?:[ \t]+(.*)|[ \t]*)$/;
-  var first = marker.exec(lines[start]);
+  const marker = /^(\s*)([-+*]|\d{1,9}[.)])(?:[ \t]+(.*)|[ \t]*)$/;
+  const first = marker.exec(lines[start]);
   if (!first) return { html: '', next: start + 1 };
-  var baseIndent = first[1].length;
-  var ordered = /\d/.test(first[2]);
-  var startNumber = ordered ? parseInt(first[2], 10) : 1;
-  var items: ListItem[] = [];
-  var current: ListItem | null = null;
-  var loose = false;
-  var i = start;
+  const baseIndent = first[1].length;
+  const ordered = /\d/.test(first[2]);
+  const startNumber = ordered ? parseInt(first[2], 10) : 1;
+  const items: ListItem[] = [];
+  let current: ListItem | null = null;
+  let loose = false;
+  let i = start;
 
   while (i < lines.length) {
-    var line = lines[i];
-    var match = marker.exec(line);
+    const line = lines[i];
+    const match = marker.exec(line);
     if (listMarkerMatches(line, match, baseIndent, ordered)) {
       if (current) items.push(current);
       const itemMatch = match as RegExpExecArray;
-      var task = ordered ? { text: itemMatch[3] || '', checked: null } : parseTaskLine(itemMatch[3] || '');
+      const task = ordered ? { text: itemMatch[3] || '', checked: null } : parseTaskLine(itemMatch[3] || '');
       current = {
         lines: [task.text],
         checked: task.checked,
@@ -1141,16 +1141,16 @@ function parseList(lines: string[], start: number, ctx: RenderContext): BlockRes
     if (!current) break;
 
     if (/^\s*$/.test(line)) {
-      var nextIndex = i + 1;
+      let nextIndex = i + 1;
       while (nextIndex < lines.length && /^\s*$/.test(lines[nextIndex])) nextIndex++;
       if (nextIndex >= lines.length) {
         i = nextIndex;
         break;
       }
-      var nextLine = lines[nextIndex];
-      var nextMatch = marker.exec(nextLine);
-      var nextIndent = (nextLine.match(/^\s*/) || [''])[0].length;
-      var sibling = listMarkerMatches(nextLine, nextMatch, baseIndent, ordered);
+      const nextLine = lines[nextIndex];
+      const nextMatch = marker.exec(nextLine);
+      const nextIndent = (nextLine.match(/^\s*/) || [''])[0].length;
+      const sibling = listMarkerMatches(nextLine, nextMatch, baseIndent, ordered);
       if (sibling || nextIndent >= current.indent) {
         current.lines.push('');
         loose = true;
@@ -1172,13 +1172,13 @@ function parseList(lines: string[], start: number, ctx: RenderContext): BlockRes
 }
 
 function parseFence(lines: string[], start: number): BlockResult {
-  var opening = parseFenceOpening(lines[start]);
+  const opening = parseFenceOpening(lines[start]);
   if (!opening) return { html: '', next: start + 1 };
-  var content = [];
-  var i = start + 1;
-  var closing = new RegExp('^ {0,3}' + opening.fenceChar + '{' + opening.fenceLength + ',}\\s*$');
+  const content = [];
+  let i = start + 1;
+  const closing = new RegExp('^ {0,3}' + opening.fenceChar + '{' + opening.fenceLength + ',}\\s*$');
   while (i < lines.length) {
-    var line = lines[i];
+    const line = lines[i];
     if (closing.test(line)) {
       i++;
       break;
@@ -1186,8 +1186,8 @@ function parseFence(lines: string[], start: number): BlockResult {
     content.push(line);
     i++;
   }
-  var raw = content.join('\n');
-  var body = highlightCode(raw, opening.language) || '';
+  const raw = content.join('\n');
+  const body = highlightCode(raw, opening.language) || '';
   return {
     html:
       '<pre><code' +
@@ -1229,15 +1229,15 @@ function isQuoteLazyContinuation(
 }
 
 function parseBlockquote(lines: string[], start: number, ctx: RenderContext): BlockResult {
-  var content: string[] = [];
-  var isAlertBlock = ALERT_MARKER_RE.test(lines[start] || '');
-  var fenceState: FenceOpening | null = null;
-  var i = start;
+  const content: string[] = [];
+  const isAlertBlock = ALERT_MARKER_RE.test(lines[start] || '');
+  let fenceState: FenceOpening | null = null;
+  let i = start;
   while (i < lines.length) {
-    var line = lines[i];
+    const line = lines[i];
     if (/^ {0,3}>/.test(line)) {
       if (!fenceState && i > start && ALERT_MARKER_RE.test(line)) break;
-      var stripped = line.replace(/^ {0,3}> ?/, '');
+      const stripped = line.replace(/^ {0,3}> ?/, '');
       fenceState = stepFenceState(fenceState, stripped);
       content.push(stripped);
       i++;
@@ -1245,7 +1245,7 @@ function parseBlockquote(lines: string[], start: number, ctx: RenderContext): Bl
     }
     if (/^\s*$/.test(line)) {
       // Plain quotes merge across a single blank line; alerts stay independent blocks.
-      var nextIndex = i + 1;
+      const nextIndex = i + 1;
       if (
         !isAlertBlock &&
         nextIndex < lines.length &&
@@ -1259,7 +1259,7 @@ function parseBlockquote(lines: string[], start: number, ctx: RenderContext): Bl
       break;
     }
     if (isQuoteLazyContinuation(isAlertBlock, content, line, lines, i)) {
-      var trimmed = line.replace(/^[ \t]+|[ \t]+$/g, '');
+      const trimmed = line.replace(/^[ \t]+|[ \t]+$/g, '');
       fenceState = stepFenceState(fenceState, trimmed);
       content.push(trimmed);
       i++;
@@ -1268,11 +1268,11 @@ function parseBlockquote(lines: string[], start: number, ctx: RenderContext): Bl
     break;
   }
 
-  var alert = null;
-  var inlineTitle = '';
+  let alert = null;
+  let inlineTitle = '';
   if (content.length) {
-    var firstLine = content[0];
-    var alertMatch = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(.*)$/i.exec(firstLine);
+    const firstLine = content[0];
+    const alertMatch = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(.*)$/i.exec(firstLine);
     if (alertMatch) {
       alert = alertMatch[1].toUpperCase();
       inlineTitle = (alertMatch[2] || '').trim();
@@ -1281,9 +1281,9 @@ function parseBlockquote(lines: string[], start: number, ctx: RenderContext): Bl
   }
 
   if (alert) {
-    var def = ALERT_DEFS[alert];
-    var title = inlineTitle || def.label;
-    var body = blocks(content, ctx);
+    const def = ALERT_DEFS[alert];
+    const title = inlineTitle || def.label;
+    const body = blocks(content, ctx);
     return {
       html:
         '<section class="mdstudio-alert mdstudio-alert-' +
@@ -1309,12 +1309,12 @@ function isBlockDirectiveStart(line: string): boolean {
 }
 
 function collectScrollBody(lines: string[], start: number): { body: string[]; next: number } {
-  var body: string[] = [];
-  var fenceState: FenceOpening | null = null;
-  var depth = 0;
-  var i = start;
+  const body: string[] = [];
+  let fenceState: FenceOpening | null = null;
+  let depth = 0;
+  let i = start;
   while (i < lines.length) {
-    var line = lines[i];
+    const line = lines[i];
     fenceState = stepFenceState(fenceState, line);
     if (!fenceState && isBlockDirectiveStart(line)) {
       depth++;
@@ -1339,11 +1339,11 @@ function collectScrollBody(lines: string[], start: number): { body: string[]; ne
 }
 
 function parseStandaloneImageLine(line: string, ctx?: RenderContext): { html: string; caption: string } | null {
-  var trimmed = line.trim();
+  const trimmed = line.trim();
   if (trimmed.charAt(0) !== '!' || trimmed.charAt(1) !== '[') return null;
-  var parsed = parseLinkAt(trimmed, 1) || (ctx ? parseRefLinkAt(trimmed, 1, ctx.linkDefs) : null);
+  const parsed = parseLinkAt(trimmed, 1) || (ctx ? parseRefLinkAt(trimmed, 1, ctx.linkDefs) : null);
   if (!parsed || parsed.end !== trimmed.length) return null;
-  var token = inlineImage(trimmed, 0, ctx);
+  const token = inlineImage(trimmed, 0, ctx);
   if (!token || token.html.indexOf('<img ') !== 0) return null;
   return { html: token.html, caption: parsed.label.trim() };
 }
@@ -1355,14 +1355,14 @@ function stepDirectiveDepth(depth: number, line: string): number {
 }
 
 function splitSlideGroups(body: string[], splitOnBlank: boolean): string[][] {
-  var groups: string[][] = [];
-  var current: string[] = [];
-  var fenceState: FenceOpening | null = null;
-  var directiveDepth = 0;
-  for (var i = 0; i < body.length; i++) {
-    var line = body[i];
+  const groups: string[][] = [];
+  let current: string[] = [];
+  let fenceState: FenceOpening | null = null;
+  let directiveDepth = 0;
+  for (let i = 0; i < body.length; i++) {
+    const line = body[i];
     fenceState = stepFenceState(fenceState, line);
-    var isSep = !fenceState && directiveDepth === 0 && (splitOnBlank ? /^\s*$/.test(line) : isHr(line));
+    const isSep = !fenceState && directiveDepth === 0 && (splitOnBlank ? /^\s*$/.test(line) : isHr(line));
     if (isSep) {
       if (
         current.some(function (item) {
@@ -1386,10 +1386,10 @@ function splitSlideGroups(body: string[], splitOnBlank: boolean): string[][] {
 }
 
 function hasTopLevelHr(body: string[]): boolean {
-  var fenceState: FenceOpening | null = null;
-  var directiveDepth = 0;
-  for (var i = 0; i < body.length; i++) {
-    var prevFence = fenceState;
+  let fenceState: FenceOpening | null = null;
+  let directiveDepth = 0;
+  for (let i = 0; i < body.length; i++) {
+    const prevFence = fenceState;
     fenceState = stepFenceState(fenceState, body[i]);
     if (!prevFence && !fenceState) {
       if (directiveDepth === 0 && isHr(body[i])) return true;
@@ -1401,7 +1401,7 @@ function hasTopLevelHr(body: string[]): boolean {
 
 function splitHorizontalSlides(body: string[], ctx: RenderContext): string[][] {
   if (hasTopLevelHr(body)) return splitSlideGroups(body, false);
-  var nonEmpty = body.filter(function (line) {
+  const nonEmpty = body.filter(function (line) {
     return line.trim().length > 0;
   });
   if (
@@ -1418,12 +1418,12 @@ function splitHorizontalSlides(body: string[], ctx: RenderContext): string[][] {
 }
 
 function renderHorizontalSlide(slide: string[], ctx: RenderContext): string {
-  var nonEmpty = slide.filter(function (line) {
+  const nonEmpty = slide.filter(function (line) {
     return line.trim().length > 0;
   });
-  var standalone = nonEmpty.length === 1 ? parseStandaloneImageLine(nonEmpty[0], ctx) : null;
+  const standalone = nonEmpty.length === 1 ? parseStandaloneImageLine(nonEmpty[0], ctx) : null;
   if (standalone) {
-    var captionHtml = standalone.caption
+    const captionHtml = standalone.caption
       ? '<p class="mdstudio-scroll-caption" data-ignore-width="">' + escapeHtml(standalone.caption) + '</p>'
       : '';
     return (
@@ -1438,13 +1438,13 @@ function renderHorizontalSlide(slide: string[], ctx: RenderContext): string {
 }
 
 function parseScrollContainer(lines: string[], start: number, ctx: RenderContext): BlockResult {
-  var match = /^ {0,3}:::scroll(-x)?(?:[ \t]+(\d{2,3})(?:px)?)?[ \t]*$/i.exec(lines[start]);
+  const match = /^ {0,3}:::scroll(-x)?(?:[ \t]+(\d{2,3})(?:px)?)?[ \t]*$/i.exec(lines[start]);
   if (!match) return { html: '', next: start + 1 };
-  var isHorizontal = !!match[1];
-  var collected = collectScrollBody(lines, start + 1);
+  const isHorizontal = !!match[1];
+  const collected = collectScrollBody(lines, start + 1);
   if (isHorizontal) {
-    var slides = splitHorizontalSlides(collected.body, ctx);
-    var trackInner = slides
+    const slides = splitHorizontalSlides(collected.body, ctx);
+    const trackInner = slides
       .map(function (slide) {
         return renderHorizontalSlide(slide, ctx);
       })
@@ -1459,8 +1459,8 @@ function parseScrollContainer(lines: string[], start: number, ctx: RenderContext
       next: collected.next,
     };
   }
-  var customHeight = match[2] ? Math.min(560, Math.max(120, Number(match[2]))) : 0;
-  var styleAttr = customHeight ? ' style="max-height: ' + customHeight + 'px;"' : '';
+  const customHeight = match[2] ? Math.min(560, Math.max(120, Number(match[2]))) : 0;
+  const styleAttr = customHeight ? ' style="max-height: ' + customHeight + 'px;"' : '';
   return {
     html:
       '<section class="mdstudio-scroll"><p class="mdstudio-scroll-hint">' +
@@ -1475,23 +1475,23 @@ function parseScrollContainer(lines: string[], start: number, ctx: RenderContext
 }
 
 function parseFrontmatter(text: string): { meta: Record<string, string>; rest: string } | null {
-  var match = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text);
+  const match = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text);
   if (!match) return null;
-  var lines = match[1].split(/\r?\n/);
-  var meta: Record<string, string> = {};
-  var lastKey = '';
-  for (var i = 0; i < lines.length; i++) {
-    var raw = lines[i];
-    var line = raw.trim();
+  const lines = match[1].split(/\r?\n/);
+  const meta: Record<string, string> = {};
+  let lastKey = '';
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    const line = raw.trim();
     if (!line || line.charAt(0) === '#') continue;
     if (lastKey && /^[ \t]+-[ \t]+(.*)$/.test(raw)) {
-      var item = raw.replace(/^[ \t]+-[ \t]+/, '').trim();
+      const item = raw.replace(/^[ \t]+-[ \t]+/, '').trim();
       meta[lastKey] = meta[lastKey] ? meta[lastKey] + ', ' + item : item;
       continue;
     }
-    var pair = /^([A-Za-z_][\w-]*)\s*:\s*(.*)$/.exec(line);
+    const pair = /^([A-Za-z_][\w-]*)\s*:\s*(.*)$/.exec(line);
     if (!pair) return null;
-    var value = pair[2].trim();
+    let value = pair[2].trim();
     if (
       (value.charAt(0) === '"' && value.charAt(value.length - 1) === '"') ||
       (value.charAt(0) === "'" && value.charAt(value.length - 1) === "'")
@@ -1518,18 +1518,18 @@ function parseDelimitedMathBlock(
   closeRe: RegExp,
   closeToken: string,
 ): BlockResult | null {
-  var single = singleRe.exec(lines[start]);
+  const single = singleRe.exec(lines[start]);
   if (single && single[1].trim() && single[1].indexOf(closeToken) === -1) {
     return { html: renderDisplayMathHtml(single[1].trim()), next: start + 1 };
   }
-  var open = openRe.exec(lines[start]);
+  const open = openRe.exec(lines[start]);
   if (!open || open[1].indexOf(closeToken) !== -1) return null;
-  var body: string[] = open[1] ? [open[1]] : [];
-  for (var i = start + 1; i < lines.length; i++) {
-    var close = closeRe.exec(lines[i]);
+  const body: string[] = open[1] ? [open[1]] : [];
+  for (let i = start + 1; i < lines.length; i++) {
+    const close = closeRe.exec(lines[i]);
     if (close && !isOddBackslashEscaped(lines[i], close[1].length)) {
       if (close[1].trim()) body.push(close[1]);
-      var tex = body.join('\n').trim();
+      const tex = body.join('\n').trim();
       return tex ? { html: renderDisplayMathHtml(tex), next: i + 1 } : null;
     }
     body.push(lines[i]);
@@ -1581,7 +1581,7 @@ function renderSimpleEditorial(
   if (arg) {
     return { html: '<p class="' + className + '">' + renderInline(arg, ctx) + '</p>', next: start + 1 };
   }
-  var collected = collectScrollBody(lines, start + 1);
+  const collected = collectScrollBody(lines, start + 1);
   return {
     html: '<p class="' + className + '">' + renderInlineLinesJoined(collected.body, sep, ctx) + '</p>',
     next: collected.next,
@@ -1592,25 +1592,25 @@ function renderPullEditorial(arg: string, lines: string[], start: number, ctx: R
   if (arg) {
     return { html: '<section class="mdstudio-pull">' + renderInline(arg, ctx) + '</section>', next: start + 1 };
   }
-  var collected = collectScrollBody(lines, start + 1);
-  var inner = blocks(collected.body, ctx);
-  var singlePara = /^<p>([\s\S]*?)<\/p>$/.exec(inner);
-  var pullBody = singlePara ? singlePara[1] : inner;
+  const collected = collectScrollBody(lines, start + 1);
+  const inner = blocks(collected.body, ctx);
+  const singlePara = /^<p>([\s\S]*?)<\/p>$/.exec(inner);
+  const pullBody = singlePara ? singlePara[1] : inner;
   return { html: '<section class="mdstudio-pull">' + pullBody + '</section>', next: collected.next };
 }
 
 function parseEditorialContainer(lines: string[], start: number, ctx: RenderContext): BlockResult {
-  var match = /^ {0,3}:::(lead|tldr|pull|sign|meta)(?:[ \t]+(.*?))?[ \t]*$/i.exec(lines[start]);
+  const match = /^ {0,3}:::(lead|tldr|pull|sign|meta)(?:[ \t]+(.*?))?[ \t]*$/i.exec(lines[start]);
   if (!match) return { html: '', next: start + 1 };
-  var kind = match[1].toLowerCase();
-  var arg = (match[2] || '').trim();
+  const kind = match[1].toLowerCase();
+  const arg = (match[2] || '').trim();
   if (kind === 'lead') return renderSimpleEditorial('mdstudio-lead', arg, lines, start, '<br>', ctx);
   if (kind === 'sign') return renderSimpleEditorial('mdstudio-sign', arg, lines, start, '<br>', ctx);
   if (kind === 'meta') return renderSimpleEditorial('mdstudio-meta', arg, lines, start, ' · ', ctx);
   if (kind === 'pull') return renderPullEditorial(arg, lines, start, ctx);
-  var collected = collectScrollBody(lines, start + 1);
-  var titleAttr = arg ? '' : ' data-mdstudio-default-tldr="1"';
-  var titleText = escapeHtml(arg || '30 秒速览');
+  const collected = collectScrollBody(lines, start + 1);
+  const titleAttr = arg ? '' : ' data-mdstudio-default-tldr="1"';
+  const titleText = escapeHtml(arg || '30 秒速览');
   return {
     html:
       '<section class="mdstudio-tldr"><p class="mdstudio-tldr-title"' +
@@ -1632,7 +1632,7 @@ function shouldEmitImageCaption(caption: string): boolean {
 }
 
 function parseSpecialBlock(lines: string[], start: number, ctx: RenderContext): BlockResult | null {
-  var line = lines[start];
+  const line = lines[start];
   if (isFence(line)) return parseFence(lines, start);
   if (isMathBlockStart(line)) return parseMathBlock(lines, start);
   if (isScrollContainerStart(line)) return parseScrollContainer(lines, start, ctx);
@@ -1653,14 +1653,14 @@ function renderHeadingHtml(level: number, titleHtml: string): string {
 }
 
 function parseParagraph(lines: string[], start: number, ctx: RenderContext): BlockResult {
-  var paragraph = [lines[start].replace(/^[ \t]+|[ \t]+$/g, '')];
-  var i = start + 1;
+  const paragraph = [lines[start].replace(/^[ \t]+|[ \t]+$/g, '')];
+  let i = start + 1;
   while (i < lines.length) {
-    var next = lines[i];
+    const next = lines[i];
     if (/^\s*$/.test(next)) break;
-    var setext = /^ {0,3}(=+|-+)[ \t]*$/.exec(next);
+    const setext = /^ {0,3}(=+|-+)[ \t]*$/.exec(next);
     if (setext) {
-      var level = setext[1].charAt(0) === '=' ? 1 : 2;
+      const level = setext[1].charAt(0) === '=' ? 1 : 2;
       return { html: renderHeadingHtml(level, renderInline(paragraph.join('\n'), ctx)), next: i + 1 };
     }
     if (isBlockStart(next, lines, i)) break;
@@ -1668,7 +1668,7 @@ function parseParagraph(lines: string[], start: number, ctx: RenderContext): Blo
     i++;
   }
   if (paragraph.length === 1) {
-    var standaloneImg = parseStandaloneImageLine(paragraph[0], ctx);
+    const standaloneImg = parseStandaloneImageLine(paragraph[0], ctx);
     if (standaloneImg && shouldEmitImageCaption(standaloneImg.caption)) {
       return {
         html:
@@ -1685,27 +1685,27 @@ function parseParagraph(lines: string[], start: number, ctx: RenderContext): Blo
 }
 
 function blocks(lines: string[], ctx: RenderContext): string {
-  var out = '';
-  var i = 0;
+  let out = '';
+  let i = 0;
 
   while (i < lines.length) {
-    var line = lines[i];
+    const line = lines[i];
     if (/^\s*$/.test(line)) {
       i++;
       continue;
     }
 
-    var special = parseSpecialBlock(lines, i, ctx);
+    const special = parseSpecialBlock(lines, i, ctx);
     if (special) {
       out += special.html;
       i = special.next;
       continue;
     }
 
-    var heading = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$/.exec(line);
+    const heading = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$/.exec(line);
     if (heading) {
-      var level = heading[1].length;
-      var title = (heading[2] || '').replace(/[ \t]+#+[ \t]*$/, '');
+      const level = heading[1].length;
+      const title = (heading[2] || '').replace(/[ \t]+#+[ \t]*$/, '');
       out += renderHeadingHtml(level, renderInline(title, ctx));
       i++;
       continue;
@@ -1718,27 +1718,27 @@ function blocks(lines: string[], ctx: RenderContext): string {
     }
 
     if (/^ {0,3}>/.test(line)) {
-      var quote = parseBlockquote(lines, i, ctx);
+      const quote = parseBlockquote(lines, i, ctx);
       out += quote.html;
       i = quote.next;
       continue;
     }
 
     if (isTableStart(lines, i)) {
-      var table = renderTable(lines, i, ctx);
+      const table = renderTable(lines, i, ctx);
       out += table.html;
       i = table.next;
       continue;
     }
 
     if (isListLine(line)) {
-      var list = parseList(lines, i, ctx);
+      const list = parseList(lines, i, ctx);
       out += list.html;
       i = list.next;
       continue;
     }
 
-    var para = parseParagraph(lines, i, ctx);
+    const para = parseParagraph(lines, i, ctx);
     out += para.html;
     i = para.next;
   }
@@ -1795,16 +1795,16 @@ function extractDefinitions(text: string): {
   footnotes: Map<string, FootnoteDefinition>;
   linkDefs: Map<string, Destination>;
 } {
-  var lines = String(text || '').split('\n');
-  var kept = [];
-  var footnotes = new Map<string, FootnoteDefinition>();
-  var linkDefs = new Map<string, Destination>();
-  var current: FootnoteDefinition | null = null;
-  var fenceState: FenceOpening | null = null;
-  var canStartLinkDef = true;
-  for (var index = 0; index < lines.length; index++) {
-    var line = lines[index];
-    var prevFence = fenceState;
+  const lines = String(text || '').split('\n');
+  const kept = [];
+  const footnotes = new Map<string, FootnoteDefinition>();
+  const linkDefs = new Map<string, Destination>();
+  let current: FootnoteDefinition | null = null;
+  let fenceState: FenceOpening | null = null;
+  let canStartLinkDef = true;
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
+    const prevFence = fenceState;
     fenceState = stepFenceState(fenceState, line);
     if (prevFence || fenceState) {
       current = null;
@@ -1812,7 +1812,7 @@ function extractDefinitions(text: string): {
       kept.push(line);
       continue;
     }
-    var match = /^ {0,3}\[\^([^\]\s]+)\]:\s*(.*)$/.exec(line);
+    const match = /^ {0,3}\[\^([^\]\s]+)\]:\s*(.*)$/.exec(line);
     if (match) {
       current = { id: match[1], text: match[2] };
       footnotes.set(match[1], current);
@@ -1836,18 +1836,18 @@ function extractDefinitions(text: string): {
 }
 
 function buildFrontmatterMetaHtml(meta: Record<string, string>, rawBody: string, locale?: 'zh' | 'en'): string {
-  var custom = (meta.meta || '').trim();
+  const custom = (meta.meta || '').trim();
   if (custom) return '<p class="mdstudio-meta">' + escapeHtml(custom) + '</p>';
-  var category = (meta.category || '').trim();
-  var showReadingTime = /^(?:true|1|yes)$/i.test((meta.readingTime || '').trim());
+  const category = (meta.category || '').trim();
+  const showReadingTime = /^(?:true|1|yes)$/i.test((meta.readingTime || '').trim());
   if (!category && !showReadingTime) return '';
-  var plain = rawBody
+  const plain = rawBody
     .replace(/```[\s\S]*?```/g, '')
     .replace(/[#>*_`~[\]()!|-]/g, '')
     .replace(/\s+/g, '');
-  var minutes = Math.max(1, Math.round(plain.length / 350));
-  var timeLabel = locale === 'en' ? minutes + ' min read' : '约 ' + minutes + ' 分钟读完';
-  var parts = category ? [category, timeLabel] : [timeLabel];
+  const minutes = Math.max(1, Math.round(plain.length / 350));
+  const timeLabel = locale === 'en' ? minutes + ' min read' : '约 ' + minutes + ' 分钟读完';
+  const parts = category ? [category, timeLabel] : [timeLabel];
   return '<p class="mdstudio-meta">' + escapeHtml(parts.join(' · ')) + '</p>';
 }
 
@@ -1871,7 +1871,7 @@ function findTopLevelH1Index(html: string): number {
 
 function injectFrontmatterMeta(html: string, metaHtml: string): string {
   if (!metaHtml || html.indexOf('class="mdstudio-meta"') !== -1) return html;
-  var h1Index = findTopLevelH1Index(html);
+  const h1Index = findTopLevelH1Index(html);
   if (h1Index === -1) return metaHtml + html;
   return html.slice(0, h1Index) + metaHtml + html.slice(h1Index);
 }
@@ -1894,11 +1894,11 @@ const RENDER_DEFAULTS_EN = {
 
 function renderFootnotesHtml(ctx: RenderContext, title: string): string {
   if (!ctx.footnoteOrder.length) return '';
-  var footnoteItems = '';
-  for (var i = 0; i < ctx.footnoteOrder.length; i++) {
-    var definition = ctx.footnotes.get(ctx.footnoteOrder[i]);
+  let footnoteItems = '';
+  for (let i = 0; i < ctx.footnoteOrder.length; i++) {
+    const definition = ctx.footnotes.get(ctx.footnoteOrder[i]);
     if (!definition) continue;
-    var num = i + 1;
+    const num = i + 1;
     footnoteItems +=
       '<p class="mdstudio-footnote-item" id="mdstudio-fn-' +
       num +
@@ -1919,11 +1919,11 @@ function renderFootnotesHtml(ctx: RenderContext, title: string): string {
 
 function renderReferencesHtml(refs: EngineReference[], title: string, sep: string): string {
   if (!refs.length) return '';
-  var items = refs
+  const items = refs
     .map(function (ref, index) {
-      var label = String(ref.label || '').trim();
-      var url = String(ref.url || '').trim();
-      var text = label && label !== url ? label + sep + url : url;
+      const label = String(ref.label || '').trim();
+      const url = String(ref.url || '').trim();
+      const text = label && label !== url ? label + sep + url : url;
       return '<p class="mdstudio-ref-item">' + (index + 1) + '. ' + escapeHtml(text) + '</p>';
     })
     .join('');
@@ -1938,7 +1938,7 @@ function renderReferencesHtml(refs: EngineReference[], title: string, sep: strin
 
 function disambiguateFootnoteMarkers(html: string, ctx: RenderContext, locale?: 'zh' | 'en'): string {
   if (!ctx.footnoteOrder.length || !ctx.refs.length) return html;
-  var prefix = locale === 'en' ? 'n' : '注';
+  const prefix = locale === 'en' ? 'n' : '注';
   return html
     .replace(
       /<sup class="mdstudio-footnote-ref">\[(\d+)\]<\/sup>/g,
@@ -1958,20 +1958,20 @@ export function containsMath(source: string): boolean {
 }
 
 export function renderMarkdown(source: unknown, options?: RenderOptions): RenderResult {
-  var opts = options || {};
-  var text = String(source == null ? '' : source).replace(/\r\n?/g, '\n');
-  var meta: Record<string, string> = {};
-  var frontmatter = parseFrontmatter(text);
+  const opts = options || {};
+  let text = String(source == null ? '' : source).replace(/\r\n?/g, '\n');
+  let meta: Record<string, string> = {};
+  const frontmatter = parseFrontmatter(text);
   if (frontmatter) {
     meta = frontmatter.meta;
     text = frontmatter.rest;
   }
-  var extracted = extractDefinitions(text);
+  const extracted = extractDefinitions(text);
   text = extracted.text;
-  var defaults = opts.locale === 'en' ? RENDER_DEFAULTS_EN : RENDER_DEFAULTS_ZH;
-  var footnotesTitle = opts.footnotesTitle || defaults.footnotes;
-  var referencesTitle = opts.referencesTitle || defaults.references;
-  var ctx: RenderContext = {
+  const defaults = opts.locale === 'en' ? RENDER_DEFAULTS_EN : RENDER_DEFAULTS_ZH;
+  const footnotesTitle = opts.footnotesTitle || defaults.footnotes;
+  const referencesTitle = opts.referencesTitle || defaults.references;
+  const ctx: RenderContext = {
     refs: [],
     refIndex: new Map<string, number>(),
     linkDefs: extracted.linkDefs,
@@ -1985,7 +1985,7 @@ export function renderMarkdown(source: unknown, options?: RenderOptions): Render
       scrollHorizontalHint: opts.scrollHorizontalHint || defaults.scrollH,
     },
   };
-  var html = injectFrontmatterMeta(blocks(text.split('\n'), ctx), buildFrontmatterMetaHtml(meta, text, opts.locale));
+  let html = injectFrontmatterMeta(blocks(text.split('\n'), ctx), buildFrontmatterMetaHtml(meta, text, opts.locale));
   html += renderFootnotesHtml(ctx, footnotesTitle);
   html = disambiguateFootnoteMarkers(html, ctx, opts.locale);
   html += renderReferencesHtml(ctx.refs, referencesTitle, defaults.refSep);

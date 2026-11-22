@@ -122,6 +122,11 @@ export interface NewArticleSeed {
   view: ViewMode;
 }
 
+export interface DocumentStoreOptions {
+  now?: () => number;
+  nextId?: () => string;
+}
+
 /**
  * The single writer for the article library and its active article. UI code
  * reads snapshots and submits patches; only this store persists them.
@@ -130,6 +135,8 @@ export class DocumentStore {
   private state: LibraryState;
   private readonly persist: (state: LibraryState) => boolean;
   private readonly loadLatest?: () => LibraryState | null;
+  private readonly now: () => number;
+  private readonly nextId: () => string;
   private status: 'saved' | 'pending' | 'error' = 'saved';
   private dirty = false;
   private structuralDirty = false;
@@ -142,8 +149,11 @@ export class DocumentStore {
     initial: LibraryState,
     persist: (state: LibraryState) => boolean,
     loadLatest?: () => LibraryState | null,
+    options?: DocumentStoreOptions,
   ) {
     if (!initial.docs.length) throw new Error('DocumentStore needs at least one article');
+    this.now = options?.now || Date.now;
+    this.nextId = options?.nextId || newArticleId;
     this.state = unifyLibraryCustomThemes(ensureUniqueArticleIds(initial));
     this.persist = persist;
     this.loadLatest = loadLatest;
@@ -177,7 +187,7 @@ export class DocumentStore {
       ...active,
       ...patch,
       settings: patch.settings ? { ...patch.settings } : active.settings,
-      updatedAt: Date.now(),
+      updatedAt: this.now(),
     };
     const syncCustom = patch.settings !== undefined && next.settings.customThemes !== active.settings.customThemes;
     const sharedCustom = next.settings.customThemes || [];
@@ -199,7 +209,7 @@ export class DocumentStore {
   }
 
   create(seed: NewArticleSeed): Article {
-    const id = newArticleId();
+    const id = this.nextId();
     const sharedCustom = seed.settings.customThemes || this.getActive().settings.customThemes || [];
     const entry: Article = {
       id,
@@ -207,7 +217,7 @@ export class DocumentStore {
       markdown: seed.markdown || '',
       settings: { ...seed.settings, customThemes: sharedCustom },
       view: seed.view,
-      updatedAt: Date.now(),
+      updatedAt: this.now(),
     };
     this.dirtyDocIds.add(id);
     this.commit({ activeId: id, docs: [entry, ...this.state.docs] });
@@ -219,17 +229,17 @@ export class DocumentStore {
     if (!target) return this.getActive();
     this.structuralDirty = true;
     this.dirtyDocIds.delete(id);
-    const trash = [{ ...target, deletedAt: Date.now() }, ...(this.state.trash || [])];
+    const trash = [{ ...target, deletedAt: this.now() }, ...(this.state.trash || [])];
     const remaining = this.state.docs.filter((entry) => entry.id !== id);
     if (!remaining.length) {
-      const newId = newArticleId();
+      const newId = this.nextId();
       const blank: Article = {
         id: newId,
         title: fallbackTitle,
         markdown: '',
         settings: { ...DEFAULT_SETTINGS, customThemes: target.settings.customThemes || [] },
         view: 'split',
-        updatedAt: Date.now(),
+        updatedAt: this.now(),
       };
       this.commit({ activeId: newId, docs: [blank], trash });
       return blank;
@@ -249,7 +259,7 @@ export class DocumentStore {
     this.structuralDirty = true;
     const { deletedAt: _deletedAt, ...trashed } = item;
     const idTaken = this.state.docs.some((doc) => doc.id === trashed.id);
-    const restoredRaw: Article = idTaken ? { ...trashed, id: newArticleId() } : trashed;
+    const restoredRaw: Article = idTaken ? { ...trashed, id: this.nextId() } : trashed;
     const sharedCustom = mergeCustomThemes(this.getActive().settings.customThemes, restoredRaw.settings.customThemes);
     const restored = applySharedCustomThemes(restoredRaw, sharedCustom);
     const trash = (this.state.trash || []).filter((entry) => entry !== item);

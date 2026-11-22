@@ -328,7 +328,7 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
       const raw = await file.text();
       const baseName = file.name.replace(/(?:\.skill)?\.md$/i, '').trim() || t('ai.defaultCustomName');
       return parseSkillMarkdown(raw, baseName);
-    } catch (error) {
+    } catch {
       options.notify(t('ai.skillImportFailed'), 'error');
       return null;
     }

@@ -156,7 +156,7 @@ export function createFileCommands(options: FileActionsOptions): FileActionsApi 
       if (folder) {
         try {
           await writeFolderAssets(folder, writtenContent, options.localImageServerUrl);
-        } catch (error) {
+        } catch {
           /* best effort */
         }
       }

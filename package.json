@@ -1,6 +1,6 @@
 {
   "name": "dsh-markdown-studio",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "Local-first Markdown writing and WeChat Official Account typesetting studio for DeepSeek Harness with 8 editorial themes, named custom CSS themes, one-click inline-styled HTML copy, MathJax/Mermaid, and custom SKILL.md writing skills with inline diff.",
   "license": "MIT",
   "author": "Geekhyt",
@@ -74,7 +74,9 @@
     "format": "biome format --write .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "check:host-api": "node scripts/check-host-api.mjs",
-    "test": "npm run typecheck && npm run build && tsx test/engine.test.ts && tsx test/domain.test.ts && tsx test/writing-skills.test.ts && tsx test/document-store.test.ts && tsx test/library-backup.test.ts && tsx test/schema.test.ts && tsx test/storage-migration.test.ts && tsx test/data-integrity.test.ts && tsx test/file-session.test.ts && tsx test/application-actions.test.ts && tsx test/custom-css.test.ts && tsx test/library-archive.test.ts && tsx test/library-search.test.ts && tsx test/encode.test.ts && tsx test/themes.test.ts && tsx test/theme-system.test.ts && tsx test/wechat-html.test.ts && tsx test/dom.test.ts && tsx test/copy-spec.test.ts && tsx test/error-boundary.test.ts && tsx test/dsh-primitives.test.ts && tsx test/client.test.ts && tsx test/architecture.test.ts && tsx test/coverage-model.test.ts && tsx test/shortcuts-regression.test.ts && tsx test/app-dom.test.ts && tsx test/zip.test.ts && tsx test/zip-stream.test.ts && tsx test/host-client.test.ts && tsx test/host.test.ts && tsx test/oss-readiness.test.ts",
+    "test": "npm run typecheck && npm run build && tsx test/engine.test.ts && tsx test/domain.test.ts && tsx test/writing-skills.test.ts && tsx test/document-store.test.ts && tsx test/library-backup.test.ts && tsx test/schema.test.ts && tsx test/storage-migration.test.ts && tsx test/data-integrity.test.ts && tsx test/file-session.test.ts && tsx test/application-actions.test.ts && tsx test/custom-css.test.ts && tsx test/library-archive.test.ts && tsx test/library-search.test.ts && tsx test/encode.test.ts && tsx test/themes.test.ts && tsx test/theme-system.test.ts && tsx test/wechat-html.test.ts && tsx test/dom.test.ts && tsx test/copy-spec.test.ts && tsx test/error-boundary.test.ts && tsx test/dsh-primitives.test.ts && tsx test/client.test.ts && tsx test/architecture.test.ts && tsx test/formal-models.test.ts && tsx test/fuzz-and-perf.test.ts && tsx test/coverage-model.test.ts && tsx test/shortcuts-regression.test.ts && tsx test/app-dom.test.ts && tsx test/zip.test.ts && tsx test/zip-stream.test.ts && tsx test/host-client.test.ts && tsx test/host.test.ts && tsx test/oss-readiness.test.ts",
+    "verify:models": "tsx test/formal-models.test.ts",
+    "test:fuzz": "tsx test/fuzz-and-perf.test.ts",
     "test:browser": "npm run build && tsx test/browser-smoke.ts",
     "test:coverage": "npm test && tsx scripts/build-test.ts && tsx test/browser-smoke.ts --coverage",
     "coverage": "c8 --reporter=json npm run test:coverage && tsx scripts/coverage-check.ts",

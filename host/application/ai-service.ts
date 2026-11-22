@@ -124,7 +124,7 @@ async function resolveFastReasoningEffort(
   try {
     const info = await llm.resolveModelInfo(provider, model, signal);
     return supportsOffEffort(info) ? 'off' : undefined;
-  } catch (error) {
+  } catch {
     return undefined;
   }
 }
@@ -171,13 +171,13 @@ export class AiHostService {
     let models: HostLlmModelEntry[] = [];
     try {
       models = await collectCatalogModels(llm);
-    } catch (error) {
+    } catch {
       models = [];
     }
     let def: HostDefaultModelSelection | undefined;
     try {
       def = this.getDefaultModel()?.currentSelection();
-    } catch (error) {
+    } catch {
       def = undefined;
     }
     const defProvider = trimString(def?.provider);

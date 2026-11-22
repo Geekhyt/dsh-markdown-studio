@@ -155,6 +155,7 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
   const cacheRef = React.useRef<Map<string, MermaidCacheEntry>>(new Map());
   const [version, setVersion] = React.useState(0);
   const ensureGenRef = React.useRef(0);
+  const renderSeqRef = React.useRef(0);
   const inFlightEnsureRef = React.useRef<{ key: string; promise: Promise<void> } | null>(null);
   const pinnedKeysRef = React.useRef<Map<string, number>>(new Map());
   const themeRef = useLatest(React, options.theme);
@@ -176,7 +177,7 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
   ): Promise<MermaidCacheEntry | null> {
     const svg = await mermaid.render(
       prependMermaidDirective(currentCode, theme.directive),
-      'mdstudio-mermaid-' + Date.now() + '-' + currentIndex,
+      'mdstudio-mermaid-' + ++renderSeqRef.current + '-' + currentIndex,
     );
     if (!cacheRef.current.has(currentKey)) return null;
     const png = await svgToPng(svg, theme.background);

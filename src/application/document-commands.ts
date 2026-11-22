@@ -128,7 +128,7 @@ export function createDocumentCommands(options: DocumentActionsOptions): Documen
               tracked.push(stored.filename);
             }
             mapping.set('assets/' + match[1].toLowerCase(), stored.assetPath || 'assets/' + stored.filename);
-          } catch (error) {
+          } catch {
             failed++;
           }
         }),

@@ -634,7 +634,7 @@ export function sampleArticleFor(locale?: string): { title: string; markdown: st
 }
 
 export function getTheme(id: string): ThemeDefinition {
-  for (var i = 0; i < THEMES.length; i++) {
+  for (let i = 0; i < THEMES.length; i++) {
     if (THEMES[i].id === id) return THEMES[i];
   }
   return THEMES[0];
@@ -684,23 +684,23 @@ function isStandaloneCustomCss(css: string): boolean {
 }
 
 export function buildCss(settings: ThemeSettings): string {
-  var userCss = resolveUserCss(settings);
-  var standalone = isCustomThemeId(settings.theme) && Boolean(userCss.trim()) && isStandaloneCustomCss(userCss);
-  var theme = getTheme(settings.theme);
-  var css = standalone ? '' : theme.build(settings);
-  var flushSel =
+  const userCss = resolveUserCss(settings);
+  const standalone = isCustomThemeId(settings.theme) && Boolean(userCss.trim()) && isStandaloneCustomCss(userCss);
+  const theme = getTheme(settings.theme);
+  let css = standalone ? '' : theme.build(settings);
+  const flushSel =
     '.mdstudio-content > h1:first-child, .mdstudio-content > h2:first-child, .mdstudio-content > h3:first-child, .mdstudio-content > h4:first-child, .mdstudio-content > h5:first-child, .mdstudio-content > h6:first-child';
   // Built-in themes flush leading headings cleanly; standalone custom themes use :where() so user heading margins always win.
   css += '\n' + (standalone ? ':where(' + flushSel + ')' : flushSel) + ' { margin: 0 0 0.8em; }';
   if (!standalone) {
-    var paper = paperCardRules(theme.id);
+    const paper = paperCardRules(theme.id);
     if (paper) css += '\n' + paper;
   }
   if (userCss.trim()) {
     css += '\n/* user styles */\n' + (settings.allowExternalCssResources ? userCss : stripExternalCssUrls(userCss));
   }
   // Apply independent code theme overrides after custom theme CSS so selecting a code theme works on custom themes too.
-  var codeCss = codeThemeCss(settings.codeTheme);
+  const codeCss = codeThemeCss(settings.codeTheme);
   if (codeCss) css += '\n' + codeCss;
   return css;
 }
@@ -723,16 +723,16 @@ function hexOr(value: string, fallback: string): string {
 function mermaidPaletteColors(
   settings: Pick<ThemeSettings, 'theme' | 'accent' | 'fontSize' | 'lineHeight'> & { customThemes?: CustomTheme[] },
 ): { bg: string; accent: string; accent2: string; ink: string } {
-  var custom = findCustomTheme(settings.customThemes, settings.theme);
+  const custom = findCustomTheme(settings.customThemes, settings.theme);
   if (custom) {
-    var preview = extractCustomThemePreview(custom.css, settings.accent);
+    const preview = extractCustomThemePreview(custom.css, settings.accent);
     return { bg: preview.bg, accent: preview.accent, accent2: preview.accent, ink: preview.fg };
   }
-  var recipe =
+  const recipe =
     RECIPES.filter(function (item) {
       return item.id === settings.theme;
     })[0] || RECIPES[0];
-  var p = recipePalette(recipe, {
+  const p = recipePalette(recipe, {
     accent: settings.accent || recipe.accent,
     fontSize: settings.fontSize,
     lineHeight: settings.lineHeight,
@@ -748,9 +748,9 @@ function mermaidPaletteColors(
 export function mermaidThemeFor(
   settings: Pick<ThemeSettings, 'theme' | 'accent' | 'fontSize' | 'lineHeight'> & { customThemes?: CustomTheme[] },
 ): MermaidTheme {
-  var c = mermaidPaletteColors(settings);
-  var node = mix(c.accent, c.bg, 0.86);
-  var variables = {
+  const c = mermaidPaletteColors(settings);
+  const node = mix(c.accent, c.bg, 0.86);
+  const variables = {
     background: c.bg,
     mainBkg: node,
     primaryColor: node,
@@ -776,30 +776,30 @@ export function mermaidThemeFor(
 export function themeCodePreview(
   settings: Pick<ThemeSettings, 'theme' | 'accent' | 'fontSize' | 'lineHeight'> & { customThemes?: CustomTheme[] },
 ): { bg: string; fg: string; accent: string } {
-  var custom = findCustomTheme(settings.customThemes, settings.theme);
+  const custom = findCustomTheme(settings.customThemes, settings.theme);
   if (custom) {
-    var cleanCustomCss = custom.css.replace(/\/\*[\s\S]*?\*\//g, '');
-    var lastHex = function (prop: string): string {
-      var re = new RegExp(prop + '\\s*:\\s*(#[0-9a-f]{3}(?:[0-9a-f]{3})?)\\b', 'gi');
-      var found = '';
-      var m: RegExpExecArray | null;
+    const cleanCustomCss = custom.css.replace(/\/\*[\s\S]*?\*\//g, '');
+    const lastHex = function (prop: string): string {
+      const re = new RegExp(prop + '\\s*:\\s*(#[0-9a-f]{3}(?:[0-9a-f]{3})?)\\b', 'gi');
+      let found = '';
+      let m: RegExpExecArray | null;
       while ((m = re.exec(cleanCustomCss))) found = m[1];
       return found;
     };
-    var codeBg = lastHex('--mdstudio-code-bg');
-    var codeFg = lastHex('--mdstudio-code-text');
-    var preview = extractCustomThemePreview(custom.css, settings.accent);
+    const codeBg = lastHex('--mdstudio-code-bg');
+    const codeFg = lastHex('--mdstudio-code-text');
+    const preview = extractCustomThemePreview(custom.css, settings.accent);
     return {
       bg: codeBg || preview.bg,
       fg: codeFg || preview.fg,
       accent: preview.accent,
     };
   }
-  var recipe =
+  const recipe =
     RECIPES.filter(function (item) {
       return item.id === settings.theme;
     })[0] || RECIPES[0];
-  var p = recipePalette(recipe, {
+  const p = recipePalette(recipe, {
     accent: settings.accent || recipe.accent,
     fontSize: settings.fontSize,
     lineHeight: settings.lineHeight,

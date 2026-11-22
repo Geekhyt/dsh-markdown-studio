@@ -69,10 +69,10 @@ export function encodeImageForWechat(image: ImageLike, documentLike: CanvasDocum
 export function prepareImageForWechat(dataUrl: unknown): Promise<PreparedImage> {
   return new Promise<PreparedImage>(function (resolve) {
     const sourceDataUrl = String(dataUrl || '');
-    var match = /^data:(image\/[a-z0-9.+-]+);base64,/i.exec(sourceDataUrl);
-    var mime = match ? match[1].toLowerCase() : '';
-    var sourceExt = mime === 'image/png' ? 'png' : 'jpg';
-    var fallback: PreparedImage = {
+    const match = /^data:(image\/[a-z0-9.+-]+);base64,/i.exec(sourceDataUrl);
+    const mime = match ? match[1].toLowerCase() : '';
+    const sourceExt = mime === 'image/png' ? 'png' : 'jpg';
+    const fallback: PreparedImage = {
       dataUrl: sourceDataUrl,
       filename: 'image-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6) + '.' + sourceExt,
     };
@@ -88,8 +88,8 @@ export function prepareImageForWechat(dataUrl: unknown): Promise<PreparedImage> 
         resolve(fallback);
         return;
       }
-      var image = new Image();
-      var settled = false;
+      const image = new Image();
+      let settled = false;
       function done(value: PreparedImage): void {
         if (settled) return;
         settled = true;
@@ -109,12 +109,12 @@ export function prepareImageForWechat(dataUrl: unknown): Promise<PreparedImage> 
             dataUrl: encoded,
             filename: 'image-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6) + '.jpg',
           });
-        } catch (error) {
+        } catch {
           done(fallback);
         }
       };
       image.src = sourceDataUrl;
-    } catch (error) {
+    } catch {
       resolve(fallback);
     }
   });

@@ -60,6 +60,17 @@ import { assetFilesInMarkdown, collectLocalImages, portableizeAssetUrls, replace
 import { collectReferencedAssets } from './domain/library-archive';
 import type { MergeConflict, MergeDecision } from './domain/library-backup';
 import { sanitizeSettings } from './domain/settings';
+import { canStartAutosave } from './domain/file-session.machine';
+import {
+  canHandleImmersiveShortcutPolicy,
+  computePaneVisibility,
+  isParentModalOpen,
+  resolveDocumentEscapeAction,
+  resolveEditorEscapeOutcome,
+  resolveWindowEscapeAction,
+  shouldKeepCssWorkbenchOnViewChange,
+  shouldRestoreSplitOnResize,
+} from './domain/studio-overlay.machine';
 import type { WritingSkill } from './domain/writing-skills';
 import { createStudioLocaleController } from './locales/ui-strings';
 import { useElementBinding } from './runtime/dom-surfaces';
@@ -115,6 +126,10 @@ function isAbortError(error: unknown): boolean {
 function isEventInside(event: Event, selector: string): boolean {
   const el = event.target as Element | null;
   return Boolean(el && typeof el.closest === 'function' && el.closest(selector));
+}
+
+function asFocusableElement(node: unknown): HTMLElement | null {
+  return node && typeof (node as HTMLElement).focus === 'function' ? (node as HTMLElement) : null;
 }
 
 function detectPlatformModifiers(): { modKey: string; shiftKey: string; altKey: string } {
@@ -204,20 +219,6 @@ function countMarkdownWords(text: string): number {
   return words;
 }
 
-function computePaneVisibility(
-  immersive: ImmersiveMode,
-  view: string,
-  cssOpen: boolean,
-): { showMarkdownEditor: boolean; showCssWorkbench: boolean; showPreview: boolean } {
-  const leftVisible = immersive ? immersive === 'write' : view !== 'preview';
-  const showPreview = immersive ? immersive === 'preview' : view !== 'edit';
-  return {
-    showMarkdownEditor: leftVisible && !cssOpen,
-    showCssWorkbench: leftVisible && cssOpen,
-    showPreview,
-  };
-}
-
 /**
  * Why parent modals temporarily hide (`open = false`) while a child confirm/prompt/conflict
  * dialog is active: avoids dual modal focus-trap and Escape-key collisions in DSH Modal.
@@ -226,11 +227,6 @@ function computePaneVisibility(
 function isUnhandledEscapeKey(event: KeyboardEvent): boolean {
   if (event.isComposing || event.keyCode === 229) return false;
   return event.key === 'Escape' && !event.defaultPrevented;
-}
-
-function parentModalOpen(open: boolean, childOpen: boolean, promptA?: unknown, promptB?: unknown): boolean {
-  if (!open || childOpen) return false;
-  return !promptA && !promptB;
 }
 
 function buildEditorAiModel(
@@ -416,7 +412,7 @@ export function createClientPlugin(
     }
 
     function captureDialogTriggerFocus(): void {
-      const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      const active = asFocusableElement(document.activeElement);
       if (active && active.getAttribute('role') === 'menuitem') {
         const moreBtn = rootRef.current?.querySelector<HTMLElement>('[data-mdstudio-menu-trigger="more"]');
         dialogReturnFocusRef.current = moreBtn || null;
@@ -877,20 +873,23 @@ export function createClientPlugin(
       focusEditor();
     }
 
-    function dismissActiveEditorLayer(): boolean {
-      if (searchPanel.open) {
-        closeSearchPanel();
-        return true;
-      }
-      if (!writingSkills.session) return false;
-      writingSkills.cancelSession();
-      return true;
-    }
-
     function dismissEditorEscape(): 'handled' | 'defer' | false {
-      if (menuOpen || outlineOpen) return 'defer';
-      if (!panes.showMarkdownEditor) return false;
-      return dismissActiveEditorLayer() ? 'handled' : false;
+      const outcome = resolveEditorEscapeOutcome({
+        menuOpen,
+        outlineOpen,
+        showMarkdownEditor: panes.showMarkdownEditor,
+        searchOpen: searchPanel.open,
+        hasAiSession: Boolean(writingSkills.session),
+      });
+      if (outcome === 'close-search') {
+        closeSearchPanel();
+        return 'handled';
+      }
+      if (outcome === 'cancel-ai') {
+        writingSkills.cancelSession();
+        return 'handled';
+      }
+      return outcome;
     }
 
     const handleEditorShortcut = createEditorShortcuts({
@@ -974,7 +973,7 @@ export function createClientPlugin(
       selectionBubble.clear();
       selectionBubble.clearPointer();
       slashMenu.close();
-      if (cssWorkbench.open && view === 'preview' && width > 720) {
+      if (shouldRestoreSplitOnResize(cssWorkbench.open, view, width)) {
         store.updateActive({ view: 'split' });
       }
     }
@@ -1009,25 +1008,16 @@ export function createClientPlugin(
       React,
       'keydown',
       (event: KeyboardEvent) => {
-        if (event.isComposing || event.keyCode === 229) return;
-        if (event.key !== 'Escape') return;
-        const blocked = [
-          event.defaultPrevented,
-          dialogHost.open,
-          importModePrompt,
-          mergeReview,
-          docLibrary.open,
-          workspace.open,
-          writingSkills.managerOpen,
-        ].some(Boolean);
-        if (blocked) return;
-        if (menuOpen) {
-          setMenuOpen(false);
-          return;
-        }
+        if (!isUnhandledEscapeKey(event)) return;
         // Keep the docked desktop inspector open when pressing Esc inside the editor (CodeMirror Esc->Tab escape).
-        if (isEventInside(event, '.mdstudio-editor-pane')) return;
-        setDrawerOpen(false);
+        const action = resolveWindowEscapeAction({
+          hasModal: hasActiveModal(),
+          menuOpen,
+          drawerOpen,
+          inEditor: isEventInside(event, '.mdstudio-editor-pane'),
+        });
+        if (action === 'close-menu') setMenuOpen(false);
+        else if (action === 'close-drawer') setDrawerOpen(false);
       },
       menuOpen || drawerOpen,
     );
@@ -1110,9 +1100,13 @@ export function createClientPlugin(
         if (fileContext.conflictRef.current) return;
         autoSaveTimer = window.setTimeout(() => {
           autoSaveTimer = null;
-          if (store.getActive().id !== targetArticleId) return;
           const currentHandle = fileContext.linkedFile();
-          if (!currentHandle || fileContext.conflictRef.current) return;
+          const ok = canStartAutosave({
+            hasLinkedFile: Boolean(currentHandle),
+            hasConflict: fileContext.conflictRef.current,
+            sameArticle: store.getActive().id === targetArticleId,
+          });
+          if (!ok || !currentHandle) return;
           const snapshotMd = markdownRef.current;
           fileContext
             .writeFile(currentHandle, snapshotMd)
@@ -1162,7 +1156,7 @@ export function createClientPlugin(
     }
 
     function exitImmersive(): void {
-      dismissTransientOverlays({ keepSearch: true });
+      dismissTransientOverlays({ keepSearch: view !== 'preview' });
       setImmersive(null);
       window.setTimeout(() => {
         rootRef.current?.querySelector<HTMLElement>('.mdstudio-focus-btn')?.focus();
@@ -1180,15 +1174,20 @@ export function createClientPlugin(
       ].some(Boolean);
     }
 
-    function hasEditorBlockingOverlay(): boolean {
-      if (!panes.showMarkdownEditor) return false;
-      return [searchPanel.open, slashMenu.open, outlineOpen, writingSkills.session].some(Boolean);
-    }
-
     function canHandleImmersiveShortcut(action: 'toggle' | 'exit'): boolean {
-      if (hasActiveModal()) return false;
-      if (action === 'toggle') return true;
-      return ![hasEditorBlockingOverlay(), menuOpen, drawerOpen].some(Boolean);
+      return canHandleImmersiveShortcutPolicy(
+        {
+          hasModal: hasActiveModal(),
+          showMarkdownEditor: panes.showMarkdownEditor,
+          searchOpen: searchPanel.open,
+          slashOpen: slashMenu.open,
+          outlineOpen,
+          hasAiSession: Boolean(writingSkills.session),
+          menuOpen,
+          drawerOpen,
+        },
+        action,
+      );
     }
 
     useImmersiveShortcuts(React, immersive, enterImmersive, exitImmersive, canHandleImmersiveShortcut);
@@ -1198,9 +1197,24 @@ export function createClientPlugin(
       'keydown',
       (event: KeyboardEvent) => {
         if (!isUnhandledEscapeKey(event)) return;
-        const inDrawer = drawerOpen && isEventInside(event, '.mdstudio-drawer');
-        if ([hasActiveModal(), menuOpen, outlineOpen, slashMenu.open, inDrawer].some(Boolean)) return;
-        if (dismissActiveEditorLayer()) event.preventDefault();
+        const action = resolveDocumentEscapeAction({
+          hasModal: hasActiveModal(),
+          menuOpen,
+          outlineOpen,
+          slashOpen: slashMenu.open,
+          drawerOpen,
+          inDrawer: isEventInside(event, '.mdstudio-drawer'),
+          showMarkdownEditor: panes.showMarkdownEditor,
+          searchOpen: searchPanel.open,
+          hasAiSession: Boolean(writingSkills.session),
+        });
+        if (action === 'close-search') {
+          closeSearchPanel();
+          event.preventDefault();
+        } else if (action === 'cancel-ai') {
+          writingSkills.cancelSession();
+          event.preventDefault();
+        }
       },
       panes.showMarkdownEditor && (searchPanel.open || Boolean(writingSkills.session)),
     );
@@ -1345,7 +1359,7 @@ export function createClientPlugin(
             store.updateActive({ view: next });
             const containerW =
               rootRef.current?.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 1024);
-            const keepWorkbench = cssWorkbench.open && containerW <= 720 && next !== 'split';
+            const keepWorkbench = shouldKeepCssWorkbenchOnViewChange(cssWorkbench.open, containerW, next);
             if (!keepWorkbench) clearCssWorkbenchDraft();
             dismissTransientOverlays({ keepSearch: next !== 'preview', keepDrawer: true });
           },
@@ -1635,7 +1649,7 @@ export function createClientPlugin(
           React,
           t,
           ui: uiKit,
-          open: parentModalOpen(docLibrary.open, dialogHost.open, importModePrompt, mergeReview),
+          open: isParentModalOpen(docLibrary.open, dialogHost.open, importModePrompt, mergeReview),
           docs: library.docs,
           trash: library.trash || [],
           activeId: library.activeId,
@@ -1695,7 +1709,7 @@ export function createClientPlugin(
           React,
           t,
           ui: uiKit,
-          open: parentModalOpen(workspace.open, dialogHost.open),
+          open: isParentModalOpen(workspace.open, dialogHost.open),
           loading: workspace.loading,
           entries: workspace.entries,
           name: workspace.name,
@@ -1726,7 +1740,7 @@ export function createClientPlugin(
           React,
           t,
           ui: uiKit,
-          open: parentModalOpen(writingSkills.managerOpen, dialogHost.open),
+          open: isParentModalOpen(writingSkills.managerOpen, dialogHost.open),
           targetId: writingSkills.managerTargetId,
           modKey,
           skills: writingSkills.skills,

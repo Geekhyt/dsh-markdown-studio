@@ -84,7 +84,7 @@ export function createArticleExporter(options: ArticleExportOptions): ArticleExp
       }
       options.updateSettings(patch);
       options.notify(t('toast.themeImported'));
-    } catch (error) {
+    } catch {
       options.notify(t('toast.themeInvalid'), 'error');
     }
   }

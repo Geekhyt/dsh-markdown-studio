@@ -216,7 +216,7 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
   const [recoveryAvailable, setRecoveryAvailable] = React.useState(function () {
     try {
       return !!window.localStorage.getItem(IMPORT_RECOVERY_KEY);
-    } catch (error) {
+    } catch {
       return false;
     }
   });
@@ -229,7 +229,7 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
       window.localStorage.setItem(IMPORT_RECOVERY_KEY, JSON.stringify(backup));
       setRecoveryAvailable(true);
       return { ok: true, previous };
-    } catch (error) {
+    } catch {
       options.notify(t('library.recoveryFailed'), 'error');
       return { ok: false, previous };
     }
@@ -365,7 +365,7 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
         } catch (error) {
           try {
             await writable.abort();
-          } catch (abortError) {
+          } catch {
             /* ignore */
           }
           options.notify(

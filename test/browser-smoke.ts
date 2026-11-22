@@ -1540,6 +1540,118 @@ await page.waitForTimeout(60);
 await page.keyboard.press('Escape');
 await page.waitForSelector('.mdstudio-skill-modal', { state: 'detached', timeout: 3000 });
 
+// Narrow container matrix (360px / 640px / 720px / 760px DSH expanded sidebar): zero horizontal overflow & in-bounds chrome
+for (const width of [360, 640, 720, 760]) {
+  await page.setViewportSize({ width, height: 820 });
+  await page.waitForTimeout(80);
+  const layoutCheck = await page.evaluate(() => {
+    const rootEl = document.querySelector<HTMLElement>('.mdstudio-root');
+    const copyBtn = document.querySelector<HTMLElement>('.mdstudio-copy-btn');
+    if (!rootEl || !copyBtn) return { ok: false, reason: 'missing root or copy button' };
+    const rootRect = rootEl.getBoundingClientRect();
+    const copyRect = copyBtn.getBoundingClientRect();
+    const overflow = rootEl.scrollWidth - rootEl.clientWidth;
+    if (overflow > 1) return { ok: false, reason: `root overflow ${overflow}px` };
+    if (copyRect.width <= 0 || copyRect.right > rootRect.right + 1) {
+      return { ok: false, reason: `copy button clipped (${copyRect.right} > ${rootRect.right})` };
+    }
+    return { ok: true, reason: '' };
+  });
+  assert.ok(layoutCheck.ok, `narrow container ${width}px layout holds: ${layoutCheck.reason}`);
+}
+
+// Seeded deterministic interactive Monkey Bot: random interleaving across overlays, modes, themes & widths
+await page.setViewportSize({ width: 1280, height: 860 });
+await page.waitForTimeout(60);
+{
+  let monkeySeed = 0x51a7e001;
+  const nextRand = (): number => {
+    monkeySeed = (monkeySeed + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(monkeySeed ^ (monkeySeed >>> 15), 1 | monkeySeed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const modKey = process.platform === 'darwin' ? 'Meta' : 'Control';
+  const widths = [1280, 760, 640, 390];
+  const clickIfVisible = async (selector: string): Promise<void> => {
+    const loc = page.locator(selector).first();
+    if ((await loc.count()) > 0 && (await loc.isVisible())) {
+      await loc.click({ timeout: 1500 }).catch(() => {});
+    }
+  };
+  const monkeySteps: Array<() => Promise<void>> = [
+    async () => clickIfVisible('button[aria-label="设置"]'),
+    async () => clickIfVisible('button[aria-label="大纲"]'),
+    async () => clickIfVisible('button[aria-label^="搜索"]'),
+    async () => clickIfVisible('.mdstudio-focus-btn'),
+    async () => clickIfVisible('.mdstudio-immersive-mode:not(.is-active)'),
+    async () => clickIfVisible('.mdstudio-immersive-exit'),
+    async () => clickIfVisible('.mdstudio-segmented button:not(.is-active)'),
+    async () => {
+      await page.keyboard.press(`${modKey}+f`);
+    },
+    async () => {
+      await page.keyboard.press('Escape');
+    },
+    async () => {
+      const w = widths[Math.floor(nextRand() * widths.length)];
+      await page.setViewportSize({ width: w, height: 820 });
+    },
+    async () => {
+      await page.evaluate(() => {
+        if (document.body.hasAttribute('data-ds-dark-theme')) document.body.removeAttribute('data-ds-dark-theme');
+        else document.body.setAttribute('data-ds-dark-theme', 'true');
+      });
+    },
+  ];
+  for (let step = 0; step < 36; step++) {
+    const action = monkeySteps[Math.floor(nextRand() * monkeySteps.length)];
+    await action();
+    await page.waitForTimeout(35);
+    const inv = await page.evaluate(() => {
+      const rootEl = document.querySelector<HTMLElement>('.mdstudio-root');
+      const overflow = rootEl ? rootEl.scrollWidth - rootEl.clientWidth : 0;
+      const openModals = document.querySelectorAll('.mdstudio-modal-scrim').length;
+      return { overflow, openModals };
+    });
+    assert.ok(inv.overflow <= 1, `monkey step ${step} kept zero root overflow (${inv.overflow}px)`);
+    assert.ok(inv.openModals <= 1, `monkey step ${step} never mounted dual modals (${inv.openModals})`);
+    assert.deepEqual(errors, [], `monkey step ${step} produced zero page errors`);
+  }
+  await page.evaluate(() => {
+    document.body.removeAttribute('data-ds-dark-theme');
+    const active = document.activeElement;
+    if (active && typeof (active as HTMLElement).blur === 'function') (active as HTMLElement).blur();
+  });
+  await page.setViewportSize({ width: 1280, height: 860 });
+  await page.waitForTimeout(60);
+  // Liveness: repeated document-level Escape must cleanly unwind all transient layers back to normal workspace
+  for (let esc = 0; esc < 8; esc++) {
+    await page.evaluate(() => {
+      const active = document.activeElement;
+      if (active && typeof (active as HTMLElement).blur === 'function') (active as HTMLElement).blur();
+    });
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(30);
+  }
+  const cleanState = await page.evaluate(() => ({
+    immersive: document.querySelector('.mdstudio-root')?.getAttribute('data-mdstudio-immersive') || null,
+    drawer: document.querySelectorAll('.mdstudio-drawer').length,
+    search: document.querySelectorAll('.mdstudio-searchbar').length,
+    outline: document.querySelectorAll('.mdstudio-outline').length,
+    slash: document.querySelectorAll('.mdstudio-slash').length,
+    modals: document.querySelectorAll('.mdstudio-modal-scrim').length,
+  }));
+  assert.deepEqual(
+    cleanState,
+    { immersive: null, drawer: 0, search: 0, outline: 0, slash: 0, modals: 0 },
+    `monkey bot Escape liveness converged cleanly: ${JSON.stringify(cleanState)}`,
+  );
+  // Ensure split view is active before the final empty-article check
+  await clickIfVisible('.mdstudio-segmented button[aria-label="分栏"]');
+  await page.waitForTimeout(60);
+}
+
 await page.locator('button[aria-label="更多"]').click();
 await page.getByRole('menuitem', { name: '清空当前文章' }).click();
 await page.waitForSelector('.mdstudio-dialog-submit', { timeout: 3000 });

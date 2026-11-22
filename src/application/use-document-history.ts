@@ -29,6 +29,7 @@ export interface DocumentHistoryOptions {
   onApply: (markdown: string, title?: string) => void;
   getSelection: () => SelectionRange;
   focusRange: (start: number, end: number) => void;
+  now?: () => number;
 }
 
 export interface DocumentHistoryApi {
@@ -86,7 +87,7 @@ export function useDocumentHistory(options: DocumentHistoryOptions): DocumentHis
       return;
     }
     if (!opts.resetHistory) {
-      const now = Date.now();
+      const now = (options.now || Date.now)();
       const canCoalesce =
         !opts.boundary && !history.forceBoundary && history.undo.length > 0 && now - history.lastAt < 700;
       if (!canCoalesce) {

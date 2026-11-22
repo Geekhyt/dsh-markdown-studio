@@ -7,7 +7,7 @@ import { type Palette, v } from '../palette';
 
 /* ----------------------------------------------------- strong / highlight -- */
 
-export var STRONG = {
+export const STRONG = {
   ink: function () {
     return [];
   },
@@ -42,7 +42,7 @@ export var STRONG = {
   },
 };
 
-export var MARK = {
+export const MARK = {
   /** Soft rounded highlight (classic / tech / night). */
   soft: function () {
     return [rule('mark', 'border-radius: 4px;')];
@@ -69,7 +69,7 @@ export var MARK = {
 
 type AlertKind = 'note' | 'tip' | 'important' | 'warning' | 'caution';
 
-var LIGHT_ALERT_HUES: Record<AlertKind, string> = {
+const LIGHT_ALERT_HUES: Record<AlertKind, string> = {
   note: '#1d4ed8',
   tip: '#166534',
   important: '#6d28d9',
@@ -77,7 +77,7 @@ var LIGHT_ALERT_HUES: Record<AlertKind, string> = {
   caution: '#b91c1c',
 };
 
-var DARK_ALERT_HUES: Record<AlertKind, string> = {
+const DARK_ALERT_HUES: Record<AlertKind, string> = {
   note: '#8ab4ff',
   tip: '#7fd3a0',
   important: '#c0a5ff',
@@ -85,18 +85,18 @@ var DARK_ALERT_HUES: Record<AlertKind, string> = {
   caution: '#ff9a9a',
 };
 
-var ALERT_KINDS: AlertKind[] = ['note', 'tip', 'important', 'warning', 'caution'];
+const ALERT_KINDS: AlertKind[] = ['note', 'tip', 'important', 'warning', 'caution'];
 
 function alertTitleRules(p: Palette, surfaceHex: string): string[] {
-  var dark = isDark(p.bg);
-  var hues = dark ? DARK_ALERT_HUES : LIGHT_ALERT_HUES;
+  const dark = isDark(p.bg);
+  const hues = dark ? DARK_ALERT_HUES : LIGHT_ALERT_HUES;
   return ALERT_KINDS.map(function (kind) {
-    var safeTitle = /^#[0-9a-f]{6}$/i.test(surfaceHex) ? ensureContrast(hues[kind], surfaceHex, 4.5) : hues[kind];
+    const safeTitle = /^#[0-9a-f]{6}$/i.test(surfaceHex) ? ensureContrast(hues[kind], surfaceHex, 4.5) : hues[kind];
     return rule('.mdstudio-alert-' + kind + ' .mdstudio-alert-title', 'color: ' + safeTitle + ';');
   });
 }
 
-export var ALERT = {
+export const ALERT = {
   /** Soft 12px borderless card (classic / night). */
   soft: function (p: Palette) {
     return [rule('.mdstudio-alert', 'border-radius: 12px;')].concat(alertTitleRules(p, p.alertBg));
@@ -138,7 +138,7 @@ export var ALERT = {
 
 /* ---------------------------------------------------------------- lists -- */
 
-export var LIST = {
+export const LIST = {
   disc: function () {
     return [];
   },
@@ -184,7 +184,7 @@ export var LIST = {
 
 /* --------------------------------------------------------- opening lead -- */
 
-export var LEAD = {
+export const LEAD = {
   /** Quiet muted lead paragraph (tech). */
   plain: function () {
     return [];

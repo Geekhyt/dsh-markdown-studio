@@ -195,14 +195,88 @@ for (const file of files('src')) {
   visitAst(sf, null);
 }
 
-// Verify workspace AI rules & Vercel React Best Practices skill stay present
+// Verify workspace AI rules & skills stay present
 assert.ok(fs.existsSync(path.join(root, 'AGENTS.md')), 'AGENTS.md exists at repository root');
 assert.ok(
   fs.existsSync(path.join(root, '.agents/skills/vercel-react-best-practices/SKILL.md')),
   '.agents/skills/vercel-react-best-practices/SKILL.md exists in workspace',
 );
+assert.ok(
+  fs.existsSync(path.join(root, '.agents/skills/verify-state-machines/SKILL.md')),
+  '.agents/skills/verify-state-machines/SKILL.md exists in workspace',
+);
+assert.ok(
+  fs.existsSync(path.join(root, '.agents/skills/bug-to-rule/SKILL.md')),
+  '.agents/skills/bug-to-rule/SKILL.md exists in workspace',
+);
 
-// Brand Naming Purity Gate & Global Business-Layer useEffect / useLayoutEffect Ban
+// Filepath contract: `src/domain/*.machine.ts` must stay pure & deterministic (zero browser/timer/clock/random/React)
+const machineFiles = files('src').filter((file) => file.endsWith('.machine.ts'));
+assert.ok(machineFiles.length >= 2, 'deterministic *.machine.ts modules are discovered');
+const FORBIDDEN_MACHINE_IDENTIFIERS = new Set([
+  'Date',
+  'window',
+  'document',
+  'setTimeout',
+  'setInterval',
+  'requestAnimationFrame',
+  'performance',
+  'fetch',
+  'localStorage',
+  'indexedDB',
+]);
+for (const file of machineFiles) {
+  const normalized = file.replace(/\\/g, '/');
+  assert.ok(normalized.startsWith('src/domain/'), `${file} must live inside src/domain/`);
+  const source = fs.readFileSync(path.join(root, file), 'utf8');
+  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  function checkMachineNode(node: ts.Node): void {
+    if (ts.isPropertyAccessExpression(node) && node.getText(sf) === 'Math.random') {
+      const line = sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
+      assert.fail(`${file}:${line} violates *.machine.ts determinism contract (Math.random)`);
+    }
+    if (ts.isIdentifier(node) && FORBIDDEN_MACHINE_IDENTIFIERS.has(node.text)) {
+      const parent = node.parent;
+      const isPropName =
+        (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+        (ts.isPropertyAssignment(parent) && parent.name === node) ||
+        (ts.isPropertySignature(parent) && parent.name === node);
+      if (!isPropName) {
+        const line = sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
+        assert.fail(`${file}:${line} violates *.machine.ts determinism contract (${node.text})`);
+      }
+    }
+    ts.forEachChild(node, checkMachineNode);
+  }
+  checkMachineNode(sf);
+}
+
+// Monotonic Z-Index stacking hierarchy & zero raw numeric `z-index` literals in `src/`
+const { Z_LAYERS } = await import('../src/ui/styles');
+const CANONICAL_Z_ORDER: ReadonlyArray<keyof typeof Z_LAYERS> = [
+  'toolbarFade',
+  'drawerDocked',
+  'outline',
+  'slash',
+  'selectionBubble',
+  'drawerOverlay',
+  'immersiveDock',
+  'modalScrim',
+  'menuScrim',
+  'menu',
+  'toast',
+  'tooltip',
+];
+for (let i = 1; i < CANONICAL_Z_ORDER.length; i++) {
+  const prev = CANONICAL_Z_ORDER[i - 1];
+  const curr = CANONICAL_Z_ORDER[i];
+  assert.ok(
+    Z_LAYERS[prev] < Z_LAYERS[curr],
+    `Z_LAYERS monotonicity violated: ${prev} (${Z_LAYERS[prev]}) must be < ${curr} (${Z_LAYERS[curr]})`,
+  );
+}
+
+// Brand Naming Purity Gate, Bug->Rule Static Gates & Global Business-Layer useEffect / useLayoutEffect Ban
 const allSrcFiles = [...files('src'), ...files('host'), 'index.ts'];
 const ALLOWED_DATA_ATTRS = new Set([
   'data-window-drag',
@@ -226,6 +300,33 @@ for (const file of allSrcFiles) {
       !/\buse(?:Layout)?Effect\b/.test(code),
       `${file} must not call useEffect/useLayoutEffect outside src/runtime/`,
     );
+  }
+
+  // Cross-realm safety: ban `instanceof Element` / `instanceof HTMLElement` in src/
+  if (normalized.startsWith('src/')) {
+    assert.ok(
+      !/\binstanceof\s+(?:HTML)?Element\b/.test(code),
+      `${file} must not use fragile cross-realm instanceof Element/HTMLElement (use feature duck-typing)`,
+    );
+    // Ban raw numeric `z-index: <digits>` in src/ (must reference Z_LAYERS)
+    assert.ok(
+      !/z-index\s*:\s*\d+/.test(code),
+      `${file} must not hardcode raw numeric z-index (use Z_LAYERS from src/ui/styles.ts)`,
+    );
+    // Dynamic <style>/<script> injection must always tag data-plugin="dsh-markdown-studio" for clean hot-disable
+    if (/createElement\(\s*['"](?:style|script)['"]\s*\)/.test(code)) {
+      assert.ok(
+        code.includes('data-plugin') && code.includes('dsh-markdown-studio'),
+        `${file} dynamically creates <style>/<script> without tagging data-plugin="dsh-markdown-studio"`,
+      );
+    }
+    // Container-driven responsive rule: panel UI files must not branch directly on `window.innerWidth <=/>`
+    if (normalized.startsWith('src/ui/') && normalized !== 'src/ui/dsh-primitives.ts') {
+      assert.ok(
+        !/window\.innerWidth\s*[<>]=?/.test(code),
+        `${file} must measure container .clientWidth (or @container mdstudio) instead of branching on window.innerWidth`,
+      );
+    }
   }
 
   assert.ok(!source.includes('#nice'), `${file} must not reference legacy #nice selector`);
