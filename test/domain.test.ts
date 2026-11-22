@@ -11,6 +11,7 @@ import {
 } from '../src/domain/images';
 import { MAX_CUSTOM_CSS_CHARS } from '../src/domain/custom-themes';
 import { clamp, parseThemePatch, sanitizeSettings } from '../src/domain/settings';
+import { computeSafePopoverPos, computeUnobstructedWidth, type SurfaceRect } from '../src/domain/surface-geometry';
 import { DEFAULT_SETTINGS, getTheme } from '../src/themes';
 
 assert.equal(deriveTitle('---\ntitle: 标题\n---\n\n正文', '未命名'), '标题');
@@ -188,4 +189,90 @@ assert.equal(
   'Real Heading',
   'markdownHeadings skips YAML frontmatter comments',
 );
-console.log('30 settings & image asset edge checks passed.');
+
+// Unified surface-geometry placement solver (overlay drawer + immersive dock avoidance)
+const editorSurface: SurfaceRect = { left: 0, top: 84, right: 840, bottom: 720, width: 840, height: 636 };
+const overlayDrawer: SurfaceRect = { left: 504, top: 44, right: 840, bottom: 720, width: 336, height: 676 };
+const dockedDrawer: SurfaceRect = { left: 840, top: 44, right: 1176, bottom: 720, width: 336, height: 676 };
+const immersiveDock: SurfaceRect = { left: 704, top: 96, right: 824, bottom: 134, width: 120, height: 38 };
+
+assert.equal(computeUnobstructedWidth(editorSurface), 840, 'no obstacles leaves full surface width');
+assert.equal(
+  computeUnobstructedWidth(editorSurface, [overlayDrawer]),
+  504,
+  'full-height right overlay drawer subtracts occluded width',
+);
+assert.equal(
+  computeUnobstructedWidth(editorSurface, [dockedDrawer]),
+  840,
+  'docked drawer outside surface right edge does not shrink unobstructed width',
+);
+assert.equal(
+  computeUnobstructedWidth(editorSurface, [immersiveDock]),
+  840,
+  'compact corner dock does not collapse full-surface width',
+);
+
+const outlineUnderDrawer = computeSafePopoverPos({
+  surface: editorSurface,
+  width: 280,
+  height: 160,
+  preferredLeft: 306,
+  preferredTop: 6,
+  pad: 10,
+  obstacles: [overlayDrawer],
+});
+assert.equal(outlineUnderDrawer.left, 214, 'Outline shifts left to stay clear of overlay SettingsDrawer');
+assert.equal(outlineUnderDrawer.availWidth, 504);
+
+const pillVsDock = computeSafePopoverPos({
+  surface: editorSurface,
+  width: 92,
+  height: 32,
+  preferredLeft: 732,
+  preferredTop: 20,
+  pad: 10,
+  obstacles: [immersiveDock],
+});
+assert.equal(pillVsDock.top, 56, 'SelectionBubble shifts below colliding top-right ImmersiveDock');
+
+const pillClearOfDock = computeSafePopoverPos({
+  surface: editorSurface,
+  width: 92,
+  height: 32,
+  preferredLeft: 120,
+  preferredTop: 20,
+  obstacles: [immersiveDock],
+});
+assert.equal(pillClearOfDock.top, 20, 'non-colliding popover keeps preferred top');
+
+const tinySurface: SurfaceRect = { left: 0, top: 0, right: 260, bottom: 80, width: 260, height: 80 };
+const bottomDock: SurfaceRect = { left: 140, top: 30, right: 250, bottom: 70, width: 110, height: 40 };
+const shiftedLeft = computeSafePopoverPos({
+  surface: tinySurface,
+  width: 90,
+  height: 32,
+  preferredLeft: 150,
+  preferredTop: 32,
+  pad: 10,
+  obstacles: [bottomDock],
+});
+assert.equal(
+  shiftedLeft.left,
+  42,
+  'falls back to horizontal shift when shifting below obstacle would overflow surface',
+);
+
+const impossibleObstacle: SurfaceRect = { left: 0, top: 0, right: 260, bottom: 80, width: 260, height: 40 };
+const stuckFallback = computeSafePopoverPos({
+  surface: tinySurface,
+  width: 240,
+  height: 32,
+  preferredLeft: 10,
+  preferredTop: 10,
+  pad: 10,
+  obstacles: [impossibleObstacle],
+});
+assert.equal(stuckFallback.left, 10, 'returns clamped coordinates cleanly when no shift fits');
+
+console.log('40 settings, asset & surface-geometry edge checks passed.');

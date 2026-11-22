@@ -147,6 +147,19 @@ function withInputRef(
   };
 }
 
+function alignFixedTooltip(el: HTMLSpanElement | null, targetLeft: number, targetTop: number): void {
+  if (!el || typeof window === 'undefined') return;
+  const rect = el.getBoundingClientRect();
+  if (!rect.width) return;
+  const vw = window.innerWidth || 1024;
+  const half = rect.width / 2;
+  const clampedCenter = Math.min(Math.max(targetLeft, half + 8), Math.max(half + 8, vw - half - 8));
+  const shiftX = Math.round(clampedCenter - (rect.left + half));
+  const shiftY = Math.round(targetTop - rect.top);
+  if (Math.abs(shiftX) > 1) el.style.left = Math.round(targetLeft + shiftX) + 'px';
+  if (Math.abs(shiftY) > 1) el.style.top = Math.round(targetTop + shiftY) + 'px';
+}
+
 export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPrimitivesModule | null) {
   const h = React.createElement;
   const FallbackIcon = createIcon(React);
@@ -263,6 +276,8 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
       : child;
   }
 
+  let tooltipScrollQuietUntil = 0;
+
   function FallbackTooltip(props: DshTooltipProps): ReactElement {
     const [tip, setTip] = React.useState<{ left: number; top: number } | null>(null);
     const [tipId] = React.useState(() => 'mdstudio-tip-' + Math.random().toString(36).slice(2, 8));
@@ -285,6 +300,10 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
     const hide = function (): void {
       setTip(null);
     };
+    const hideOnScroll = function (): void {
+      tooltipScrollQuietUntil = Date.now() + 250;
+      setTip(null);
+    };
     useDocumentEvent(
       React,
       'keydown',
@@ -295,6 +314,7 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
     );
     useWindowEvent(React, 'blur', hide, Boolean(tip));
     useWindowEvent(React, 'resize', hide, Boolean(tip));
+    useWindowEvent(React, 'scroll', hideOnScroll, Boolean(tip), true);
     const resolved = tip ? (typeof props.label === 'function' ? props.label() : props.label) : '';
     const visible = Boolean(!props.disabled && tip && resolved);
     return h(
@@ -305,6 +325,7 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
         'aria-describedby': visible ? tipId : child.props['aria-describedby'],
         onMouseEnter: function (event: ReactNamespace.MouseEvent<HTMLElement>) {
           child.props.onMouseEnter?.(event);
+          if (Date.now() < tooltipScrollQuietUntil) return;
           show(event.currentTarget);
         },
         onMouseLeave: function (event: ReactNamespace.MouseEvent<HTMLElement>) {
@@ -329,6 +350,9 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
             'span',
             {
               id: tipId,
+              ref: function (el: HTMLSpanElement | null): void {
+                alignFixedTooltip(el, tip.left, tip.top);
+              },
               className: 'mdstudio-tooltip',
               role: 'tooltip',
               style: { left: tip.left, top: tip.top, ...(props.maxWidth ? { maxWidth: props.maxWidth } : {}) },

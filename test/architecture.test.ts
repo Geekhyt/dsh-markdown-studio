@@ -346,6 +346,20 @@ for (const file of allSrcFiles) {
 const iconSvg = fs.readFileSync(path.join(root, 'assets/icon.svg'), 'utf8');
 assert.ok(!/\bmds-/.test(iconSvg), 'assets/icon.svg uses mdstudio-* gradient IDs');
 
+// CSS containing-block safety: floating chrome hosting `FallbackTooltip` (`position: fixed`)
+// must put `backdrop-filter` / `transform` / `filter` on a `::before` layer, never on the container itself.
+const { CHROME_CSS } = await import('../src/ui/styles');
+const dockRuleMatch = CHROME_CSS.match(/\.mdstudio-immersive-dock\s*\{([^}]*)\}/);
+assert.ok(dockRuleMatch, 'CHROME_CSS defines .mdstudio-immersive-dock');
+assert.ok(
+  !/\b(?:backdrop-filter|-webkit-backdrop-filter|transform|filter)\s*:/.test(dockRuleMatch[1]),
+  '.mdstudio-immersive-dock must keep backdrop-filter/transform on ::before so position:fixed tooltips escape it',
+);
+assert.ok(
+  /\.mdstudio-immersive-dock::before\s*\{[^}]*backdrop-filter\s*:/.test(CHROME_CSS),
+  '.mdstudio-immersive-dock::before owns the frosted glass backdrop-filter layer',
+);
+
 // i18n hygiene: zh / en dictionaries stay in exact key parity and every key is referenced by
 // runtime source (dynamic `theme.<id>.name|desc` and `code.<id>.name` lookups are allowlisted).
 const { UI_STRINGS_ZH, UI_STRINGS_EN } = await import('../src/locales/ui-strings');

@@ -1647,9 +1647,111 @@ await page.waitForTimeout(60);
     { immersive: null, drawer: 0, search: 0, outline: 0, slash: 0, modals: 0 },
     `monkey bot Escape liveness converged cleanly: ${JSON.stringify(cleanState)}`,
   );
-  // Ensure split view is active before the final empty-article check
+  // Ensure split view is active before cross-component combo regressions
   await clickIfVisible('.mdstudio-segmented button[aria-label="分栏"]');
   await page.waitForTimeout(60);
+}
+
+// Cross-component combination regressions (tooltip containment, obstacle-aware popovers,
+// scroll continuity, SearchBar Mod+F, narrow skill modal, and CssWorkbench clear reset)
+{
+  // Reload sample so headings and scrollable content are guaranteed after monkey bot
+  await page.locator('button[aria-label="更多"]').click();
+  await page.getByRole('menuitem', { name: '载入示例文章' }).click();
+  const sampleConfirm = page.locator('.mdstudio-dialog-submit');
+  if ((await sampleConfirm.count()) > 0) await sampleConfirm.click();
+  await page.waitForTimeout(160);
+
+  // 1. ImmersiveDock tooltip stays inside viewport & Immersive Write -> Preview preserves scroll
+  await page.locator('.mdstudio-focus-btn').click();
+  await page.waitForSelector('.mdstudio-immersive-dock', { timeout: 3000 });
+  await page.locator('.mdstudio-immersive-exit').hover();
+  await page.waitForTimeout(80);
+  const dockTip = await page.evaluate(() => {
+    const tip = document.querySelector('.mdstudio-tooltip')?.getBoundingClientRect();
+    return tip ? { left: tip.left, right: tip.right, vw: window.innerWidth } : null;
+  });
+  assert.ok(
+    dockTip && dockTip.left >= 0 && dockTip.right <= dockTip.vw,
+    `ImmersiveDock tooltip stays inside viewport (${JSON.stringify(dockTip)})`,
+  );
+  await page.evaluate(() => {
+    const cm = document.querySelector('.cm-scroller') as HTMLElement | null;
+    if (cm) cm.scrollTop = Math.round((cm.scrollHeight - cm.clientHeight) * 0.55);
+  });
+  await page.waitForTimeout(80);
+  await page.locator('.mdstudio-immersive-mode').nth(1).click();
+  await page.waitForSelector('.mdstudio-device-screen', { timeout: 3000 });
+  await page.waitForTimeout(80);
+  const immersivePreviewScroll = await page.evaluate(
+    () => (document.querySelector('.mdstudio-device-screen') as HTMLElement | null)?.scrollTop || 0,
+  );
+  assert.ok(immersivePreviewScroll > 100, `Immersive Write -> Preview restores scroll (${immersivePreviewScroll}px)`);
+  await page.locator('.mdstudio-immersive-exit').click();
+  await page.waitForTimeout(80);
+
+  // 2. Edit view (860px) + Overlay SettingsDrawer vs Outline non-overlap
+  await page.setViewportSize({ width: 860, height: 820 });
+  await page.waitForTimeout(80);
+  await page.locator('.mdstudio-segmented button[aria-label="编辑"]').click();
+  await page.locator('.mdstudio-style-btn').click();
+  await page.waitForSelector('.mdstudio-drawer', { timeout: 3000 });
+  await page.locator('.mdstudio-outline-anchor button').click();
+  await page.waitForSelector('.mdstudio-outline', { timeout: 3000 });
+  const outlineVsDrawer = await page.evaluate(() => {
+    const d = document.querySelector('.mdstudio-drawer')!.getBoundingClientRect();
+    const o = document.querySelector('.mdstudio-outline')!.getBoundingClientRect();
+    return { outlineRight: Math.round(o.right), drawerLeft: Math.round(d.left) };
+  });
+  assert.ok(
+    outlineVsDrawer.outlineRight <= outlineVsDrawer.drawerLeft,
+    `Outline avoids overlay SettingsDrawer (${JSON.stringify(outlineVsDrawer)})`,
+  );
+  await page.keyboard.press('Escape');
+  await page.locator('.mdstudio-drawer .mdstudio-icon-btn').click();
+
+  // 3. SearchBar focused Mod+F prevents native find & re-selects query
+  await page.setViewportSize({ width: 1280, height: 860 });
+  await page.locator('.mdstudio-segmented button[aria-label="分栏"]').click();
+  await page.locator('button[aria-label^="搜索"]').click();
+  await page.waitForSelector('.mdstudio-searchbar', { timeout: 3000 });
+  const searchInput = page.locator('.mdstudio-search-input').first();
+  await searchInput.fill('Markdown');
+  const modFHandled = await searchInput.evaluate((el: HTMLInputElement) => {
+    el.focus();
+    el.setSelectionRange(0, 0);
+    const ev = new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true });
+    el.dispatchEvent(ev);
+    return { prevented: ev.defaultPrevented, start: el.selectionStart, end: el.selectionEnd };
+  });
+  assert.equal(modFHandled.prevented, true, 'Mod+F inside SearchBar prevents native browser find');
+  assert.equal(modFHandled.end, 8, 'Mod+F inside SearchBar selects full query');
+  await page.locator('.mdstudio-searchbar .mdstudio-search-close').click();
+
+  // 4. Narrow 390px SkillManagerDialog builtin card stays inside modal bounds
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(80);
+  await page.locator('button[aria-label="更多"]').click();
+  await page.locator('.mdstudio-menu-item', { hasText: '写作 Skill' }).click();
+  await page.waitForSelector('.mdstudio-skill-modal', { timeout: 3000 });
+  const skillCardFit = await page.evaluate(() => {
+    const card = document.querySelector('.mdstudio-skill-builtin-head')!.getBoundingClientRect();
+    const copy = document.querySelector('.mdstudio-skill-builtin-copy')!.getBoundingClientRect();
+    return { cardRight: Math.round(card.right), copyRight: Math.round(copy.right) };
+  });
+  assert.ok(
+    skillCardFit.copyRight <= skillCardFit.cardRight + 1,
+    `narrow SkillManagerDialog card stays within bounds (${JSON.stringify(skillCardFit)})`,
+  );
+  await page.keyboard.press('Escape');
+  await page.setViewportSize({ width: 1280, height: 860 });
+  await page.waitForTimeout(80);
+
+  // 5. Open CssWorkbench before final Clear Article to verify document replacement resets workbench
+  await page.locator('.mdstudio-style-btn').click();
+  await page.waitForSelector('.mdstudio-drawer', { timeout: 3000 });
+  await page.locator('.mdstudio-section-action').click();
+  await page.waitForSelector('.mdstudio-css-workbench', { timeout: 3000 });
 }
 
 await page.locator('button[aria-label="更多"]').click();
@@ -1657,6 +1759,7 @@ await page.getByRole('menuitem', { name: '清空当前文章' }).click();
 await page.waitForSelector('.mdstudio-dialog-submit', { timeout: 3000 });
 await page.locator('.mdstudio-dialog-submit').click();
 await page.waitForTimeout(160);
+assert.equal(await page.locator('.mdstudio-css-workbench').count(), 0, 'clearing article closes CssWorkbench');
 assert.equal(await page.locator('.mdstudio-device').count(), 0, 'empty preview renders no placeholder card');
 assert.equal(await page.locator('.mdstudio-preview-empty').count(), 0, 'empty preview has no illustration or prompt');
 assert.equal(

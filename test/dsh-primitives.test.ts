@@ -763,4 +763,112 @@ const h = React.createElement;
   console.log('ok - FallbackMenu fixed viewport positioning escapes overflow containers');
 }
 
+// 9. FallbackTooltip scroll dismissal, scroll-quiet suppression, and containing-block/viewport alignment
+{
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  let root: Root | null = null;
+  const kit = createUiKit(React, null);
+  const origRect = win.HTMLElement.prototype.getBoundingClientRect;
+  const origInnerWidth = win.innerWidth;
+  const origInnerHeight = win.innerHeight;
+  Object.defineProperty(win, 'innerWidth', { value: 1000, configurable: true });
+  Object.defineProperty(win, 'innerHeight', { value: 700, configurable: true });
+  let simulateTrappedContainingBlock = false;
+  win.HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement): DOMRect {
+    if (this.classList.contains('mdstudio-tooltip')) {
+      const styleLeft = Number.parseFloat(this.style.left || '0');
+      const styleTop = Number.parseFloat(this.style.top || '0');
+      const offsetX = simulateTrappedContainingBlock ? 400 : 0;
+      const offsetY = simulateTrappedContainingBlock ? 12 : 0;
+      const width = 120;
+      const height = 26;
+      const left = styleLeft - width / 2 + offsetX;
+      const top = styleTop + offsetY;
+      return {
+        left,
+        right: left + width,
+        top,
+        bottom: top + height,
+        width,
+        height,
+        x: left,
+        y: top,
+        toJSON: () => ({}),
+      } as DOMRect;
+    }
+    return {
+      left: 930,
+      right: 990,
+      top: 12,
+      bottom: 44,
+      width: 60,
+      height: 32,
+      x: 930,
+      y: 12,
+      toJSON: () => ({}),
+    } as DOMRect;
+  };
+  try {
+    simulateTrappedContainingBlock = true;
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(
+        h(
+          'div',
+          null,
+          h(kit.Tooltip, {
+            label: 'Exit immersive · Esc',
+            side: 'bottom',
+            children: h('button', { type: 'button', id: 'scroll-tip-a' }, 'Exit'),
+          }),
+          h(kit.Tooltip, {
+            label: 'Delete row',
+            side: 'top',
+            children: h('button', { type: 'button', id: 'scroll-tip-b' }, 'Delete'),
+          }),
+        ),
+      );
+    });
+    const btnA = container.querySelector<HTMLButtonElement>('#scroll-tip-a')!;
+    const btnB = container.querySelector<HTMLButtonElement>('#scroll-tip-b')!;
+    await act(async () => {
+      btnA.dispatchEvent(new win.MouseEvent('mouseover', { bubbles: true }));
+    });
+    const tip = container.querySelector<HTMLElement>('.mdstudio-tooltip')!;
+    assert.ok(tip, 'tooltip renders on hover');
+    const adjustedLeft = Number.parseFloat(tip.style.left);
+    assert.ok(adjustedLeft < 600, `alignFixedTooltip compensates trapped containing block (left=${adjustedLeft})`);
+
+    // Capture-phase scroll dismisses open tooltip and suppresses synthetic post-scroll mouseenter
+    await act(async () => {
+      win.dispatchEvent(new win.Event('scroll'));
+    });
+    assert.equal(container.querySelector('.mdstudio-tooltip'), null, 'window capture scroll dismisses tooltip');
+    await act(async () => {
+      btnB.dispatchEvent(new win.MouseEvent('mouseover', { bubbles: true }));
+    });
+    assert.equal(
+      container.querySelector('.mdstudio-tooltip'),
+      null,
+      'synthetic mouseenter immediately after scroll does not strobe a new tooltip',
+    );
+    // Keyboard focus still opens tooltip immediately even inside the scroll-quiet window
+    simulateTrappedContainingBlock = false;
+    await act(async () => {
+      btnB.focus();
+    });
+    assert.ok(container.querySelector('.mdstudio-tooltip'), 'keyboard focus opens tooltip immediately');
+  } finally {
+    win.HTMLElement.prototype.getBoundingClientRect = origRect;
+    Object.defineProperty(win, 'innerWidth', { value: origInnerWidth, configurable: true });
+    Object.defineProperty(win, 'innerHeight', { value: origInnerHeight, configurable: true });
+    await act(async () => {
+      root?.unmount();
+    });
+    container.remove();
+  }
+  console.log('ok - FallbackTooltip scroll dismissal, quiet window, and viewport alignment');
+}
+
 win.close();

@@ -31,6 +31,7 @@ export interface DocumentActionsOptions {
   getActiveArticleId?: () => string;
   isPageAlive?: () => boolean;
   flushBeforeSwitch?: () => Promise<boolean>;
+  onResetSurface?: () => void;
 }
 
 export interface DocumentActionsApi {
@@ -57,6 +58,7 @@ export function createDocumentCommands(options: DocumentActionsOptions): Documen
 
   function blankArticle(): void {
     options.detachFileContext();
+    options.onResetSurface?.();
     options.setMarkdown('', { boundary: true, title: t('untitled'), resetHistory: true });
     options.focusRange(0, 0);
   }
@@ -76,6 +78,7 @@ export function createDocumentCommands(options: DocumentActionsOptions): Documen
     if (!isStillActive(targetArticleId)) return;
     const sample = sampleArticleFor(options.locale?.());
     options.detachFileContext();
+    options.onResetSurface?.();
     options.setMarkdown(sample.markdown, { boundary: true, title: sample.title, resetHistory: true });
     options.focusRange(0, 0);
     options.onPruneAssets?.();
@@ -140,6 +143,7 @@ export function createDocumentCommands(options: DocumentActionsOptions): Documen
         return mapping.get(path.toLowerCase()) || path;
       });
       options.detachFileContext();
+      options.onResetSurface?.();
       options.setMarkdown(next, { boundary: true, title: options.deriveTitle(next), resetHistory: true });
       options.focusRange(next.length, next.length);
       options.notify(t('toast.bundleImported') + (failed ? ' · ' + failed + ' ' + t('wechat.uploadFailed') : ''));
@@ -174,6 +178,7 @@ export function createDocumentCommands(options: DocumentActionsOptions): Documen
       if (!isStillActive(targetArticleId)) return;
       const text = new TextDecoder().decode(bytes);
       options.detachFileContext();
+      options.onResetSurface?.();
       options.setMarkdown(text, { boundary: true, title: options.deriveTitle(text), resetHistory: true });
       options.focusRange(text.length, text.length);
       options.notify(t('toast.imported'));

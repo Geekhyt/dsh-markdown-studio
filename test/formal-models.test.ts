@@ -14,10 +14,12 @@ import {
 } from '../src/domain/file-session.machine';
 import {
   checkStudioSurfaceInvariants,
+  computePaneVisibility,
   effectiveBubbleVisible,
   hasSurfaceModal,
   initialStudioSurfaceState,
   isParentModalOpen,
+  shouldApplyAiPreview,
   stepStudioSurface,
   type StudioSurfaceEvent,
   type StudioSurfaceState,
@@ -114,6 +116,7 @@ const STUDIO_EVENTS: StudioSurfaceEvent[] = [
   { type: 'SHOW_BUBBLE' },
   { type: 'SCROLL_EDITOR' },
   { type: 'RESET_EDITOR' },
+  { type: 'REPLACE_DOCUMENT' },
   { type: 'ESCAPE', target: 'editor' },
   { type: 'ESCAPE', target: 'drawer' },
   { type: 'ESCAPE', target: 'document' },
@@ -248,6 +251,19 @@ assert.ok(studioReport.states >= 500, `explored rich studio overlay state space 
   assert.equal(s.view, 'preview');
   assert.equal(s.searchOpen, false, 'exiting immersive back to preview closes orphaned search bar');
   assert.deepEqual(checkStudioSurfaceInvariants(s), []);
+
+  // 7. Document replacement (Clear / Load Sample / Import / Drop) closes CssWorkbench & AI session
+  s = initialStudioSurfaceState(false);
+  s = stepStudioSurface(s, { type: 'OPEN_CSS_WORKBENCH' });
+  s = stepStudioSurface(s, { type: 'REPLACE_DOCUMENT' });
+  assert.equal(s.cssWorkbenchOpen, false, 'replacing document closes CssWorkbench');
+  assert.equal(computePaneVisibility(s.immersive, s.view, s.cssWorkbenchOpen).showMarkdownEditor, true);
+  assert.deepEqual(checkStudioSurfaceInvariants(s), []);
+
+  // 8. Active AI diff preview stays consistent across Split <-> Preview-only view toggles
+  assert.equal(shouldApplyAiPreview(false, true), true, 'preview keeps AI draft when switching to preview-only');
+  assert.equal(shouldApplyAiPreview(true, true), false, 'CssWorkbench suppresses AI draft preview');
+  assert.equal(shouldApplyAiPreview(false, false), false, 'no AI session renders original markdown');
 
   // Negative self-tests: prove every invariant predicate fires on broken synthetic states (non-vacuity)
   const base = initialStudioSurfaceState(false);

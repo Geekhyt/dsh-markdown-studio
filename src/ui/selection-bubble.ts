@@ -1,7 +1,8 @@
 import type * as ReactNamespace from 'react';
 import type { SelectionRange } from '../domain/article';
 import type { EditorApi } from '../domain/editor-types';
-import { clamp } from '../domain/settings';
+import { computeSafePopoverPos, type SurfaceRect } from '../domain/surface-geometry';
+import { collectSurfaceObstacles } from '../runtime/dom-surfaces';
 import { useDocumentEvent, useLatest, useMountDisposable } from '../runtime/react-lifecycle';
 
 interface PointerPoint {
@@ -66,16 +67,21 @@ function isBubbleInteractiveTarget(target: EventTarget | null): boolean {
 function clampBubbleCoords(
   surfaceRect: DOMRect,
   anchor: { x: number; yBottom: number; yTop: number } | null,
+  obstacles: readonly SurfaceRect[],
 ): { top: number; left: number } {
-  const minTop = 6;
-  const maxLeft = Math.max(12, surfaceRect.width - 168);
-  if (!anchor) return { top: 10, left: clamp(24, 12, maxLeft) };
-  const rawBelow = anchor.yBottom - surfaceRect.top + 6;
-  const rawTop = rawBelow + 38 <= surfaceRect.height ? rawBelow : anchor.yTop - surfaceRect.top - 38;
-  return {
-    top: clamp(Math.round(rawTop), minTop, Math.max(minTop, surfaceRect.height - 40)),
-    left: clamp(Math.round(anchor.x - surfaceRect.left - 24), 12, maxLeft),
-  };
+  const preferredLeft = anchor ? anchor.x - surfaceRect.left - 24 : 24;
+  const rawBelow = anchor ? anchor.yBottom - surfaceRect.top + 6 : 10;
+  const preferredTop = anchor && rawBelow + 38 > surfaceRect.height ? anchor.yTop - surfaceRect.top - 38 : rawBelow;
+  const placed = computeSafePopoverPos({
+    surface: surfaceRect,
+    width: 156,
+    height: 34,
+    preferredLeft,
+    preferredTop,
+    pad: 12,
+    obstacles,
+  });
+  return { top: placed.top, left: placed.left };
 }
 
 function computeSelectionBubblePos(
@@ -89,7 +95,7 @@ function computeSelectionBubblePos(
   const surface = resolveBubbleContainer(rootEl);
   if (!surface) return null;
   const anchor = resolveBubbleViewportPoint(api, range, pointer);
-  return clampBubbleCoords(surface.getBoundingClientRect(), anchor);
+  return clampBubbleCoords(surface.getBoundingClientRect(), anchor, collectSurfaceObstacles(rootEl));
 }
 
 export interface SelectionBubbleOptions {

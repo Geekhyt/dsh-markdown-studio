@@ -68,6 +68,7 @@ import {
   resolveDocumentEscapeAction,
   resolveEditorEscapeOutcome,
   resolveWindowEscapeAction,
+  shouldApplyAiPreview,
   shouldKeepCssWorkbenchOnViewChange,
   shouldRestoreSplitOnResize,
 } from './domain/studio-overlay.machine';
@@ -535,11 +536,27 @@ export function createClientPlugin(
       download: downloadFile,
     });
 
-    function resetEditorTo(entry: DocumentSeed, alreadyActive = false): void {
-      const markdown = String(entry.markdown || '');
+    const scrollSync = useScrollSync({
+      React,
+      codeMirrorApiRef,
+      textareaRef,
+      onCodeMirrorReady: (api) => {
+        if (!api) return;
+        api.focusRange(0, 0);
+        lastSelectionRef.current = { start: 0, end: 0 };
+      },
+    });
+
+    function resetDocumentSurface(): void {
       writingSkills.resetSession();
       dismissTransientOverlays({ keepDrawer: true });
       clearCssWorkbenchDraft();
+      scrollSync.resetPreviewScroll();
+    }
+
+    function resetEditorTo(entry: DocumentSeed, alreadyActive = false): void {
+      const markdown = String(entry.markdown || '');
+      resetDocumentSurface();
       docHistory.reset(markdown);
       if (!alreadyActive) {
         store.updateActive({
@@ -956,17 +973,7 @@ export function createClientPlugin(
       getActiveArticleId: () => store.getActive().id,
       isPageAlive: () => pageAliveRef.current,
       flushBeforeSwitch: flushLinkedFileBeforeSwitch,
-    });
-
-    const scrollSync = useScrollSync({
-      React,
-      codeMirrorApiRef,
-      textareaRef,
-      onCodeMirrorReady: (api) => {
-        if (!api) return;
-        api.focusRange(0, 0);
-        lastSelectionRef.current = { start: 0, end: 0 };
-      },
+      onResetSurface: resetDocumentSurface,
     });
 
     function handleSurfaceResize(width: number): void {
@@ -993,6 +1000,7 @@ export function createClientPlugin(
       if (nextActive.id !== prevActive.id) {
         openTransitionSeqRef.current++;
         detachFileContext();
+        resetDocumentSurface();
         docHistory.reset(nextActive.markdown);
       } else if (nextActive.markdown !== prevActive.markdown) {
         docHistory.reset(nextActive.markdown);
@@ -1249,9 +1257,7 @@ export function createClientPlugin(
           const text = await first.text();
           if (!isCurrent()) return;
           detachFileContext();
-          writingSkills.resetSession();
-          selectionBubble.clear();
-          selectionBubble.clearPointer();
+          resetDocumentSurface();
           setMarkdown(text, { boundary: true, title: deriveTitleWithFallback(text), resetHistory: true });
           focusRange(0, 0);
           notify(t('toast.imported'));
@@ -1270,8 +1276,11 @@ export function createClientPlugin(
     const useCodeMirror = !editorFailed && typeof window.ResizeObserver !== 'undefined';
     const deferredMarkdown = useDeferredText(doc.markdown);
     const effectivePreviewMarkdown = React.useMemo(
-      () => (panes.showMarkdownEditor ? writingSkills.previewMarkdown(deferredMarkdown) : deferredMarkdown),
-      [deferredMarkdown, panes.showMarkdownEditor, writingSkills.session],
+      () =>
+        shouldApplyAiPreview(cssWorkbench.open, Boolean(writingSkills.session))
+          ? writingSkills.previewMarkdown(deferredMarkdown)
+          : deferredMarkdown,
+      [deferredMarkdown, cssWorkbench.open, writingSkills.session],
     );
     const headings = React.useMemo(
       () => (outlineOpen ? markdownHeadings(doc.markdown) : []),
@@ -1617,6 +1626,7 @@ export function createClientPlugin(
               previewScrollRef: scrollSync.previewRef,
               onPreviewScroll: scrollSync.syncEditorFromPreview,
               onPreviewClick: previewClick,
+              onPreviewMounted: scrollSync.restorePreviewScroll,
             })
           : null,
 
@@ -1662,8 +1672,17 @@ export function createClientPlugin(
           actions: {
             onNew: docLibrary.newDocument,
             onSwitch: (id) => {
-              docLibrary.switchDocument(id);
-              restoreDialogTriggerFocus();
+              const sameDoc = id === library.activeId;
+              const pending = docLibrary.switchDocument(id);
+              if (sameDoc) {
+                restoreDialogTriggerFocus();
+                return;
+              }
+              void Promise.resolve(pending).then(() => {
+                if (store.getActive().id === id && store.getActive().view === 'preview') {
+                  restoreDialogTriggerFocus();
+                }
+              });
             },
             onDelete: (id) => void docLibrary.deleteDocument(id),
             onRestore: docLibrary.restoreArticle,

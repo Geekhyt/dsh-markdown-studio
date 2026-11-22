@@ -276,17 +276,19 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactNode {
   return props.React.createElement(SettingsDrawerContent, props);
 }
 
-function hasOpenWorkbench(drawer: HTMLElement | null, root: HTMLElement | null): boolean {
+function readWorkbenchSeq(drawer: HTMLElement | null, root: HTMLElement | null): string | null {
   const scope = root || (drawer ? drawer.closest<HTMLElement>('.mdstudio-root') : null);
-  return Boolean(scope && scope.querySelector('.mdstudio-css-workbench'));
+  const wb = scope?.querySelector<HTMLElement>('.mdstudio-css-workbench');
+  return wb ? wb.getAttribute('data-mdstudio-wb-seq') || 'open' : null;
 }
 
 function hasTakeoverSurface(
   drawer: HTMLElement | null,
   root: HTMLElement | null,
-  hadWorkbenchOnMount = false,
+  mountedWbSeq: string | null = null,
 ): boolean {
-  if (!hadWorkbenchOnMount && hasOpenWorkbench(drawer, root)) return true;
+  const currentSeq = readWorkbenchSeq(drawer, root);
+  if (currentSeq !== null && currentSeq !== mountedWbSeq) return true;
   return Boolean(document.querySelector('[aria-modal="true"]'));
 }
 
@@ -297,9 +299,9 @@ function isFocusLost(active: Element | null): boolean {
 function shouldRestoreDrawerFocus(
   drawer: HTMLElement | null,
   root: HTMLElement | null,
-  hadWorkbenchOnMount = false,
+  mountedWbSeq: string | null = null,
 ): boolean {
-  if (hasTakeoverSurface(drawer, root, hadWorkbenchOnMount)) return false;
+  if (hasTakeoverSurface(drawer, root, mountedWbSeq)) return false;
   const active = document.activeElement;
   if (isFocusLost(active)) return true;
   return Boolean(drawer && drawer.contains(active));
@@ -319,14 +321,14 @@ function SettingsDrawerContent(props: SettingsDrawerProps): ReactNode {
     const previous = document.activeElement as HTMLElement | null;
     const mountedDrawer = drawerRef.current;
     const mountedRoot = mountedDrawer?.closest<HTMLElement>('.mdstudio-root') || null;
-    const hadWorkbenchOnMount = Boolean(mountedRoot?.querySelector('.mdstudio-css-workbench'));
+    const mountedWbSeq = readWorkbenchSeq(mountedDrawer, mountedRoot);
     const focusTimer = window.setTimeout(function () {
       document.getElementById('mdstudio-tab-' + props.initialTab)?.focus();
     }, 0);
     return function () {
       window.clearTimeout(focusTimer);
       if (
-        shouldRestoreDrawerFocus(drawerRef.current || mountedDrawer, mountedRoot, hadWorkbenchOnMount) &&
+        shouldRestoreDrawerFocus(drawerRef.current || mountedDrawer, mountedRoot, mountedWbSeq) &&
         previous &&
         document.contains(previous)
       ) {

@@ -349,6 +349,7 @@ function CssWorkbenchContent(props: CssWorkbenchProps): ReactNode {
     'div',
     {
       className: 'mdstudio-pane mdstudio-editor-pane mdstudio-css-workbench' + (props.visible ? '' : ' is-hidden'),
+      'data-mdstudio-wb-seq': String(props.requestSeq),
       role: 'region',
       'aria-label': t('drawer.tabCss'),
     },

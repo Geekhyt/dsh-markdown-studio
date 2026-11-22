@@ -54,7 +54,12 @@ export type StudioSurfaceEvent =
   | { type: 'SHOW_BUBBLE' }
   | { type: 'SCROLL_EDITOR' }
   | { type: 'RESET_EDITOR' }
+  | { type: 'REPLACE_DOCUMENT' }
   | { type: 'ESCAPE'; target: 'editor' | 'drawer' | 'document' };
+
+export function shouldApplyAiPreview(cssOpen: boolean, hasAiSession: boolean): boolean {
+  return !cssOpen && hasAiSession;
+}
 
 export function computePaneVisibility(immersive: SurfaceImmersiveMode, view: string, cssOpen: boolean): PaneVisibility {
   const leftVisible = immersive ? immersive === 'write' : view !== 'preview';
@@ -383,6 +388,7 @@ export function stepStudioSurface(state: StudioSurfaceState, event: StudioSurfac
       if (!state.immersive || hasSurfaceModal(state)) return state;
       return { ...dismissTransient(state, { keepSearch: state.view !== 'preview' }), immersive: null };
     case 'RESET_EDITOR':
+    case 'REPLACE_DOCUMENT':
       return { ...dismissTransient(state, { keepDrawer: true }), cssWorkbenchOpen: false, aiSession: 'none' };
     case 'ESCAPE':
       return applyEscape(state, event.target);

@@ -1,6 +1,8 @@
 import type * as ReactNamespace from 'react';
 import type { SelectionRange } from '../domain/article';
 import { clamp } from '../domain/settings';
+import { computeSafePopoverPos, computeUnobstructedWidth } from '../domain/surface-geometry';
+import { collectSurfaceObstacles } from '../runtime/dom-surfaces';
 import { useDocumentEvent } from '../runtime/react-lifecycle';
 
 export type SlashIconKey =
@@ -312,16 +314,6 @@ function resolveSlashTop(coords: { top: number; bottom: number }, wrapTop: numbe
   return clamp(Math.round(coords.top - wrapTop - Math.min(348, spaceAbove) - 6), 8, maxTop);
 }
 
-function visibleEditorWidth(rootEl: HTMLElement | null, rect: DOMRect): number {
-  const drawer = rootEl?.querySelector<HTMLElement>('.mdstudio-drawer');
-  if (!drawer) return rect.width;
-  const drawerRect = drawer.getBoundingClientRect();
-  if (drawerRect.width > 0 && drawerRect.left < rect.right && drawerRect.left > rect.left + 180) {
-    return drawerRect.left - rect.left;
-  }
-  return rect.width;
-}
-
 function computeSlashPos(
   rootEl: HTMLElement | null,
   coordsAtPos: SlashMenuOptions['coordsAtPos'],
@@ -332,13 +324,20 @@ function computeSlashPos(
   if (!wrap || !coords) return null;
   const rect = wrap.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) return null;
-  const availWidth = visibleEditorWidth(rootEl, rect);
+  const obstacles = collectSurfaceObstacles(rootEl);
+  const availWidth = computeUnobstructedWidth(rect, obstacles);
   const menuW = Math.min(320, Math.max(180, availWidth - 20));
-  const maxLeft = Math.max(10, Math.round(availWidth - menuW - 10));
-  return {
-    top: resolveSlashTop(coords, rect.top, rect.height),
-    left: clamp(Math.round(coords.left - rect.left), 10, maxLeft),
-  };
+  const preferredTop = resolveSlashTop(coords, rect.top, rect.height);
+  const placed = computeSafePopoverPos({
+    surface: rect,
+    width: menuW,
+    height: Math.min(220, Math.max(120, rect.height - 16)),
+    preferredLeft: coords.left - rect.left,
+    preferredTop,
+    pad: 10,
+    obstacles,
+  });
+  return { top: placed.top, left: placed.left };
 }
 
 function scrollActiveSlashItem(rootEl: HTMLElement | null): void {

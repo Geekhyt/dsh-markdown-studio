@@ -30,6 +30,42 @@ export function useHostDarkTheme(React: typeof ReactNamespace): boolean {
   return useExternalStore(React, subscribeHostDarkAttr, readHostDarkAttr);
 }
 
+export interface MeasuredRect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+}
+
+const SURFACE_OBSTACLE_SELECTORS = ['.mdstudio-drawer', '.mdstudio-immersive-dock'] as const;
+
+/**
+ * Collects viewport bounding rects of active floating/overlay chrome inside
+ * `.mdstudio-root` that sits above editor-scoped popovers.
+ */
+export function collectSurfaceObstacles(rootEl: HTMLElement | null): MeasuredRect[] {
+  if (!rootEl) return [];
+  const out: MeasuredRect[] = [];
+  for (const selector of SURFACE_OBSTACLE_SELECTORS) {
+    const el = rootEl.querySelector<HTMLElement>(selector);
+    if (!el) continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      out.push({
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+        width: rect.width,
+        height: rect.height,
+      });
+    }
+  }
+  return out;
+}
+
 /**
  * Binds an imperative DOM observer to a mounted element ref synchronously before paint.
  */
@@ -57,6 +93,7 @@ export interface PreviewSurfaceSpec {
   empty?: boolean;
   applyDark: (articleEl: HTMLElement, isCancelled?: () => boolean) => Promise<boolean>;
   cleanupDark?: () => void;
+  onMountSurface?: () => void;
 }
 
 function paintStageBackground(screen: HTMLElement, color: string, fallback: string, isDesktop: boolean): void {
@@ -125,6 +162,7 @@ export function usePreviewHtmlSurface(
 ): void {
   const applyDarkRef = useLatest(React, spec.applyDark);
   const cleanupDarkRef = useLatest(React, spec.cleanupDark);
+  const onMountSurfaceRef = useLatest(React, spec.onMountSurface);
   const lastMountedRef = React.useRef<MountedSurfaceState>({ ...EMPTY_MOUNTED_SURFACE });
   React.useEffect(
     function () {
@@ -135,8 +173,10 @@ export function usePreviewHtmlSurface(
         cleanupDarkRef.current?.();
         return undefined;
       }
+      const freshNode = lastMountedRef.current.node !== article;
       const isDesktop = spec.previewMode === 'desktop';
       const contentChanged = syncMountedArticle(article, spec, lastMountedRef);
+      if (freshNode) onMountSurfaceRef.current?.();
       if (!spec.dark) {
         paintStageBackground(screen, spec.surfaceBg, spec.darkFallbackBg, isDesktop);
         cleanupDarkRef.current?.();

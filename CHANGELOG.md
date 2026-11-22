@@ -2,6 +2,29 @@
 
 All notable changes to `dsh-markdown-studio` are documented in this file.
 
+## [0.1.13] - 2026-11-22
+
+### Fixed
+- **Unified Floating Popover Obstacle Avoidance (`src/domain/surface-geometry.ts`)**:
+  - Added pure domain placement solver (`computeUnobstructedWidth`, `computeSafePopoverPos`) paired with runtime `collectSurfaceObstacles(rootEl)` (`src/runtime/dom-surfaces.ts`) and wired `Outline`, floating AI `SelectionBubble`, and `SlashMenu` into the same obstacle-aware geometry model (`src/ui/editor-pane.ts`, `src/ui/selection-bubble.ts`, `src/application/use-slash-menu.ts`). Eliminates popover truncation behind overlay `SettingsDrawer` (both standalone and real DeepSeek Harness `840px` sidebar layouts) and top-line floating AI pill collisions with `ImmersiveDock`.
+- **Containing-Block-Safe Immersive Dock Glass & Scroll-Quiet `FallbackTooltip`**:
+  - Moved `.mdstudio-immersive-dock` `backdrop-filter` and shadow onto `.mdstudio-immersive-dock::before` (`src/ui/styles.ts`) so `position: fixed` tooltips are never trapped in a local containing block and displaced off-screen.
+  - Added post-mount containing-block/viewport compensation (`alignFixedTooltip`), capture-phase `window` `scroll` dismissal, and a 250ms scroll-quiet window (preserving immediate keyboard focus) to `FallbackTooltip` (`src/ui/dsh-primitives.ts`), eliminating stale tooltips and synthetic hover strobing during modal list scrolling.
+- **Unified Document-Replacement Surface Reset (`REPLACE_DOCUMENT`)**:
+  - Modeled `REPLACE_DOCUMENT` in `src/domain/studio-overlay.machine.ts` and routed all 7 document replacement paths (switch, new, clear, load sample, import, file drop, and cross-tab sync) through `resetDocumentSurface()` (`src/app.ts`, `src/application/document-commands.ts`), cleanly closing `CssWorkbench`, resetting active AI sessions, dismissing transient overlays, and resetting `PreviewPane` scroll position even when Scroll Sync is disabled.
+- **Cross-View Scroll Continuity & AI Preview Consistency**:
+  - Persisted editor scroll ratio in `useScrollSync` (`src/application/use-scroll-sync.ts`) and added `onMountSurface` / `onPreviewMounted` (`src/runtime/dom-surfaces.ts`, `src/ui/preview-pane.ts`) so switching from scrolled `Immersive Write` to `Immersive Preview` restores the matching reading position instead of resetting to top.
+  - Extracted `shouldApplyAiPreview(cssOpen, hasAiSession)` (`src/domain/studio-overlay.machine.ts`) so preview content stays consistent with an active AI inline diff across `Split ↔ Preview-only` view toggles.
+- **Responsive Container Breakpoint & Narrow Skill Card Wrapping**:
+  - Raised the `@container mdstudio` overlay `SettingsDrawer` breakpoint from `1080px` to `1140px` with compact toolbar spacing under `1220px` (`src/ui/styles.ts`), preventing docked drawers at `1080–1140px` from crushing split-view toolbars while preserving `336px` docked layout on wide viewports.
+  - Fixed `@media (max-width: 720px)` `.mdstudio-skill-builtin-head` wrapping so built-in Skill cards never overflow horizontally on `390px` mobile viewports.
+- **SearchBar `Mod+F` Interception & Focus Handoff Hardening**:
+  - Intercepted `Mod+F` (`isModFindEvent`) inside `.mdstudio-searchbar` (`src/ui/editor-pane.ts`) to re-focus and select the query instead of leaking to native browser Find.
+  - Tracked workbench instances via `data-mdstudio-wb-seq` in `CssWorkbench` and `SettingsDrawer` (`src/ui/css-workbench.ts`, `src/ui/settings-drawer.ts`) to eliminate transient focus steals on drawer re-entry over an existing workbench, and guarded async `LibraryDialog` `onSwitch` focus restoration (`src/app.ts`).
+
+### Verification & Regression Gates
+- Added permanent CSS containing-block gate in `test/architecture.test.ts`, 100% branch tests for `surface-geometry.ts` in `test/domain.test.ts`, `FallbackTooltip` scroll-dismissal/alignment tests in `test/dsh-primitives.test.ts`, `REPLACE_DOCUMENT` + `shouldApplyAiPreview` formal BFS checks in `test/formal-models.test.ts` (1,256 states / 38,936 transitions), and 5 cross-component browser assertions in `test/browser-smoke.ts`.
+
 ## [0.1.12] - 2026-11-22
 
 ### Fixed

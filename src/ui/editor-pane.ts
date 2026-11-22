@@ -4,7 +4,9 @@ import { disarmEscapeTab } from '../application/editor-shortcuts';
 import type { AiReviewSession } from '../application/use-writing-skills';
 import type { Heading } from '../domain/article';
 import type { EditorApi, EditorDiffTransition, EditorInlineBlock, EditorSelection } from '../domain/editor-types';
+import { computeSafePopoverPos } from '../domain/surface-geometry';
 import type { WritingSkill } from '../domain/writing-skills';
+import { collectSurfaceObstacles } from '../runtime/dom-surfaces';
 import { useDocumentEvent, useWindowEvent } from '../runtime/react-lifecycle';
 import type { DshMenuEntry } from '../types/dsh-primitives';
 import { CodeMirrorEditor } from './codemirror-editor';
@@ -642,8 +644,18 @@ function computeOutlineLeft(anchor: HTMLElement | null): number {
   if (!anchor || !surface) return 10;
   const aRect = anchor.getBoundingClientRect();
   const sRect = surface.getBoundingClientRect();
-  const maxLeft = Math.max(10, sRect.width - 290);
-  return Math.max(10, Math.min(Math.round(aRect.left - sRect.left), maxLeft));
+  const root = anchor.closest<HTMLElement>('.mdstudio-root');
+  const obstacles = collectSurfaceObstacles(root);
+  const width = Math.min(280, Math.max(180, sRect.width - 20));
+  return computeSafePopoverPos({
+    surface: sRect,
+    width,
+    height: 160,
+    preferredLeft: aRect.left - sRect.left,
+    preferredTop: 6,
+    pad: 10,
+    obstacles,
+  }).left;
 }
 
 function hasOpenModal(): boolean {
@@ -657,6 +669,10 @@ function isUnhandledEscape(event: KeyboardEvent): boolean {
 
 function isImeEvent(event: ReactNamespace.KeyboardEvent<HTMLElement>): boolean {
   return Boolean(event.nativeEvent.isComposing || event.keyCode === 229);
+}
+
+function isModFindEvent(event: ReactNamespace.KeyboardEvent<HTMLElement>): boolean {
+  return (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'f';
 }
 
 function focusAnchorButton(anchor: HTMLElement | null): void {
@@ -808,7 +824,15 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
           {
             className: 'mdstudio-searchbar',
             onKeyDown: function (event: ReactNamespace.KeyboardEvent<HTMLDivElement>) {
-              if (isImeEvent(event) || outline.open) return;
+              if (isImeEvent(event)) return;
+              if (isModFindEvent(event)) {
+                event.preventDefault();
+                event.stopPropagation();
+                search.inputRef.current?.focus();
+                search.inputRef.current?.select();
+                return;
+              }
+              if (outline.open) return;
               if (event.key === 'Escape') {
                 event.preventDefault();
                 event.stopPropagation();
