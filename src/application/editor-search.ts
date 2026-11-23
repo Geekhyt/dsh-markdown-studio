@@ -37,7 +37,10 @@ export function createEditorSearch(options: EditorSearchOptions): EditorSearchAp
       return Object.assign({}, prev, { open: true });
     });
     window.requestAnimationFrame(function () {
-      if (options.searchInputRef.current) options.searchInputRef.current.focus();
+      const input = options.searchInputRef.current;
+      if (!input) return;
+      input.focus();
+      if (typeof input.select === 'function') input.select();
     });
   }
 

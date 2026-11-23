@@ -3153,6 +3153,292 @@ console.log('ok - English locale boots with English sample article and zero Chin
       Math.abs(screen.scrollTop - 400) <= 2,
       `Mobile->PC relayout preserves 50% scroll ratio (expected ~400, got ${screen.scrollTop})`,
     );
+
+    // 20. Host window-level Mod+Shift+F listener cannot swallow plugin immersive shortcut (C2)
+    let hostSwallowed = false;
+    const hostBlocker = (ev: KeyboardEvent): void => {
+      if ((ev.metaKey || ev.ctrlKey) && ev.shiftKey && ev.key.toLowerCase() === 'f') {
+        hostSwallowed = true;
+        ev.preventDefault();
+      }
+    };
+    window.addEventListener('keydown', hostBlocker, false);
+    try {
+      await act(async () => {
+        ta2.dispatchEvent(
+          new window.KeyboardEvent('keydown', {
+            key: 'f',
+            metaKey: true,
+            shiftKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+      await settle(25);
+      assert.equal(
+        comboContainer.querySelector('.mdstudio-root')?.getAttribute('data-mdstudio-immersive'),
+        'write',
+        'document-bubble Mod+Shift+F enters immersive write before host window listener',
+      );
+      assert.equal(hostSwallowed, false, 'plugin stops Mod+Shift+F propagation before host window listener');
+      await act(async () => {
+        ta2.dispatchEvent(
+          new window.KeyboardEvent('keydown', {
+            key: 'f',
+            metaKey: true,
+            shiftKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+      await settle(25);
+      assert.equal(
+        comboContainer.querySelector('.mdstudio-root')?.getAttribute('data-mdstudio-immersive'),
+        null,
+        'second Mod+Shift+F exits immersive mode',
+      );
+    } finally {
+      window.removeEventListener('keydown', hostBlocker, false);
+    }
+
+    // 21. Scrolled SettingsDrawer re-entered via More -> Shortcuts resets scrollTop and moves focus into drawer (C4)
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-style-btn')?.click();
+    });
+    await settle(25);
+    const drawerBody = comboContainer.querySelector<HTMLElement>('.mdstudio-drawer-body')!;
+    drawerBody.scrollTop = 360;
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('[data-mdstudio-menu-trigger="more"]')?.click();
+    });
+    await settle(20);
+    const shortcutsAgain = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find((el) =>
+      (el.textContent || '').includes('快捷键与使用说明'),
+    );
+    await act(async () => {
+      shortcutsAgain?.click();
+    });
+    await settle(30);
+    assert.equal(
+      comboContainer.querySelector('.mdstudio-drawer')?.getAttribute('data-mdstudio-tab'),
+      'help',
+      'More -> Shortcuts switches open drawer to help tab',
+    );
+    assert.equal(drawerBody.scrollTop, 0, 'More -> Shortcuts resets stale drawer scroll position to 0');
+    assert.equal(
+      document.activeElement?.id,
+      'mdstudio-tab-help',
+      'More -> Shortcuts moves keyboard focus to help tab inside open drawer',
+    );
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-drawer-head button')?.click();
+    });
+    await settle(20);
+
+    // 22. Narrow full-screen SettingsDrawer (<= 720px) dismisses on view toggle, New doc, and Esc from editor (C1)
+    const rootEl = comboContainer.querySelector<HTMLElement>('.mdstudio-root')!;
+    const origClientWidth = Object.getOwnPropertyDescriptor(rootEl, 'clientWidth');
+    Object.defineProperty(rootEl, 'clientWidth', { configurable: true, get: () => 390 });
+    try {
+      await act(async () => {
+        comboContainer.querySelector<HTMLButtonElement>('.mdstudio-style-btn')?.click();
+      });
+      await settle(20);
+      assert.ok(comboContainer.querySelector('.mdstudio-drawer'), 'narrow full-screen drawer opens');
+      await act(async () => {
+        comboContainer.querySelector<HTMLButtonElement>('.mdstudio-mobile-view')?.click();
+      });
+      await settle(20);
+      assert.equal(
+        comboContainer.querySelector('.mdstudio-drawer'),
+        null,
+        'mobile view toggle dismisses full-screen drawer',
+      );
+      await act(async () => {
+        comboContainer.querySelector<HTMLButtonElement>('.mdstudio-mobile-view')?.click();
+      });
+      await settle(20);
+      await act(async () => {
+        comboContainer.querySelector<HTMLButtonElement>('.mdstudio-style-btn')?.click();
+      });
+      await settle(20);
+      // Even if Escape originates inside background editor, full-screen drawer closes cleanly
+      await act(async () => {
+        ta2.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      });
+      await settle(20);
+      assert.equal(
+        comboContainer.querySelector('.mdstudio-drawer'),
+        null,
+        'Escape closes full-screen narrow drawer even when dispatched from editor',
+      );
+    } finally {
+      if (origClientWidth) Object.defineProperty(rootEl, 'clientWidth', origClientWidth);
+      else delete (rootEl as { clientWidth?: number }).clientWidth;
+    }
+
+    // 23. Dark mode + stale custom stage background reconciles back to dark default when document becomes empty (C5)
+    await act(async () => {
+      comboContainer.querySelectorAll<HTMLButtonElement>('.mdstudio-segmented button')[0]?.click();
+    });
+    await settle(25);
+    document.body.setAttribute('data-ds-dark-theme', '');
+    try {
+      await settle(25);
+      const stageEl = comboContainer.querySelector<HTMLElement>('.mdstudio-stage')!;
+      assert.ok(stageEl, 'stage element is mounted in split view');
+      stageEl.style.backgroundColor = 'rgb(16, 36, 58)';
+      await act(async () => {
+        setTaVal?.call(ta2, '');
+        ta2.dispatchEvent(new window.Event('input', { bubbles: true }));
+      });
+      await settle(40);
+      assert.equal(
+        stageEl.style.backgroundColor,
+        'rgb(25, 25, 25)',
+        'clearing document reconciles stale dark custom stage background to DARK_STAGE_DEFAULT',
+      );
+    } finally {
+      document.body.removeAttribute('data-ds-dark-theme');
+    }
+
+    // 24. Escape closes SettingsDrawer when focus is on Toolbar button or inside CssWorkbench (C11)
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-style-btn')?.click();
+    });
+    await settle(20);
+    assert.ok(comboContainer.querySelector('.mdstudio-drawer'), 'drawer opens for toolbar Escape check');
+    const boldToolBtn = comboContainer.querySelector<HTMLButtonElement>('.mdstudio-toolbar button[aria-label*="加粗"]');
+    assert.ok(boldToolBtn, 'toolbar bold button exists');
+    await act(async () => {
+      boldToolBtn.focus();
+      boldToolBtn.dispatchEvent(
+        new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+    });
+    await settle(20);
+    assert.equal(
+      comboContainer.querySelector('.mdstudio-drawer'),
+      null,
+      'Escape from Toolbar button closes SettingsDrawer',
+    );
+    // Open CssWorkbench + SettingsDrawer, press Escape from CssWorkbench Name input -> closes SettingsDrawer
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-style-btn')?.click();
+    });
+    await settle(20);
+    const newThemeBtn2 = Array.from(comboContainer.querySelectorAll<HTMLButtonElement>('.mdstudio-drawer button')).find(
+      (btn) => (btn.textContent || '').includes('新建主题'),
+    );
+    await act(async () => {
+      newThemeBtn2?.click();
+    });
+    await settle(30);
+    if (!comboContainer.querySelector('.mdstudio-drawer')) {
+      await act(async () => {
+        comboContainer.querySelector<HTMLButtonElement>('.mdstudio-style-btn')?.click();
+      });
+      await settle(20);
+    }
+    const cssNameInput2 = comboContainer.querySelector<HTMLInputElement>('.mdstudio-css-name');
+    assert.ok(cssNameInput2, 'CssWorkbench name input exists');
+    await act(async () => {
+      cssNameInput2.focus();
+      cssNameInput2.dispatchEvent(
+        new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+    });
+    await settle(20);
+    assert.equal(
+      comboContainer.querySelector('.mdstudio-drawer'),
+      null,
+      'Escape from CssWorkbench input closes SettingsDrawer',
+    );
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-css-back')?.click();
+    });
+    await settle(20);
+
+    // 25. SearchBar Mod+F re-entry focuses and selects existing query (C13)
+    const taSearch = comboContainer.querySelector<HTMLTextAreaElement>('.mdstudio-editor')!;
+    await act(async () => {
+      taSearch.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'f', metaKey: true, bubbles: true }));
+    });
+    await settle(30);
+    const searchInp = comboContainer.querySelector<HTMLInputElement>('.mdstudio-search-input')!;
+    assert.ok(searchInp, 'search input opens on Mod+F');
+    const setInpVal = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+    await act(async () => {
+      setInpVal?.call(searchInp, 'alpha');
+      searchInp.dispatchEvent(new window.Event('input', { bubbles: true }));
+      searchInp.setSelectionRange(5, 5);
+    });
+    await settle(20);
+    await act(async () => {
+      taSearch.focus();
+      taSearch.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'f', metaKey: true, bubbles: true }));
+    });
+    await settle(30);
+    assert.equal(searchInp.selectionStart, 0, 'Mod+F re-entry selects search query from start');
+    assert.equal(searchInp.selectionEnd, 5, 'Mod+F re-entry selects entire existing search query');
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-search-close')?.click();
+    });
+    await settle(20);
+
+    // 26. LibraryDialog & SkillManagerDialog reset scrollTop on tab / draft switch (C10)
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-library-btn')?.click();
+    });
+    await settle(25);
+    const libList = document.querySelector<HTMLElement>('.mdstudio-library-list');
+    if (libList) {
+      libList.scrollTop = 220;
+      await act(async () => {
+        document.querySelector<HTMLButtonElement>('#mdstudio-library-tab-trash')?.click();
+      });
+      await settle(25);
+      const listAfterTrash = document.querySelector<HTMLElement>('.mdstudio-library-list');
+      if (listAfterTrash) assert.equal(listAfterTrash.scrollTop, 0, 'LibraryDialog tab switch resets list scrollTop');
+      await act(async () => {
+        document.querySelector<HTMLButtonElement>('#mdstudio-library-tab-docs')?.click();
+      });
+      await settle(25);
+      assert.equal(
+        document.querySelector<HTMLElement>('.mdstudio-library-list')?.scrollTop,
+        0,
+        'LibraryDialog returning to docs tab resets list scrollTop',
+      );
+    }
+    await act(async () => {
+      document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    });
+    await settle(20);
+    await act(async () => {
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-header-actions button[aria-haspopup="menu"]')?.click();
+    });
+    await settle(20);
+    const skillsMenuBtn = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find((el) =>
+      (el.textContent || '').includes('写作 Skill'),
+    );
+    await act(async () => {
+      skillsMenuBtn?.click();
+    });
+    await settle(30);
+    const skillMain = document.querySelector<HTMLElement>('.mdstudio-skill-main');
+    assert.ok(skillMain, 'SkillManagerDialog main scroll container exists');
+    skillMain.scrollTop = 180;
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('.mdstudio-skill-head-actions button')?.click();
+    });
+    await settle(25);
+    assert.equal(skillMain.scrollTop, 0, 'SkillManagerDialog switching to new draft resets scrollTop to 0');
+    await act(async () => {
+      document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    });
+    await settle(20);
   } finally {
     await act(async () => {
       comboRoot.unmount();

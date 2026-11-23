@@ -1,11 +1,42 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { build } from 'esbuild';
+import { build, type Plugin, transform } from 'esbuild';
 
 const root = path.resolve(import.meta.dirname, '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')) as { name: string };
 const distDir = path.join(root, 'dist');
 fs.mkdirSync(distDir, { recursive: true });
+
+const minifyChromeCssPlugin: Plugin = {
+  name: 'minify-chrome-css',
+  setup(pluginBuild) {
+    const stylesPath = path.join(root, 'src', 'ui', 'styles.ts');
+    pluginBuild.onLoad({ filter: /styles\.ts$/ }, async (args) => {
+      if (path.resolve(args.path) !== stylesPath) return undefined;
+      const src = fs.readFileSync(args.path, 'utf8');
+      const match = src.match(/(export const CHROME_CSS: string = `)([\s\S]*)(`;)/);
+      if (!match) return undefined;
+      const exprs: string[] = [];
+      const tokenized = match[2].replace(/\$\{([^}]+)\}/g, (_, expr: string) => `__TPL_${exprs.push(expr) - 1}__`);
+      const min = await transform(tokenized, { loader: 'css', minify: true });
+      if (min.warnings.length > 0) {
+        throw new Error(`CHROME_CSS minify warnings: ${min.warnings.map((w) => w.text).join('; ')}`);
+      }
+      let restoredCount = 0;
+      const compacted = min.code.trim().replace(/__TPL_(\d+)__/g, (_, idx: string) => {
+        restoredCount++;
+        return '${' + exprs[Number(idx)] + '}';
+      });
+      if (restoredCount !== exprs.length) {
+        throw new Error(`CHROME_CSS interpolation mismatch (${restoredCount}/${exprs.length})`);
+      }
+      return {
+        contents: src.replace(match[0], match[1] + compacted + match[3]),
+        loader: 'ts',
+      };
+    });
+  },
+};
 
 const shellBuild = await build({
   entryPoints: [path.join(root, 'src/shell-entry.ts')],
@@ -34,6 +65,7 @@ const studioBuild = await build({
   treeShaking: true,
   legalComments: 'none',
   loader: { '.css': 'text' },
+  plugins: [minifyChromeCssPlugin],
   logLevel: 'silent',
 });
 const studioFile = studioBuild.outputFiles[0];
@@ -65,6 +97,7 @@ const mathBuild = await build({
   minify: true,
   legalComments: 'none',
   loader: { '.css': 'text' },
+  plugins: [minifyChromeCssPlugin],
   logLevel: 'silent',
 });
 const mathFile = mathBuild.outputFiles[0];

@@ -66,12 +66,14 @@ import {
   canHandleImmersiveShortcutPolicy,
   canShowSelectionBubble,
   computePaneVisibility,
+  isFullscreenDrawer,
   isParentModalOpen,
   resolveDocumentEscapeAction,
   resolveEditorEscapeOutcome,
   resolveWindowEscapeAction,
   shouldApplyAiPreview,
   shouldKeepCssWorkbenchOnViewChange,
+  shouldKeepDrawerOnNavigation,
   shouldRestoreSplitOnResize,
 } from './domain/studio-overlay.machine';
 import type { WritingSkill } from './domain/writing-skills';
@@ -334,6 +336,7 @@ export function createClientPlugin(
     );
     const [drawerOpen, setDrawerOpen] = React.useState(false);
     const [drawerTab, setDrawerTab] = React.useState<'theme' | 'help'>('theme');
+    const [drawerNavSeq, setDrawerNavSeq] = React.useState(0);
     const [cssWorkbench, setCssWorkbench] = React.useState<{ open: boolean; targetId: string | null; seq: number }>({
       open: false,
       targetId: null,
@@ -580,9 +583,13 @@ export function createClientPlugin(
       },
     });
 
+    function containerWidth(): number {
+      return rootRef.current?.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 1024);
+    }
+
     function resetDocumentSurface(): void {
       writingSkills.resetSession();
-      dismissTransientOverlays({ keepDrawer: true });
+      dismissTransientOverlays({ keepDrawer: shouldKeepDrawerOnNavigation(containerWidth()) });
       clearCssWorkbenchDraft();
       scrollSync.resetPreviewScroll();
     }
@@ -817,6 +824,15 @@ export function createClientPlugin(
     });
 
     function updateSettings(patch: Partial<themes.ThemeSettings>): void {
+      if (
+        patch.theme !== undefined ||
+        patch.fontSize !== undefined ||
+        patch.lineHeight !== undefined ||
+        patch.codeTheme !== undefined ||
+        patch.customThemes !== undefined
+      ) {
+        scrollSync.capturePreviewRatio();
+      }
       store.updateActive({ settings: { ...settings, ...patch } });
     }
 
@@ -832,6 +848,7 @@ export function createClientPlugin(
     }
 
     function resetStyles(): void {
+      scrollSync.capturePreviewRatio();
       clearCssWorkbenchDraft();
       store.updateActive({ settings: { ...themes.DEFAULT_SETTINGS, customThemes: settings.customThemes || [] } });
     }
@@ -930,6 +947,7 @@ export function createClientPlugin(
         showMarkdownEditor: panes.showMarkdownEditor,
         searchOpen: searchPanel.open,
         hasAiSession: Boolean(writingSkills.session),
+        fullscreenDrawer: isFullscreenDrawer(drawerOpen, containerWidth()),
       });
       if (outcome === 'close-search') {
         closeSearchPanel();
@@ -1051,12 +1069,13 @@ export function createClientPlugin(
       'keydown',
       (event: KeyboardEvent) => {
         if (!isUnhandledEscapeKey(event)) return;
-        // Keep the docked desktop inspector open when pressing Esc inside the editor (CodeMirror Esc->Tab escape).
+        // Keep the docked desktop inspector open when pressing Esc inside the Markdown editor (CodeMirror Esc->Tab escape).
         const action = resolveWindowEscapeAction({
           hasModal: hasActiveModal(),
           menuOpen,
           drawerOpen,
-          inEditor: isEventInside(event, '.mdstudio-editor-pane'),
+          inEditor: isEventInside(event, '.mdstudio-editor-pane:not(.mdstudio-css-workbench) .mdstudio-editor-wrap'),
+          fullscreenDrawer: isFullscreenDrawer(drawerOpen, containerWidth()),
         });
         if (action === 'close-menu') setMenuOpen(false);
         else if (action === 'close-drawer') setDrawerOpen(false);
@@ -1177,14 +1196,25 @@ export function createClientPlugin(
       };
     });
 
+    const liveCssDraftRef = useLatest(React, liveCssDraft);
+
+    function handleDraftCssChange(nextCss: string): void {
+      if (nextCss.trim() !== liveCssDraftRef.current.trim()) scrollSync.capturePreviewRatio();
+      setLiveCssDraft(nextCss);
+    }
+
     function openCssWorkbench(targetId: string | null): void {
+      scrollSync.capturePreviewRatio();
       dismissTransientOverlays();
       writingSkills.resetSession();
       if (view !== 'split') store.updateActive({ view: 'split' });
+      const targetTheme = targetId ? findCustomTheme(settings.customThemes, targetId) : null;
+      setLiveCssDraft(targetTheme ? targetTheme.css : themes.exampleCss(lang() === 'en' ? 'en' : 'zh'));
       setCssWorkbench((prev) => ({ open: true, targetId, seq: prev.seq + 1 }));
     }
 
     function closeCssWorkbench(): void {
+      scrollSync.capturePreviewRatio();
       clearCssWorkbenchDraft();
       focusEditorSoon();
     }
@@ -1222,6 +1252,7 @@ export function createClientPlugin(
         canFocusMarkdownEditor({
           hasModal: hasActiveModal(),
           showMarkdownEditor: panes.showMarkdownEditor,
+          fullscreenDrawer: isFullscreenDrawer(drawerOpen, containerWidth()),
         }) && !document.querySelector('[aria-modal="true"]'),
     );
 
@@ -1260,6 +1291,7 @@ export function createClientPlugin(
           showMarkdownEditor: panes.showMarkdownEditor,
           searchOpen: searchPanel.open,
           hasAiSession: Boolean(writingSkills.session),
+          fullscreenDrawer: isFullscreenDrawer(drawerOpen, containerWidth()),
         });
         if (action === 'close-search') {
           closeSearchPanel();
@@ -1411,11 +1443,13 @@ export function createClientPlugin(
           onTitle: (value) => store.updateActive({ title: value }),
           onView: (next) => {
             store.updateActive({ view: next });
-            const containerW =
-              rootRef.current?.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 1024);
+            const containerW = containerWidth();
             const keepWorkbench = shouldKeepCssWorkbenchOnViewChange(cssWorkbench.open, containerW, next);
             if (!keepWorkbench) clearCssWorkbenchDraft();
-            dismissTransientOverlays({ keepSearch: next !== 'preview', keepDrawer: true });
+            dismissTransientOverlays({
+              keepSearch: next !== 'preview',
+              keepDrawer: shouldKeepDrawerOnNavigation(containerW),
+            });
           },
           onImmersive: enterImmersive,
           onOpenLibrary: () => {
@@ -1434,7 +1468,7 @@ export function createClientPlugin(
           },
           onCloseMenu: () => setMenuOpen(false),
           onNew: () => {
-            dismissTransientOverlays({ keepDrawer: true });
+            dismissTransientOverlays({ keepDrawer: shouldKeepDrawerOnNavigation(containerWidth()) });
             docLibrary.newDocument();
           },
           onOpenFolder: () => {
@@ -1456,9 +1490,10 @@ export function createClientPlugin(
           },
           onCopyText: copyActions.copyPlainText,
           onShortcuts: () => {
+            dismissTransientOverlays({ keepSearch: true, keepDrawer: true });
             setDrawerTab('help');
             setDrawerOpen(true);
-            setMenuOpen(false);
+            setDrawerNavSeq((n) => n + 1);
           },
           onSample: () => {
             setMenuOpen(false);
@@ -1643,6 +1678,7 @@ export function createClientPlugin(
               outlineOpen,
               slashOpen: slashMenu.open,
               menuOpen,
+              fullscreenDrawer: isFullscreenDrawer(drawerOpen, containerWidth()),
             })
               ? selectionBubble.pos
               : null,
@@ -1671,7 +1707,7 @@ export function createClientPlugin(
           onBack: closeCssWorkbench,
           onSettings: updateSettings,
           onNotify: (text) => notify(text),
-          onDraftCssChange: setLiveCssDraft,
+          onDraftCssChange: handleDraftCssChange,
         }),
 
         panes.showPreview
@@ -1694,6 +1730,14 @@ export function createClientPlugin(
               onPreviewClick: previewClick,
               onPreviewMounted: scrollSync.restorePreviewScroll,
               onPreviewRelayout: scrollSync.applyCapturedPreviewRatio,
+              relayoutKey:
+                previewSettings.theme +
+                ':' +
+                previewSettings.fontSize +
+                ':' +
+                previewSettings.lineHeight +
+                ':' +
+                (cssWorkbench.open && deferredCssDraft.trim() ? 1 : 0),
             })
           : null,
 
@@ -1703,6 +1747,7 @@ export function createClientPlugin(
           ui: uiKit,
           open: drawerOpen,
           initialTab: drawerTab,
+          navSeq: drawerNavSeq,
           onTabChange: setDrawerTab,
           settings,
           shortcuts: shortcutRows,

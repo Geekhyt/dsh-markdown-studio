@@ -320,11 +320,16 @@ const h = React.createElement;
 
   const toolBtn = container.querySelector<HTMLButtonElement>('.mdstudio-tool');
   assert.ok(toolBtn);
+  const mdEvt = new win.MouseEvent('mousedown', { bubbles: true, cancelable: true });
   await act(async () => {
-    toolBtn.dispatchEvent(new win.MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+    toolBtn.dispatchEvent(mdEvt);
+  });
+  assert.equal(mdEvt.defaultPrevented, true, 'ToolButton mousedown preserves editor selection');
+  await act(async () => {
+    document.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
     toolBtn.focus();
   });
-  assert.ok(container.querySelector('.mdstudio-tooltip'), 'focus opens FallbackTooltip');
+  assert.ok(container.querySelector('.mdstudio-tooltip'), 'keyboard focus opens FallbackTooltip');
   await act(async () => {
     toolBtn.click();
   });
@@ -872,9 +877,47 @@ const h = React.createElement;
     // Keyboard focus still opens tooltip immediately even inside the scroll-quiet window
     simulateTrappedContainingBlock = false;
     await act(async () => {
+      document.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
       btnB.focus();
     });
     assert.ok(container.querySelector('.mdstudio-tooltip'), 'keyboard focus opens tooltip immediately');
+
+    // Non-keyboard programmatic focus restoration after a pointer interaction does not pop up a phantom tooltip
+    await act(async () => {
+      btnB.blur();
+      btnA.dispatchEvent(new win.MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      btnA.focus();
+    });
+    assert.equal(
+      container.querySelector('.mdstudio-tooltip'),
+      null,
+      'non-keyboard programmatic focus restoration (:focus-visible=false) does not show phantom tooltip',
+    );
+
+    // Keyboard focus on A then B -> exact measured edge alignment & strictly 1 active tooltip at a time
+    await act(async () => {
+      btnA.blur();
+      document.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+      btnA.focus();
+    });
+    const edgeTip = container.querySelector<HTMLElement>('.mdstudio-tooltip')!;
+    assert.ok(edgeTip, 'keyboard focus opens edge tooltip');
+    // btnA center = 960, width = 120 (half = 60), vw = 1000 -> clamped center = 1000 - 60 - 8 = 932
+    assert.equal(
+      Number.parseFloat(edgeTip.style.left),
+      932,
+      'alignFixedTooltip clamps short edge tooltip to measured half-width + 8px margin',
+    );
+    await act(async () => {
+      document.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+      btnB.focus();
+    });
+    assert.equal(
+      container.querySelectorAll('.mdstudio-tooltip').length,
+      1,
+      'opening a second FallbackTooltip dismisses any previously active tooltip (never dual tooltips)',
+    );
+    assert.equal(container.querySelector('.mdstudio-tooltip')?.textContent, 'Delete row');
   } finally {
     win.HTMLElement.prototype.getBoundingClientRect = origRect;
     Object.defineProperty(win, 'innerWidth', { value: origInnerWidth, configurable: true });
@@ -974,6 +1017,7 @@ const h = React.createElement;
 
     // Bottom-edge tooltip flips above anchor
     await act(async () => {
+      document.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
       container.querySelector<HTMLButtonElement>('#bottom-tip-btn')!.focus();
     });
     const bottomTip = document.body.querySelector<HTMLElement>('.mdstudio-tooltip');
@@ -987,6 +1031,7 @@ const h = React.createElement;
     mockAnchorTop = 6;
     mockAnchorBottom = 34;
     await act(async () => {
+      document.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
       container.querySelector<HTMLButtonElement>('#top-tip-btn')!.focus();
     });
     const topTip = document.body.querySelector<HTMLElement>('.mdstudio-tooltip');
@@ -1010,6 +1055,46 @@ const h = React.createElement;
     assert.ok(portaledModal && portaledModal.parentElement === document.body, 'FallbackModal portals to document.body');
     const portaledToast = document.body.querySelector<HTMLElement>('.mdstudio-toast');
     assert.ok(portaledToast && portaledToast.parentElement === document.body, 'FallbackToast portals to document.body');
+
+    // 8c. FallbackTooltip clears stale tip state when target flips disabled -> enabled without mouseleave
+    {
+      function DisabledFlipHarness() {
+        const [disabled, setDisabled] = React.useState(false);
+        return h(
+          'div',
+          null,
+          h('button', { type: 'button', id: 'flip-disabled-toggle', onClick: () => setDisabled((v) => !v) }, 'Toggle'),
+          h(kit.Tooltip, {
+            label: 'Undo action',
+            disabled,
+            children: h('button', { type: 'button', id: 'flip-tip-btn', disabled }, 'Undo'),
+          }),
+        );
+      }
+      await act(async () => {
+        root?.render(h(DisabledFlipHarness));
+      });
+      const tipBtn = container.querySelector<HTMLButtonElement>('#flip-tip-btn')!;
+      const toggleBtn = container.querySelector<HTMLButtonElement>('#flip-disabled-toggle')!;
+      await act(async () => {
+        tipBtn.dispatchEvent(new win.MouseEvent('mouseover', { bubbles: true }));
+      });
+      assert.equal(document.querySelectorAll('.mdstudio-tooltip').length, 1, 'tooltip opens on hover before disable');
+      // Disable without firing mouseleave (simulates Mod+Z disabling Undo under pointer)
+      await act(async () => {
+        toggleBtn.click();
+      });
+      assert.equal(document.querySelectorAll('.mdstudio-tooltip').length, 0, 'tooltip hides when disabled');
+      // Re-enable without hovering again -> must NOT spontaneously pop up stale tooltip
+      await act(async () => {
+        toggleBtn.click();
+      });
+      assert.equal(
+        document.querySelectorAll('.mdstudio-tooltip').length,
+        0,
+        're-enabling tooltip target after disabled flip does not show stale ghost tooltip',
+      );
+    }
   } finally {
     (globalThis as { ReactDOM?: unknown }).ReactDOM = prevGlobalDom;
     win.HTMLElement.prototype.getBoundingClientRect = origRect;

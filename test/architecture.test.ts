@@ -407,6 +407,83 @@ assert.ok(
   `src/ui/dsh-primitives.ts must define portalOverlay and route all 4 fixed overlays through it (found ${portalCallCount} occurrences)`,
 );
 
+// Editor-scoped popovers (.mdstudio-outline / .mdstudio-slash) must bound max-height to their container
+// so short viewports never overflow .mdstudio-editor-wrap or cover .mdstudio-editor-stats.
+for (const cls of ['.mdstudio-outline', '.mdstudio-slash']) {
+  const escaped = cls.replace('.', '\\.');
+  const rule = CHROME_CSS.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`));
+  assert.ok(rule, `CHROME_CSS defines ${cls}`);
+  assert.ok(
+    /max-height\s*:\s*min\([^)]*calc\(100%\s*-/.test(rule[1]),
+    `${cls} must cap max-height with min(..., calc(100% - ...)) so short viewports never clip`,
+  );
+}
+
+// Stacked narrow Immersive Write banners must not double-pad dock clearance when FileBanner precedes SearchBar.
+assert.ok(
+  CHROME_CSS.includes(
+    '.mdstudio-root[data-mdstudio-immersive="write"] .mdstudio-file-banner ~ .mdstudio-searchbar { padding-top: 6px; }',
+  ),
+  'CHROME_CSS collapses secondary top dock clearance when FileBanner precedes SearchBar in narrow Immersive Write',
+);
+assert.ok(
+  CHROME_CSS.includes(
+    '.mdstudio-root[data-mdstudio-immersive="write"][data-mdstudio-host-titlebar] .mdstudio-file-banner ~ .mdstudio-searchbar { padding-top: 6px; }',
+  ),
+  'CHROME_CSS collapses secondary top dock clearance in host-titlebar narrow Immersive Write',
+);
+
+// Host shortcut precedence: Mod+Shift+F must bind on document bubble with host dialog guard so DSH window listeners cannot swallow it.
+const immersiveDockSrc = fs.readFileSync(path.join(root, 'src/ui/immersive-dock.ts'), 'utf8');
+assert.ok(
+  immersiveDockSrc.includes('useDocumentEvent') && immersiveDockSrc.includes('[role="dialog"]'),
+  'src/ui/immersive-dock.ts handles Mod+Shift+F on document bubble with dialog guard',
+);
+
+// Empty preview stage background reconciliation: usePreviewHtmlSurface must reconcile stageRef on unmount/empty.
+const domSurfacesSrc = fs.readFileSync(path.join(root, 'src/runtime/dom-surfaces.ts'), 'utf8');
+assert.ok(
+  domSurfacesSrc.includes('stageRef') && domSurfacesSrc.includes('stage.style.backgroundColor'),
+  'src/runtime/dom-surfaces.ts reconciles stage background when preview article unmounts/empties',
+);
+
+// Flex-1 editor, preview stage, and CSS workbench scroll surfaces must use min-height: 0
+// so short viewports never clip bottom lines or scrollbars inside overflow:hidden wrappers.
+for (const sel of [
+  '.mdstudio-editor',
+  '.mdstudio-codemirror',
+  '.mdstudio-codemirror .cm-editor',
+  '.mdstudio-codemirror .cm-scroller',
+  '.mdstudio-stage',
+  '.mdstudio-css',
+  '.mdstudio-css-codemirror',
+]) {
+  const escaped = sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const rule = CHROME_CSS.match(new RegExp(`(?:^|\\n)${escaped}\\s*\\{([^}]*)\\}`));
+  assert.ok(rule, `CHROME_CSS defines ${sel}`);
+  assert.ok(
+    !/min-height\s*:\s*[1-9]\d*px/.test(rule[1]),
+    `${sel} must not declare a rigid positive pixel min-height (breaks short-viewport scroll reach)`,
+  );
+}
+
+// Window Escape inEditor guard must target only the Markdown text wrap (never toolbar buttons or CSS workbench).
+const appSrcForEsc = fs.readFileSync(path.join(root, 'src/app.ts'), 'utf8');
+assert.ok(
+  appSrcForEsc.includes(
+    "isEventInside(event, '.mdstudio-editor-pane:not(.mdstudio-css-workbench) .mdstudio-editor-wrap')",
+  ),
+  'src/app.ts narrows Escape inEditor guard to Markdown editor wrap so Toolbar & CssWorkbench close SettingsDrawer',
+);
+
+// PreviewPane relayoutKey must track deferred CSS draft readiness so urgent workbench open
+// never consumes pendingRelayoutRatioRef before deferredCssDraft updates preview HTML.
+assert.ok(
+  appSrcForEsc.includes('cssWorkbench.open && deferredCssDraft.trim()') &&
+    appSrcForEsc.includes('onDraftCssChange: handleDraftCssChange'),
+  'src/app.ts aligns PreviewPane relayoutKey with deferredCssDraft and captures scroll ratio on draft CSS changes',
+);
+
 // Mobile 44px touch-target overrides must target interactive `button.*` chips/tabs, never
 // non-interactive `span.is-draft` status badges.
 assert.ok(

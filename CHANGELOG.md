@@ -2,6 +2,34 @@
 
 All notable changes to `dsh-markdown-studio` are documented in this file.
 
+## [0.1.16] - 2026-11-23
+
+### Fixed
+- **Responsive Full-Screen `SettingsDrawer` State-Machine Model (`<= 720px`) (P0)**:
+  - Extracted shared pure predicates `isFullscreenDrawer(drawerOpen, containerWidth)` and `shouldKeepDrawerOnNavigation(containerWidth)` in `src/domain/studio-overlay.machine.ts`, wired across `src/app.ts` and exhaustive BFS verification (`test/formal-models.test.ts`).
+  - Narrow full-screen drawers (`<= 720px`) now automatically dismiss on view switches, new document creation, and document switches; `canFocusMarkdownEditor` / `canShowSelectionBubble` prevent the occluded background editor from stealing focus or showing floating bubbles; and `Escape` always dismisses the visible full-screen drawer even if background editor focus was active.
+- **Host Shortcut Precedence for `Mod+Shift+F` Immersive Mode in Real DeepSeek Harness (P0)**:
+  - Bound `Mod+Shift+F` on `document` bubble with an active `[aria-modal="true"], [role="dialog"]` host-dialog yield guard in `src/ui/immersive-dock.ts` (retaining `window` fallback and keeping `Escape` exit on `window` bubble to preserve LIFO ordering), preventing DeepSeek Harness host `window` listeners from swallowing `⌘/Ctrl+Shift+F`.
+- **Short-Viewport Container Bounds for Editor Popovers & Flex-1 Scroll Surfaces**:
+  - Bounded `.mdstudio-outline` and `.mdstudio-slash` height to `max-height: min(348px, calc(100% - 14px))` so short viewports never overlap `.mdstudio-editor-stats` or clip outside `.mdstudio-editor-wrap` (`src/ui/styles.ts`).
+  - Replaced rigid positive pixel `min-height` rules (`320px / 280px / 260px / 200px`) with `min-height: 0` across flex-1 scroll surfaces (`.mdstudio-editor`, `.mdstudio-codemirror`, `.cm-editor`, `.cm-scroller`, `.mdstudio-stage`, `.mdstudio-css`, `.mdstudio-css-codemirror`) so short viewports with open `SearchBar` keep bottom lines and scrollbars fully reachable.
+  - Collapsed secondary top clearance when `.mdstudio-file-banner` precedes `.mdstudio-searchbar` in narrow `Immersive Write` (`<= 720px` and host-titlebar `<= 920px`) via `.mdstudio-file-banner ~ .mdstudio-searchbar { padding-top: 6px; }`.
+- **Unified Scroll Reset, Focus Handoff & Keyboard Re-Entry Ergonomics**:
+  - Added monotonic `navSeq` to `SettingsDrawer` (`src/ui/settings-drawer.ts`, `src/app.ts`) so external re-entry (e.g., `More → Shortcuts` while scrolled down) resets `scrollTop = 0`, moves keyboard focus to the target tab, and dismisses transient editor popovers.
+  - Reset scroll containers to `scrollTop = 0` on tab/query/entity changes in `LibraryDialog` (`.mdstudio-library-list`), `WorkspaceDialog` (`.mdstudio-workspace-body`), and `SkillManagerDialog` (`.mdstudio-skill-main`) via `useDebouncedKeyTask` (`src/ui/library-dialogs.ts`, `src/ui/skill-manager-dialog.ts`).
+  - Narrowed the window `Escape` `inEditor` guard in `src/app.ts` to `.mdstudio-editor-pane:not(.mdstudio-css-workbench) .mdstudio-editor-wrap` so pressing `Escape` from Toolbar buttons or `CssWorkbench` inputs cleanly closes `SettingsDrawer` while preserving WCAG `Esc → Tab` inside the Markdown editor.
+  - Updated `createEditorSearch.openSearch()` (`src/application/editor-search.ts`) to select existing query text on `Mod+F` re-entry for parity with `SearchBar`.
+- **Dark-Mode Empty Stage Reconciliation & `FallbackTooltip` Precision / Lifecycle Hygiene**:
+  - Reconciled `.mdstudio-stage` inline `backgroundColor` via `stageRef` in `usePreviewHtmlSurface` (`src/runtime/dom-surfaces.ts`, `src/ui/preview-pane.ts`) when the article surface unmounts/empties, clearing stale dark custom-theme stage backgrounds on document clear/new.
+  - Fixed `FallbackTooltip` (`src/ui/dsh-primitives.ts`) to store the true anchor center for measured-width edge clamping, enforce global single-active tooltip exclusion (`dismissActiveTip`), gate `onFocus` tooltips behind W3C `:focus-visible` keyboard focus modality (eliminating phantom tooltips on mouse close), and clear stale `tip` state + global listeners immediately when `disabled` flips `true`.
+- **End-to-End Preview & Editor Scroll Ratio Anchoring Across `CssWorkbench` Lifecycle**:
+  - Generalized preview relayout scroll anchoring across theme/font/line-height changes and the full `CssWorkbench` lifecycle (opening, switching custom theme chips, live CSS edits, and closing) by pre-seeding target CSS atomically in `openCssWorkbench`, capturing ratio in `handleDraftCssChange`, and aligning `PreviewPane`'s `relayoutKey` with `deferredCssDraft` (`src/app.ts`, `src/runtime/dom-surfaces.ts`, `src/ui/preview-pane.ts`).
+  - Added bidirectional `'restore'` scroll-sync locking, 8-frame CodeMirror 6 virtual-height convergence in `restoreEditorScroll`, and scroll-stable `focus()` (`src/application/use-scroll-sync.ts`, `src/ui/codemirror-core.ts`).
+  - Added zero-warning build-time `CHROME_CSS` minification in `scripts/build.ts` (reclaiming ~8.8 KiB) and removed the duplicate `mdstudio-modal` class prefix in `src/ui/skill-manager-dialog.ts`.
+
+### Verification & Regression Gates
+- Added permanent regression gates in `test/formal-models.test.ts` (1,516 `StudioOverlayMachine` states / 48,512 transitions with full-screen drawer navigation & `Escape` liveness), `test/architecture.test.ts` (popover `min(..., calc(100% - ...))`, flex-1 `min-height: 0`, sibling banner collapse, `Mod+Shift+F` document bubble + dialog guard, `stageRef` cleanup, narrowed `inEditor` Escape guard, and `deferredCssDraft` `relayoutKey` alignment), `test/dsh-primitives.test.ts` (edge alignment, single-active exclusion, `:focus-visible` focus modality, and `disabled` flip hygiene), `test/app-dom.test.ts`, and `scripts/mutation-smoke.ts` (24/24 killed mutants).
+
 ## [0.1.15] - 2026-11-23
 
 ### Fixed

@@ -6,7 +6,7 @@ import type { ConfirmDialogFn, PromptDialogFn } from '../domain/dialog';
 import type { MergeConflict, MergeDecision } from '../domain/library-backup';
 import { type LibrarySearchResult, searchArticles } from '../domain/library-search';
 import type { WorkspaceDirectory, WorkspaceEntry, WorkspaceFile } from '../domain/workspace';
-import { useDocumentEvent } from '../runtime/react-lifecycle';
+import { useDebouncedKeyTask, useDocumentEvent } from '../runtime/react-lifecycle';
 import type { DshMenuEntry } from '../types/dsh-primitives';
 import type { UiKit } from './ui-kit';
 
@@ -309,6 +309,10 @@ export function LibraryDialog(props: LibraryDialogProps): ReactNode {
   const [query, setQuery] = React.useState('');
   const { menuOpen, updateMenuOpen, onModalClose } = useModalMenuState(React, props.open, props.onClose);
   const fileRef = React.useRef<HTMLInputElement | null>(null);
+  const listRef = React.useRef<HTMLDivElement | null>(null);
+  useDebouncedKeyTask(React, tab + '\0' + query, 0, props.open, function () {
+    if (listRef.current) listRef.current.scrollTop = 0;
+  });
   if (!props.open) return null;
   const h = React.createElement;
   const t = props.t;
@@ -499,7 +503,7 @@ export function LibraryDialog(props: LibraryDialogProps): ReactNode {
       results.length
         ? h(
             'div',
-            { className: 'mdstudio-library-list' },
+            { ref: listRef, className: 'mdstudio-library-list' },
             results.map(function (result) {
               return tab === 'docs' ? renderDocsRow(props, result, needle) : renderTrashRow(props, result, needle);
             }),
@@ -979,6 +983,10 @@ export function WorkspaceDialog(props: WorkspaceDialogProps): ReactNode {
   const [query, setQuery] = props.React.useState('');
   const [collapsed, setCollapsed] = props.React.useState<Record<string, boolean>>({});
   const { menuOpen, updateMenuOpen, onModalClose } = useModalMenuState(props.React, props.open, props.onClose);
+  const bodyRef = props.React.useRef<HTMLDivElement | null>(null);
+  useDebouncedKeyTask(props.React, query, 0, props.open, function () {
+    if (bodyRef.current) bodyRef.current.scrollTop = 0;
+  });
   if (!props.open) return null;
   const h = props.React.createElement;
   const t = props.t;
@@ -1104,7 +1112,7 @@ export function WorkspaceDialog(props: WorkspaceDialogProps): ReactNode {
     ),
     h(
       'div',
-      { className: 'mdstudio-library-body mdstudio-workspace-body' },
+      { ref: bodyRef, className: 'mdstudio-library-body mdstudio-workspace-body' },
       props.error ? h('div', { className: 'mdstudio-host-error' }, props.error) : null,
       props.loading
         ? h('p', { className: 'mdstudio-help mdstudio-library-empty', role: 'status' }, t('workspace.loading'))

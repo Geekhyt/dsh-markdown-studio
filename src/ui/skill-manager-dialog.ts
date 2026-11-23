@@ -10,6 +10,7 @@ import {
   parseSkillMarkdown,
   type WritingSkill,
 } from '../domain/writing-skills';
+import { useDebouncedKeyTask } from '../runtime/react-lifecycle';
 import { CodeMirrorEditor } from './codemirror-editor';
 import type { UiKit } from './ui-kit';
 
@@ -284,6 +285,7 @@ function SkillManagerDialogContent(props: SkillManagerDialogProps): ReactNode {
   const h = React.createElement;
   const t = props.t;
   const fileRef = React.useRef<HTMLInputElement | null>(null);
+  const mainRef = React.useRef<HTMLDivElement | null>(null);
   const customCount = props.skills.filter((s) => !s.builtin).length;
   const [form, setForm] = React.useState<DraftForm>(() =>
     buildInitialDraft(
@@ -295,6 +297,9 @@ function SkillManagerDialogContent(props: SkillManagerDialogProps): ReactNode {
     ),
   );
   const [editorEpoch, setEditorEpoch] = React.useState(0);
+  useDebouncedKeyTask(React, (form.selectedId || '__draft__') + ':' + editorEpoch, 0, props.open, function () {
+    if (mainRef.current) mainRef.current.scrollTop = 0;
+  });
 
   const currentSkill = form.selectedId ? props.skills.find((s) => s.id === form.selectedId) || null : null;
   const isBuiltin = Boolean(currentSkill?.builtin);
@@ -368,7 +373,7 @@ function SkillManagerDialogContent(props: SkillManagerDialogProps): ReactNode {
       title: t('ai.managerTitle'),
       closeLabel,
       headless: true,
-      className: 'mdstudio-modal mdstudio-skill-modal',
+      className: 'mdstudio-skill-modal',
     },
     h('input', {
       ref: function (el: HTMLInputElement | null) {
@@ -470,6 +475,7 @@ function SkillManagerDialogContent(props: SkillManagerDialogProps): ReactNode {
     h(
       'div',
       {
+        ref: mainRef,
         className: 'mdstudio-skill-main',
         id: 'mdstudio-skill-panel',
         role: 'tabpanel',

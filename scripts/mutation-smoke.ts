@@ -123,8 +123,22 @@ const mutations: Mutation[] = [
   {
     name: 'studio overlay modal-focus guard blocks background editor focus when modal is open',
     file: 'src/domain/studio-overlay.machine.ts',
-    find: 'return !flags.hasModal && flags.showMarkdownEditor;',
-    replace: 'return flags.showMarkdownEditor;',
+    find: 'return !flags.hasModal && flags.showMarkdownEditor && !flags.fullscreenDrawer;',
+    replace: 'return flags.showMarkdownEditor && !flags.fullscreenDrawer;',
+    test: 'test/formal-models.test.ts',
+  },
+  {
+    name: 'narrow full-screen drawer dismisses on navigation instead of staying stuck',
+    file: 'src/domain/studio-overlay.machine.ts',
+    find: 'return containerWidth > NARROW_CONTAINER_PX;',
+    replace: 'return true;',
+    test: 'test/formal-models.test.ts',
+  },
+  {
+    name: 'full-screen drawer Escape guard prevents editor focus from trapping Escape',
+    file: 'src/domain/studio-overlay.machine.ts',
+    find: "if (flags.drawerOpen && (!flags.inEditor || flags.fullscreenDrawer)) return 'close-drawer';",
+    replace: "if (flags.drawerOpen && !flags.inEditor) return 'close-drawer';",
     test: 'test/formal-models.test.ts',
   },
   {
@@ -154,6 +168,20 @@ const mutations: Mutation[] = [
     find: "'.mdstudio-ai-inline-card, .mdstudio-skill-split, .mdstudio-slash, .mdstudio-outline, ' + PORTALED_MENU_SELECTOR",
     replace: "'.mdstudio-ai-inline-card, .mdstudio-skill-split, .mdstudio-slash, .mdstudio-outline'",
     test: 'test/architecture.test.ts',
+  },
+  {
+    name: 'narrow window Escape inEditor guard away from toolbar & CSS workbench',
+    file: 'src/app.ts',
+    find: "inEditor: isEventInside(event, '.mdstudio-editor-pane:not(.mdstudio-css-workbench) .mdstudio-editor-wrap'),",
+    replace: "inEditor: isEventInside(event, '.mdstudio-editor-pane'),",
+    test: 'test/architecture.test.ts',
+  },
+  {
+    name: 'clear FallbackTooltip stale state when target flips disabled',
+    file: 'src/ui/dsh-primitives.ts',
+    find: 'if (props.disabled && tip !== null) setTip(null);',
+    replace: 'if (false && props.disabled && tip !== null) setTip(null);',
+    test: 'test/dsh-primitives.test.ts',
   },
 ];
 

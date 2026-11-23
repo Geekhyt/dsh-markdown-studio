@@ -14,13 +14,18 @@ import {
 } from '../src/domain/file-session.machine';
 import {
   canFocusMarkdownEditor,
+  canShowSelectionBubble,
   checkStudioSurfaceInvariants,
   computePaneVisibility,
   effectiveBubbleVisible,
   hasSurfaceModal,
   initialStudioSurfaceState,
+  isFullscreenDrawer,
   isParentModalOpen,
+  resolveDocumentEscapeAction,
+  resolveWindowEscapeAction,
   shouldApplyAiPreview,
+  shouldKeepDrawerOnNavigation,
   stepStudioSurface,
   type StudioSurfaceEvent,
   type StudioSurfaceState,
@@ -321,6 +326,72 @@ assert.ok(studioReport.states >= 500, `explored rich studio overlay state space 
   assert.equal(shouldApplyAiPreview(false, true), true, 'preview keeps AI draft when switching to preview-only');
   assert.equal(shouldApplyAiPreview(true, true), false, 'CssWorkbench suppresses AI draft preview');
   assert.equal(shouldApplyAiPreview(false, false), false, 'no AI session renders original markdown');
+
+  // 12. Narrow full-screen SettingsDrawer (<= 720px): navigation dismisses drawer, blocks editor focus/bubble, never traps Escape
+  assert.equal(isFullscreenDrawer(true, 720), true, '720px drawer is full-screen takeover');
+  assert.equal(isFullscreenDrawer(true, 721), false, '721px drawer is side overlay');
+  assert.equal(shouldKeepDrawerOnNavigation(720), false, 'narrow navigation dismisses full-screen drawer');
+  assert.equal(shouldKeepDrawerOnNavigation(721), true, 'wide navigation retains inspector drawer');
+  assert.equal(
+    canFocusMarkdownEditor({ hasModal: false, showMarkdownEditor: true, fullscreenDrawer: true }),
+    false,
+    'full-screen drawer blocks background editor focus',
+  );
+  assert.equal(
+    canShowSelectionBubble({
+      showMarkdownEditor: true,
+      hasModal: false,
+      hasAiSession: false,
+      outlineOpen: false,
+      slashOpen: false,
+      menuOpen: false,
+      fullscreenDrawer: true,
+    }),
+    false,
+    'full-screen drawer suppresses floating SelectionBubble',
+  );
+  assert.equal(
+    resolveDocumentEscapeAction({
+      hasModal: false,
+      menuOpen: false,
+      outlineOpen: false,
+      slashOpen: false,
+      drawerOpen: true,
+      inDrawer: false,
+      showMarkdownEditor: true,
+      searchOpen: true,
+      hasAiSession: false,
+      fullscreenDrawer: true,
+    }),
+    'none',
+    'document Esc defers to full-screen drawer before hidden background SearchBar',
+  );
+  assert.equal(
+    resolveWindowEscapeAction({
+      hasModal: false,
+      menuOpen: false,
+      drawerOpen: true,
+      inEditor: true,
+      fullscreenDrawer: true,
+    }),
+    'close-drawer',
+    'Esc closes full-screen drawer even when focus is inside background editor',
+  );
+  s = initialStudioSurfaceState(true);
+  s = stepStudioSurface(s, { type: 'TOGGLE_DRAWER' });
+  assert.equal(s.drawerOpen, true);
+  s = stepStudioSurface(s, { type: 'SET_VIEW', view: 'preview' });
+  assert.equal(s.drawerOpen, false, 'narrow view toggle dismisses full-screen drawer');
+  s = stepStudioSurface(s, { type: 'SET_VIEW', view: 'split' });
+  s = stepStudioSurface(s, { type: 'TOGGLE_DRAWER' });
+  s = stepStudioSurface(s, { type: 'REPLACE_DOCUMENT' });
+  assert.equal(s.drawerOpen, false, 'narrow document replacement dismisses full-screen drawer');
+  s = stepStudioSurface(s, { type: 'OPEN_SEARCH' });
+  s = stepStudioSurface(s, { type: 'TOGGLE_DRAWER' });
+  s = stepStudioSurface(s, { type: 'ESCAPE', target: 'editor' });
+  assert.equal(s.drawerOpen, false, 'first Esc closes full-screen drawer ahead of hidden search bar');
+  assert.equal(s.searchOpen, true, 'background search survives full-screen drawer dismissal');
+  assert.deepEqual(checkStudioSurfaceInvariants(s), []);
 
   // Negative self-tests: prove every invariant predicate fires on broken synthetic states (non-vacuity)
   const base = initialStudioSurfaceState(false);

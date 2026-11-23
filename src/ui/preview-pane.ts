@@ -21,6 +21,7 @@ export interface PreviewPaneProps {
   onPreviewClick: (event: ReactNamespace.MouseEvent<HTMLElement>) => void;
   onPreviewMounted?: () => void;
   onPreviewRelayout?: () => void;
+  relayoutKey?: string;
 }
 
 export function PreviewPane(props: PreviewPaneProps): ReactNode {
@@ -36,6 +37,7 @@ export function PreviewPane(props: PreviewPaneProps): ReactNode {
       ? props.rendered.stageBg
       : props.rendered.bg;
   const articleRef = props.React.useRef<HTMLDivElement | null>(null);
+  const stageRef = props.React.useRef<HTMLDivElement | null>(null);
 
   usePreviewHtmlSurface(props.React, articleRef, {
     html: props.rendered.html,
@@ -44,7 +46,9 @@ export function PreviewPane(props: PreviewPaneProps): ReactNode {
     paper: props.rendered.paper,
     dark,
     previewMode: props.previewMode,
+    relayoutKey: props.relayoutKey,
     empty: props.empty,
+    stageRef,
     applyDark: applyDarkPreview,
     cleanupDark: cleanupDarkPreview,
     onMountSurface: props.onPreviewMounted,
@@ -114,6 +118,7 @@ export function PreviewPane(props: PreviewPaneProps): ReactNode {
     h(
       'div',
       {
+        ref: stageRef,
         className: 'mdstudio-stage' + (props.previewMode === 'desktop' ? ' is-desktop' : ''),
         style: props.previewMode === 'desktop' ? { backgroundColor: surfaceBg } : undefined,
       },

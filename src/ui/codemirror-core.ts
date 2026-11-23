@@ -695,7 +695,9 @@ export function create(options: EditorOptions): EditorApi {
       view.focus();
     },
     focus() {
+      const prevTop = scrollElement.scrollTop;
       view.focus();
+      if (scrollElement.scrollTop !== prevTop) scrollElement.scrollTop = prevTop;
     },
     coordsAtPos(pos: number) {
       const clamped = Math.max(0, Math.min(view.state.doc.length, pos));

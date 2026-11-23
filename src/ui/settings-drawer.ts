@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { CODE_THEMES } from '../code-themes';
 import { MAX_CUSTOM_THEMES } from '../domain/custom-themes';
 import { resolveSafeFocusTarget } from '../runtime/dom-surfaces';
-import { useMountDisposable } from '../runtime/react-lifecycle';
+import { useDebouncedKeyTask, useMountDisposable } from '../runtime/react-lifecycle';
 import type { CustomTheme, ThemeSettings } from '../themes';
 import * as themes from '../themes';
 import { trapModalTab } from './dsh-primitives';
@@ -39,6 +39,7 @@ export interface SettingsDrawerProps {
   ui: UiKit;
   open: boolean;
   initialTab: 'theme' | 'help';
+  navSeq?: number;
   onTabChange?: (tab: 'theme' | 'help') => void;
   settings: ThemeSettings;
   shortcuts: Array<[string, string]>;
@@ -323,6 +324,21 @@ function SettingsDrawerContent(props: SettingsDrawerProps): ReactNode {
   const drawerRef = props.React.useRef<HTMLElement | null>(null);
   const [localTab, setLocalTab] = props.React.useState<'theme' | 'help'>(props.initialTab);
   const tab = props.onTabChange ? props.initialTab : localTab;
+  const navSeq = props.navSeq ?? 0;
+  const prevNavRef = props.React.useRef({ tab, navSeq });
+
+  useDebouncedKeyTask(props.React, tab + ':' + navSeq, 0, true, function () {
+    const prev = prevNavRef.current;
+    const tabChanged = prev.tab !== tab;
+    const navChanged = prev.navSeq !== navSeq;
+    prevNavRef.current = { tab, navSeq };
+    if ((tabChanged || navChanged) && bodyRef.current) bodyRef.current.scrollTop = 0;
+    if (navChanged) {
+      window.setTimeout(function () {
+        document.getElementById('mdstudio-tab-' + tab)?.focus();
+      }, 0);
+    }
+  });
 
   useMountDisposable(props.React, function () {
     const mountedDrawer = drawerRef.current;

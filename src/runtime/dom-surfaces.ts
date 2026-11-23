@@ -135,7 +135,9 @@ export interface PreviewSurfaceSpec {
   paper: boolean;
   dark: boolean;
   previewMode?: 'mobile' | 'desktop';
+  relayoutKey?: string;
   empty?: boolean;
+  stageRef?: ReactNamespace.RefObject<HTMLDivElement | null>;
   applyDark: (articleEl: HTMLElement, isCancelled?: () => boolean) => Promise<boolean>;
   cleanupDark?: () => void;
   onMountSurface?: () => void;
@@ -227,21 +229,25 @@ export function usePreviewHtmlSurface(
   const applyDarkRef = useLatest(React, spec.applyDark);
   const cleanupDarkRef = useLatest(React, spec.cleanupDark);
   const onMountSurfaceRef = useLatest(React, spec.onMountSurface);
+  const onRelayoutRef = useLatest(React, spec.onPreviewRelayout);
   const lastMountedRef = React.useRef<MountedSurfaceState>({ ...EMPTY_MOUNTED_SURFACE });
   usePreviewRelayoutSync(React, spec.previewMode, spec.onPreviewRelayout);
   React.useEffect(
     function () {
       const article = articleRef.current;
       const screen = article?.parentElement;
+      const isDesktop = spec.previewMode === 'desktop';
       if (!article || !screen) {
+        const stage = spec.stageRef?.current;
+        if (stage) stage.style.backgroundColor = isDesktop ? spec.surfaceBg || spec.darkFallbackBg : '';
         lastMountedRef.current = { ...EMPTY_MOUNTED_SURFACE };
         cleanupDarkRef.current?.();
         return undefined;
       }
       const freshNode = lastMountedRef.current.node !== article;
-      const isDesktop = spec.previewMode === 'desktop';
       const contentChanged = syncMountedArticle(article, spec, lastMountedRef);
       if (freshNode) onMountSurfaceRef.current?.();
+      if (contentChanged || spec.relayoutKey !== undefined) onRelayoutRef.current?.();
       if (!spec.dark) {
         paintStageBackground(screen, spec.surfaceBg, spec.darkFallbackBg, isDesktop);
         cleanupDarkRef.current?.();
@@ -277,7 +283,16 @@ export function usePreviewHtmlSurface(
         cancelled = true;
       };
     },
-    [spec.html, spec.surfaceBg, spec.darkFallbackBg, spec.paper, spec.dark, spec.previewMode, spec.empty],
+    [
+      spec.html,
+      spec.surfaceBg,
+      spec.darkFallbackBg,
+      spec.paper,
+      spec.dark,
+      spec.previewMode,
+      spec.relayoutKey,
+      spec.empty,
+    ],
   );
   React.useEffect(function () {
     return function () {

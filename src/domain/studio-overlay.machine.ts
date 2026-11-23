@@ -61,8 +61,20 @@ export function shouldApplyAiPreview(cssOpen: boolean, hasAiSession: boolean): b
   return !cssOpen && hasAiSession;
 }
 
-export function canFocusMarkdownEditor(flags: { hasModal: boolean; showMarkdownEditor: boolean }): boolean {
-  return !flags.hasModal && flags.showMarkdownEditor;
+export function isFullscreenDrawer(drawerOpen: boolean, containerWidth: number): boolean {
+  return drawerOpen && containerWidth <= NARROW_CONTAINER_PX;
+}
+
+export function shouldKeepDrawerOnNavigation(containerWidth: number): boolean {
+  return containerWidth > NARROW_CONTAINER_PX;
+}
+
+export function canFocusMarkdownEditor(flags: {
+  hasModal: boolean;
+  showMarkdownEditor: boolean;
+  fullscreenDrawer?: boolean;
+}): boolean {
+  return !flags.hasModal && flags.showMarkdownEditor && !flags.fullscreenDrawer;
 }
 
 export function computePaneVisibility(immersive: SurfaceImmersiveMode, view: string, cssOpen: boolean): PaneVisibility {
@@ -98,6 +110,7 @@ export function canShowSelectionBubble(flags: {
   outlineOpen: boolean;
   slashOpen: boolean;
   menuOpen: boolean;
+  fullscreenDrawer?: boolean;
 }): boolean {
   return (
     flags.showMarkdownEditor &&
@@ -105,7 +118,8 @@ export function canShowSelectionBubble(flags: {
     !flags.hasAiSession &&
     !flags.outlineOpen &&
     !flags.slashOpen &&
-    !flags.menuOpen
+    !flags.menuOpen &&
+    !flags.fullscreenDrawer
   );
 }
 
@@ -115,8 +129,9 @@ export function resolveEditorEscapeOutcome(flags: {
   showMarkdownEditor: boolean;
   searchOpen: boolean;
   hasAiSession: boolean;
+  fullscreenDrawer?: boolean;
 }): EditorEscapeOutcome {
-  if (flags.menuOpen || flags.outlineOpen) return 'defer';
+  if (flags.menuOpen || flags.outlineOpen || flags.fullscreenDrawer) return 'defer';
   if (!flags.showMarkdownEditor) return false;
   if (flags.searchOpen) return 'close-search';
   if (flags.hasAiSession) return 'cancel-ai';
@@ -133,9 +148,10 @@ export function resolveDocumentEscapeAction(flags: {
   showMarkdownEditor: boolean;
   searchOpen: boolean;
   hasAiSession: boolean;
+  fullscreenDrawer?: boolean;
 }): 'none' | 'close-search' | 'cancel-ai' {
   if (flags.hasModal || flags.menuOpen || flags.outlineOpen || flags.slashOpen) return 'none';
-  if (flags.drawerOpen && flags.inDrawer) return 'none';
+  if (flags.drawerOpen && (flags.inDrawer || flags.fullscreenDrawer)) return 'none';
   if (!flags.showMarkdownEditor) return 'none';
   if (flags.searchOpen) return 'close-search';
   if (flags.hasAiSession) return 'cancel-ai';
@@ -147,10 +163,11 @@ export function resolveWindowEscapeAction(flags: {
   menuOpen: boolean;
   drawerOpen: boolean;
   inEditor: boolean;
+  fullscreenDrawer?: boolean;
 }): 'none' | 'close-menu' | 'close-drawer' {
   if (flags.hasModal) return 'none';
   if (flags.menuOpen) return 'close-menu';
-  if (flags.drawerOpen && !flags.inEditor) return 'close-drawer';
+  if (flags.drawerOpen && (!flags.inEditor || flags.fullscreenDrawer)) return 'close-drawer';
   return 'none';
 }
 
@@ -207,6 +224,7 @@ export function effectiveBubbleVisible(state: StudioSurfaceState): boolean {
       outlineOpen: state.outlineOpen,
       slashOpen: state.slashOpen,
       menuOpen: state.menuOpen,
+      fullscreenDrawer: isFullscreenDrawer(state.drawerOpen, state.narrow ? 640 : 1024),
     })
   );
 }
@@ -228,6 +246,10 @@ function dismissTransient(
 
 function applyEditorEscape(state: StudioSurfaceState, showMarkdownEditor: boolean): StudioSurfaceState | null {
   if (!showMarkdownEditor) return null;
+  const fullscreenDrawer = isFullscreenDrawer(state.drawerOpen, state.narrow ? 640 : 1024);
+  if (fullscreenDrawer) {
+    return state.menuOpen ? { ...state, menuOpen: false } : { ...state, drawerOpen: false };
+  }
   if (state.slashOpen) return { ...state, slashOpen: false };
   const outcome = resolveEditorEscapeOutcome({
     menuOpen: state.menuOpen,
@@ -235,6 +257,7 @@ function applyEditorEscape(state: StudioSurfaceState, showMarkdownEditor: boolea
     showMarkdownEditor,
     searchOpen: state.searchOpen,
     hasAiSession: state.aiSession !== 'none',
+    fullscreenDrawer,
   });
   if (outcome === 'close-search') return { ...state, searchOpen: false };
   if (outcome === 'cancel-ai') return { ...state, aiSession: 'none' };
@@ -250,6 +273,7 @@ function applyNonEditorEscape(
   target: 'drawer' | 'document',
   showMarkdownEditor: boolean,
 ): StudioSurfaceState | null {
+  const fullscreenDrawer = isFullscreenDrawer(state.drawerOpen, state.narrow ? 640 : 1024);
   const docAction = resolveDocumentEscapeAction({
     hasModal: false,
     menuOpen: state.menuOpen,
@@ -260,10 +284,12 @@ function applyNonEditorEscape(
     showMarkdownEditor,
     searchOpen: state.searchOpen,
     hasAiSession: state.aiSession !== 'none',
+    fullscreenDrawer,
   });
   if (docAction === 'close-search') return { ...state, searchOpen: false };
   if (docAction === 'cancel-ai') return { ...state, aiSession: 'none' };
   if (state.menuOpen) return { ...state, menuOpen: false };
+  if (fullscreenDrawer) return { ...state, drawerOpen: false };
   if (target === 'document' && state.outlineOpen) return { ...state, outlineOpen: false };
   if (target === 'document' && state.slashOpen) return { ...state, slashOpen: false };
   const winAction = resolveWindowEscapeAction({
@@ -271,6 +297,7 @@ function applyNonEditorEscape(
     menuOpen: state.menuOpen,
     drawerOpen: state.drawerOpen,
     inEditor: false,
+    fullscreenDrawer,
   });
   return winAction === 'close-drawer' ? { ...state, drawerOpen: false } : null;
 }
@@ -375,7 +402,10 @@ function stepViewOrWorkbenchEvent(state: StudioSurfaceState, event: StudioSurfac
       const width = state.narrow ? 640 : 1024;
       const keepWorkbench = shouldKeepCssWorkbenchOnViewChange(state.cssWorkbenchOpen, width, event.view);
       return {
-        ...dismissTransient(state, { keepSearch: event.view !== 'preview', keepDrawer: true }),
+        ...dismissTransient(state, {
+          keepSearch: event.view !== 'preview',
+          keepDrawer: shouldKeepDrawerOnNavigation(width),
+        }),
         view: event.view,
         cssWorkbenchOpen: keepWorkbench ? state.cssWorkbenchOpen : false,
       };
@@ -424,7 +454,11 @@ export function stepStudioSurface(state: StudioSurfaceState, event: StudioSurfac
       return { ...dismissTransient(state, { keepSearch: state.view !== 'preview' }), immersive: null };
     case 'RESET_EDITOR':
     case 'REPLACE_DOCUMENT':
-      return { ...dismissTransient(state, { keepDrawer: true }), cssWorkbenchOpen: false, aiSession: 'none' };
+      return {
+        ...dismissTransient(state, { keepDrawer: shouldKeepDrawerOnNavigation(state.narrow ? 640 : 1024) }),
+        cssWorkbenchOpen: false,
+        aiSession: 'none',
+      };
     case 'ESCAPE':
       return applyEscape(state, event.target);
     default:
@@ -462,9 +496,14 @@ const STUDIO_INVARIANTS: ReadonlyArray<readonly [string, (state: StudioSurfaceSt
     (s) => isParentModalOpen(s.parentModal !== 'none', s.childModal !== 'none') && s.childModal !== 'none',
   ],
   [
-    'selection bubble must not coexist with modals, AI sessions, outline, slash menu, or header menu',
+    'selection bubble must not coexist with modals, AI sessions, outline, slash menu, header menu, or fullscreen drawer',
     (s) =>
-      (hasSurfaceModal(s) || s.aiSession !== 'none' || s.outlineOpen || s.slashOpen || s.menuOpen) &&
+      (hasSurfaceModal(s) ||
+        s.aiSession !== 'none' ||
+        s.outlineOpen ||
+        s.slashOpen ||
+        s.menuOpen ||
+        isFullscreenDrawer(s.drawerOpen, s.narrow ? 640 : 1024)) &&
       effectiveBubbleVisible(s),
   ],
   [

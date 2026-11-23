@@ -308,11 +308,23 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
       : child;
   }
 
+  function isKeyboardFocus(target: HTMLElement): boolean {
+    try {
+      return typeof target.matches === 'function' ? target.matches(':focus-visible') : true;
+    } catch {
+      return true;
+    }
+  }
+
   let tooltipScrollQuietUntil = 0;
+  let dismissActiveTip: (() => void) | null = null;
 
   function FallbackTooltip(props: DshTooltipProps): ReactElement {
     const [tip, setTip] = React.useState<TipAnchor | null>(null);
     const [tipId] = React.useState(() => 'mdstudio-tip-' + Math.random().toString(36).slice(2, 8));
+    const closeSelf = React.useCallback(function () {
+      setTip(null);
+    }, []);
     const child = props.children as ReactElement<{
       title?: string;
       'aria-describedby'?: string;
@@ -324,29 +336,34 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
     }>;
     const show = function (target: HTMLElement): void {
       if (props.disabled) return;
+      if (dismissActiveTip && dismissActiveTip !== closeSelf) dismissActiveTip();
+      dismissActiveTip = closeSelf;
       const rect = target.getBoundingClientRect();
-      const left = Math.min(Math.max(rect.left + rect.width / 2, 76), Math.max(76, window.innerWidth - 76));
+      const left = rect.left + rect.width / 2;
       const top = props.side === 'top' ? Math.max(8, rect.top - 34) : rect.bottom + 8;
       setTip({ left, top, anchorTop: rect.top, anchorBottom: rect.bottom, side: props.side });
     };
     const hide = function (): void {
+      if (dismissActiveTip === closeSelf) dismissActiveTip = null;
       setTip(null);
     };
     const hideOnScroll = function (): void {
       tooltipScrollQuietUntil = Date.now() + 250;
-      setTip(null);
+      hide();
     };
+    if (props.disabled && tip !== null) setTip(null);
+    const activeTip = Boolean(tip && !props.disabled);
     useDocumentEvent(
       React,
       'keydown',
       function (event: KeyboardEvent) {
-        if (event.key === 'Escape') setTip(null);
+        if (event.key === 'Escape') hide();
       },
-      Boolean(tip),
+      activeTip,
     );
-    useWindowEvent(React, 'blur', hide, Boolean(tip));
-    useWindowEvent(React, 'resize', hide, Boolean(tip));
-    useWindowEvent(React, 'scroll', hideOnScroll, Boolean(tip), true);
+    useWindowEvent(React, 'blur', hide, activeTip);
+    useWindowEvent(React, 'resize', hide, activeTip);
+    useWindowEvent(React, 'scroll', hideOnScroll, activeTip, true);
     const resolved = tip ? (typeof props.label === 'function' ? props.label() : props.label) : '';
     const visible = Boolean(!props.disabled && tip && resolved);
     const tipNode =
@@ -357,6 +374,7 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
               {
                 id: tipId,
                 ref: function (el: HTMLSpanElement | null): void {
+                  if (!el && dismissActiveTip === closeSelf) dismissActiveTip = null;
                   alignFixedTooltip(el, tip);
                 },
                 className: 'mdstudio-tooltip',
@@ -384,7 +402,7 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
         },
         onFocus: function (event: ReactNamespace.FocusEvent<HTMLElement>) {
           child.props.onFocus?.(event);
-          show(event.currentTarget);
+          if (isKeyboardFocus(event.currentTarget)) show(event.currentTarget);
         },
         onBlur: function (event: ReactNamespace.FocusEvent<HTMLElement>) {
           child.props.onBlur?.(event);
