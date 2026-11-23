@@ -813,6 +813,50 @@ check('v0.1.8 CommonMark link-ref, task-list, blockquote lazy continuation and C
   // Backslash-slash protocol-relative URL bypass rejection
   const backslashLink = engine.renderMarkdown('[phish](\\\\/evil.example/phish)', { linkFootnotes: true });
   assert.equal(backslashLink.html.includes('evil.example'), false, '\\/ protocol-relative link is rejected');
+
+  // G5 parser regressions: multi-paragraph :::pull, nested link guard, CJK + uppercase bare URLs,
+  // emphasis wrapping links with ==/++, normalizeLabel preserving C++, readingTime:false with category,
+  // leading-HR non-frontmatter preservation, and tab-indented nested lists.
+  const multiPull = engine.renderMarkdown(':::pull\n第一段核心引语。\n\n第二段补充说明。\n:::');
+  assert.equal(multiPull.html.includes('<p></p>'), false, 'multi-paragraph :::pull emits zero empty <p>');
+  assert.equal(
+    (multiPull.html.match(/<p>/g) || []).length,
+    2,
+    'multi-paragraph :::pull keeps both paragraphs inside .mdstudio-pull',
+  );
+
+  const nestedLink = engine.renderMarkdown('[visit https://a.example and <https://b.example>](https://c.example)', {
+    linkFootnotes: false,
+  });
+  assert.equal((nestedLink.html.match(/<a /g) || []).length, 1, 'ctx.inLink prevents nested <a> inside link labels');
+
+  const cjkUrl = engine.renderMarkdown('请访问https://example.com查看详情，或 HTTPS://example.com/docs 指南。', {
+    linkFootnotes: true,
+  });
+  assert.ok(cjkUrl.html.includes('查看详情'), 'bare URL terminates before CJK ideographs');
+  assert.equal(cjkUrl.refs.length, 2, 'uppercase HTTPS:// bare URL is recognized and linked');
+
+  const emphLinks = engine.renderMarkdown(
+    '==看 [文档](https://example.com/?t=YWJj==) 详情== 与 ++查看 [C++ 教程](https://example.com/cpp) 笔记++',
+    { linkFootnotes: true },
+  );
+  assert.ok(emphLinks.html.includes('<mark>看 '), '== emphasis skips == inside link destination');
+  assert.ok(emphLinks.html.includes('<u>查看 '), '++ emphasis skips ++ inside link label');
+  assert.equal(emphLinks.refs[1]?.label, 'C++ 教程', 'normalizeLabel preserves literal C++ inside link labels');
+
+  const noReadTime = engine.renderMarkdown('---\ncategory: 架构\nreadingTime: false\n---\n\n# 标题\n\n正文');
+  assert.equal(noReadTime.meta.readingTime, 'false', 'frontmatter readingTime:false is preserved in meta');
+  assert.equal(noReadTime.html.includes('分钟'), false, 'readingTime:false suppresses reading-time pill');
+
+  const leadingHr = '---\n\n# Real Title\n\nOpening prose.\n\n---\n\nSecond section.';
+  const hrRendered = engine.renderMarkdown(leadingHr);
+  assert.ok(
+    hrRendered.html.includes('<h1>') && hrRendered.html.includes('Opening prose.'),
+    'leading HR preserves body',
+  );
+
+  const tabList = engine.renderMarkdown('- outer\n\t- inner tab item\n\t  continuation');
+  assert.ok(tabList.html.includes('<ul><li>inner tab item'), 'tab-indented nested list parses cleanly');
 });
 
 console.log(`\n${checks} engine checks passed.`);

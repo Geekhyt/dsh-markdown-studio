@@ -59,30 +59,138 @@ export function portableizeAssetUrls(text: unknown): string {
     );
 }
 
-const LOCAL_IMAGE_PATTERN = /!\[([^\]]*)\]\((?:<([^>\n]+)>|([^)\s]+))(\s+(?:"[^"]*"|'[^']*'))?\)/g;
+interface InlineImageSpan {
+  start: number;
+  end: number;
+  alt: string;
+  url: string;
+  angled: boolean;
+  title: string;
+}
+
+function scanInlineImages(source: string): InlineImageSpan[] {
+  const spans: InlineImageSpan[] = [];
+  let maxBracketFail = -1;
+  for (let i = 0; i < source.length - 1; i++) {
+    if (source[i] !== '!' || source[i + 1] !== '[') continue;
+    if (i < maxBracketFail) continue;
+    const closeBracket = findBracketEnd(source, i + 1);
+    if (closeBracket < 0) {
+      maxBracketFail = source.length;
+      break;
+    }
+    if (source[closeBracket + 1] !== '(') {
+      i = closeBracket;
+      continue;
+    }
+    const parsed = parseInlineImageDest(source, closeBracket + 1);
+    if (!parsed) {
+      i = closeBracket + 1;
+      continue;
+    }
+    spans.push({
+      start: i,
+      end: parsed.closeParen + 1,
+      alt: source.slice(i + 2, closeBracket),
+      url: parsed.url,
+      angled: parsed.angled,
+      title: parsed.title,
+    });
+    i = parsed.closeParen;
+  }
+  return spans;
+}
+
+function skipSpaces(source: string, index: number): number {
+  let i = index;
+  while (i < source.length && (source[i] === ' ' || source[i] === '\t')) i++;
+  return i;
+}
+
+function readUnangledImageUrl(source: string, start: number): { url: string; next: number } {
+  let i = start;
+  let depth = 0;
+  while (i < source.length) {
+    const ch = source[i];
+    if (ch === '\\') {
+      i += 2;
+      continue;
+    }
+    if (/\s/.test(ch)) break;
+    if (ch === '(') depth++;
+    else if (ch === ')') {
+      if (depth === 0) break;
+      depth--;
+    }
+    i++;
+  }
+  return { url: source.slice(start, i), next: i };
+}
+
+function skipOptionalImageTitle(source: string, start: number): number {
+  let i = skipSpaces(source, start);
+  const open = source[i];
+  if (open !== '"' && open !== "'" && open !== '(') return i;
+  const close = open === '(' ? ')' : open;
+  i++;
+  while (i < source.length && source[i] !== close) {
+    if (source[i] === '\\') i++;
+    i++;
+  }
+  if (i >= source.length) return -1;
+  return skipSpaces(source, i + 1);
+}
+
+function parseInlineImageDest(
+  source: string,
+  openParen: number,
+): { url: string; angled: boolean; title: string; closeParen: number } | null {
+  let i = skipSpaces(source, openParen + 1);
+  let url = '';
+  let angled = false;
+  if (source[i] === '<') {
+    const closeAngle = source.indexOf('>', i + 1);
+    if (closeAngle < 0) return null;
+    url = source.slice(i + 1, closeAngle);
+    if (url.includes('\n')) return null;
+    angled = true;
+    i = closeAngle + 1;
+  } else {
+    const bare = readUnangledImageUrl(source, i);
+    url = bare.url;
+    i = bare.next;
+  }
+  if (!url) return null;
+  const titleStart = i;
+  i = skipOptionalImageTitle(source, titleStart);
+  if (i < 0 || source[i] !== ')') return null;
+  return { url, angled, title: source.slice(titleStart, i), closeParen: i };
+}
 
 export function collectLocalImages(text: unknown): Map<string, AssetEntry> {
   const images = new Map<string, AssetEntry>();
-  const pattern = new RegExp(LOCAL_IMAGE_PATTERN.source, 'g');
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(String(text || '')))) {
-    const url = match[2] || match[3];
-    if (/^data:image\//i.test(url)) images.set(url, { alt: match[1], kind: 'data' });
-    else if (assetFilenameFromSrc(url)) images.set(url, { alt: match[1], kind: 'asset' });
+  for (const span of scanInlineImages(String(text || ''))) {
+    if (/^data:image\//i.test(span.url)) images.set(span.url, { alt: span.alt, kind: 'data' });
+    else if (assetFilenameFromSrc(span.url)) images.set(span.url, { alt: span.alt, kind: 'asset' });
   }
   return images;
 }
 
 export function replaceLocalImages(text: unknown, mapping: Map<string, string>): string {
-  return String(text || '').replace(
-    LOCAL_IMAGE_PATTERN,
-    (match, alt: string, angled?: string, plain?: string, title = '') => {
-      const url = angled || plain || '';
-      const hosted = mapping.get(url);
-      if (!hosted) return match;
-      return `![${alt}](${angled ? `<${hosted}>` : hosted}${title})`;
-    },
-  );
+  const source = String(text || '');
+  if (!mapping.size) return source;
+  const spans = scanInlineImages(source);
+  if (!spans.length) return source;
+  let out = '';
+  let cursor = 0;
+  for (const span of spans) {
+    const hosted = mapping.get(span.url);
+    if (!hosted) continue;
+    out += source.slice(cursor, span.start);
+    out += `![${span.alt}](${span.angled ? `<${hosted}>` : hosted}${span.title})`;
+    cursor = span.end;
+  }
+  return cursor === 0 ? source : out + source.slice(cursor);
 }
 
 export function approximateDataBytes(dataUrl: unknown): number {
@@ -108,30 +216,24 @@ function findBracketEnd(source: string, openIndex: number): number {
   return -1;
 }
 
-function readInlineImageUrl(source: string, openParen: number): string {
-  let i = openParen + 1;
-  while (i < source.length && /[ \t]/.test(source[i])) i++;
-  if (source[i] === '<') {
-    const close = source.indexOf('>', i + 1);
-    return close > i ? source.slice(i + 1, close) : '';
-  }
-  let end = i;
-  let depth = 0;
-  while (end < source.length) {
-    const ch = source[end];
-    if (ch === '\\') {
-      end += 2;
+function collectHtmlImgSrcs(source: string, addUrl: (raw: string | undefined) => void): void {
+  const lower = source.toLowerCase();
+  let pos = 0;
+  while (pos < lower.length) {
+    const start = lower.indexOf('<img', pos);
+    if (start < 0) break;
+    const after = lower[start + 4] || '';
+    if (after && !/[\s/>]/.test(after)) {
+      pos = start + 4;
       continue;
     }
-    if (/\s/.test(ch)) break;
-    if (ch === '(') depth++;
-    else if (ch === ')') {
-      if (depth === 0) break;
-      depth--;
-    }
-    end++;
+    const end = source.indexOf('>', start + 4);
+    if (end < 0) break;
+    const tag = source.slice(start + 4, end);
+    const srcMatch = /\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/i.exec(tag);
+    if (srcMatch) addUrl(srcMatch[1] || srcMatch[2] || srcMatch[3]);
+    pos = end + 1;
   }
-  return source.slice(i, end);
 }
 
 /** Collect all local asset filenames referenced by inline images (incl. nested/escaped alt), reference definitions, and HTML `<img>`. */
@@ -142,21 +244,12 @@ export function assetFilesInMarkdown(text: unknown): string[] {
     const filename = assetFilenameFromSrc(raw);
     if (filename) files.add(filename);
   };
-  for (let i = 0; i < source.length - 1; i++) {
-    if (source[i] !== '!' || source[i + 1] !== '[') continue;
-    const closeBracket = findBracketEnd(source, i + 1);
-    if (closeBracket < 0 || source[closeBracket + 1] !== '(') continue;
-    addUrl(readInlineImageUrl(source, closeBracket + 1));
-    i = closeBracket + 1;
-  }
+  for (const span of scanInlineImages(source)) addUrl(span.url);
   const refDefPattern = /^ {0,3}\[[^\]]+\]:[ \t]*(?:<([^>\n]+)>|([^\s]+))/gm;
   let match: RegExpExecArray | null;
   while ((match = refDefPattern.exec(source))) {
     addUrl(match[1] || match[2]);
   }
-  const htmlPattern = /<img\b[^>]*\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/gi;
-  while ((match = htmlPattern.exec(source))) {
-    addUrl(match[1] || match[2] || match[3]);
-  }
+  collectHtmlImgSrcs(source, addUrl);
   return Array.from(files);
 }

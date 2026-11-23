@@ -4,7 +4,9 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
+import { AiHostService } from '../host/application/ai-service';
 import { ImageHostError, ImageHostService, MAX_IMAGE_BYTES, parseDataUrl } from '../host/application/image-store';
+import { AI_ROUTE_PATH, createAiRoute } from '../host/http/ai-route';
 import { MATH_PATH, mathRoute } from '../host/http/math-route';
 import { MERMAID_PATH, mermaidRoute } from '../host/http/mermaid-route';
 import { ASSET_PREFIX, createAssetRoute, createImageRoute, isLoopbackHostHeader } from '../host/http/routes';
@@ -381,10 +383,12 @@ try {
       const truncatedPng = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x00, 0x00, 0x00]).toString('base64');
       assert.throws(() => parseDataUrl(`data:image/png;base64,${truncatedPng}`), ImageHostError);
 
-      const requestWithHost = (port: number, reqPath: string, method: string, hostHeader: string) =>
+      const requestWithHost = (port: number, reqPath: string, method: string, hostHeader: string, body?: string) =>
         new Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }>((resolve, reject) => {
+          const headers: Record<string, string> = { host: hostHeader };
+          if (body !== undefined) headers['content-type'] = 'application/json';
           const req = http.request(
-            { host: '127.0.0.1', port, path: reqPath, method, headers: { host: hostHeader } },
+            { host: '127.0.0.1', port, path: reqPath, method, headers, setHost: false },
             (res) => {
               const chunks: Buffer[] = [];
               res.on('data', (c) => chunks.push(Buffer.from(c)));
@@ -398,6 +402,7 @@ try {
             },
           );
           req.on('error', reject);
+          if (body !== undefined) req.write(body);
           req.end();
         });
 
@@ -406,6 +411,19 @@ try {
       });
       const mermaidServer = await listen((req, res) => {
         void mermaidRoute(req, res);
+      });
+      const aiRoute = createAiRoute({
+        service: new AiHostService({
+          getLlm: () => ({
+            listProviders: () => [],
+            listModels: () => [],
+            async *stream() {},
+          }),
+          getDefaultModel: () => undefined,
+        }),
+      });
+      const aiServer = await listen((req, res) => {
+        void aiRoute(req, res);
       });
       try {
         assert.equal(
@@ -436,8 +454,26 @@ try {
         const healthHead = await requestWithHost(localPort, '/health', 'HEAD', `127.0.0.1:${localPort}`);
         assert.equal(healthHead.status, 200);
         assert.equal(healthHead.body, '');
-        const localRebind = await requestWithHost(localPort, '/health', 'GET', 'evil.example:80');
-        assert.equal(localRebind.status, 403, 'local server rejects non-loopback Host header');
+        for (const badHost of ['evil.example:80', `evil.com@127.0.0.1:${localPort}`, '127.0.0.1/evil', '']) {
+          const localBad = await requestWithHost(localPort, '/health', 'GET', badHost);
+          assert.equal(localBad.status, 403, `local server rejects forged/empty Host ${JSON.stringify(badHost)}`);
+          const aiBad = await requestWithHost(
+            aiServer.port,
+            AI_ROUTE_PATH,
+            'POST',
+            badHost,
+            JSON.stringify({ action: 'ai.status' }),
+          );
+          assert.equal(aiBad.status, 403, `ai route rejects forged/empty Host ${JSON.stringify(badHost)}`);
+          const imgBad = await requestWithHost(
+            routeServer.port,
+            '/api/markdown-studio/wechat',
+            'POST',
+            badHost,
+            JSON.stringify({ action: 'health' }),
+          );
+          assert.equal(imgBad.status, 403, `image route rejects forged/empty Host ${JSON.stringify(badHost)}`);
+        }
         const missingHead = await requestWithHost(
           localPort,
           '/uploads/not-found.png',
@@ -446,6 +482,22 @@ try {
         );
         assert.equal(missingHead.status, 404);
         assert.equal(missingHead.body, '');
+        const assetHeadRoute = createAssetRoute({ service });
+        const assetHeadServer = await listen((req, res) => {
+          void assetHeadRoute(req, res);
+        });
+        try {
+          const missingApiHead = await requestWithHost(
+            assetHeadServer.port,
+            `${ASSET_PREFIX}000000000000000000000000.png`,
+            'HEAD',
+            `127.0.0.1:${assetHeadServer.port}`,
+          );
+          assert.equal(missingApiHead.status, 404);
+          assert.equal(missingApiHead.body, '', 'authenticated asset route HEAD 404 emits empty body');
+        } finally {
+          assetHeadServer.server.close();
+        }
 
         // Strict Host header validation (empty, credentials, pathname, foreign host)
         assert.equal(isLoopbackHostHeader('127.0.0.1:4010'), true);
@@ -459,6 +511,7 @@ try {
       } finally {
         mathServer.server.close();
         mermaidServer.server.close();
+        aiServer.server.close();
       }
     },
   );

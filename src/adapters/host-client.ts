@@ -34,7 +34,7 @@ export function formatHostClientError(
   const candidate = error && typeof error === 'object' ? (error as Record<string, unknown>) : null;
   if (candidate?.code === 'HOST_UNAVAILABLE') return labels.hostMissing;
   const code = stringField(candidate?.code);
-  const key = code ? HOST_ERROR_CODE_KEYS[code] : '';
+  const key = code && Object.hasOwn(HOST_ERROR_CODE_KEYS, code) ? HOST_ERROR_CODE_KEYS[code] : '';
   if (key && labels.t) {
     return `${labels.t(key)} [${code}]`;
   }

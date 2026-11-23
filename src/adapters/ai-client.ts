@@ -86,13 +86,14 @@ export function formatAiClientError(error: unknown, t: (key: string) => string):
   const message = typeof candidate?.message === 'string' ? candidate.message : '';
   if (AUTH_ERROR_CODES.has(code)) return t('err.aiApiKeyMissing');
   if (RATE_LIMIT_CODES.has(code)) return t('err.aiRateLimited');
-  const structuredKey = code && code !== 'INTERNAL' ? AI_ERROR_CODE_KEYS[code] : '';
+  const structuredKey =
+    code && code !== 'INTERNAL' && Object.hasOwn(AI_ERROR_CODE_KEYS, code) ? AI_ERROR_CODE_KEYS[code] : '';
   if (structuredKey) return t(structuredKey);
   const upstreamMatch = formatUpstreamFallback(code, message, t);
   if (upstreamMatch) return upstreamMatch;
   const httpMatch = /^HTTP_(\d+)$/.exec(code);
   if (httpMatch) return `${t('err.aiHttpError')} (HTTP ${httpMatch[1]})`;
-  if (code && AI_ERROR_CODE_KEYS[code]) return t(AI_ERROR_CODE_KEYS[code]);
+  if (code && Object.hasOwn(AI_ERROR_CODE_KEYS, code)) return t(AI_ERROR_CODE_KEYS[code]);
   if (error instanceof Error && error.message) return error.message;
   return t('ai.requestFailed');
 }
@@ -301,6 +302,9 @@ export class AiClient {
     }
     if (!response.ok) {
       throw httpStatusError(response.status);
+    }
+    if (!contentType.toLowerCase().includes('ndjson')) {
+      throw new AiClientError('HOST_BAD_RESPONSE', '宿主 AI 响应格式异常');
     }
     const acc: StreamAccumulator = { text: '', provider: '', model: '' };
     try {

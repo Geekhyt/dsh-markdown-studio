@@ -38,6 +38,7 @@ export function unmountPluginStyles(): void {
   const reg = getPluginStyleRegistry();
   reg.mounted = false;
   if (typeof document === 'undefined') return;
+  document.documentElement?.classList?.remove('data_color_scheme_dark');
   const styleNodes = document.querySelectorAll(`style[data-plugin=${JSON.stringify(PLUGIN_ID)}]`);
   styleNodes.forEach((node) => {
     const candidate = node as { id?: string; dataset?: { pluginCss?: string }; remove?: () => void };

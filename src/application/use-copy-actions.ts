@@ -2,10 +2,10 @@ import type * as ReactNamespace from 'react';
 import { renderArticle } from '../adapters/render-article';
 import type { Article } from '../domain/article';
 import { markdownToPlain } from '../domain/article';
+import type { MermaidCacheEntry } from '../domain/mermaid';
 import { inspectWechatHtml } from '../domain/wechat-html-lint';
-import { mermaidThemeFor, type ThemeSettings } from '../themes';
+import { mermaidThemeFor, type MermaidTheme, type ThemeSettings } from '../themes';
 import type { MathAssetsApi } from './use-math-assets';
-import type { MermaidAssetsApi } from './use-mermaid-assets';
 
 type Notify = (text: string, tone?: 'success' | 'error' | 'info') => void;
 
@@ -17,7 +17,10 @@ export interface CopyActionsOptions {
   doc: Article;
   settings: ThemeSettings;
   localImageServerUrl: string;
-  mermaidAssets: Pick<MermaidAssetsApi, 'ensure' | 'cache'>;
+  mermaidAssets: {
+    ensure: (markdown: string, targetTheme?: MermaidTheme) => Promise<Map<string, MermaidCacheEntry> | void>;
+    cache: Map<string, MermaidCacheEntry>;
+  };
   mathAssets: Pick<MathAssetsApi, 'ensure'>;
   copyRef: ReactNamespace.RefObject<HTMLDivElement | null>;
   setMenuOpen: (open: boolean) => void;
@@ -102,14 +105,15 @@ export function useCopyActions(options: CopyActionsOptions): CopyActionsApi {
     copyingRef.current = true;
     setCopying(true);
     try {
-      await Promise.all([
+      const [mermaidSnapshot] = await Promise.all([
         options.mermaidAssets.ensure(doc.markdown, mermaidThemeFor(settings)),
         options.mathAssets.ensure(doc.markdown),
       ]);
+      const mermaidMap = mermaidSnapshot && mermaidSnapshot.size ? mermaidSnapshot : options.mermaidAssets.cache;
       const article = renderArticle(doc.markdown, settings, {
         locale: options.locale,
         imageBaseUrl: options.localImageServerUrl || 'http://127.0.0.1:4010',
-        mermaidAssets: options.mermaidAssets.cache,
+        mermaidAssets: mermaidMap,
         footnotesTitle: t('footnotes.title'),
         referencesTitle: t('references.title'),
         scrollVerticalHint: t('scroll.verticalHint'),

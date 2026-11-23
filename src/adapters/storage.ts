@@ -1,5 +1,6 @@
 import type { Article, LibraryState } from '../domain/article';
 import { compactLibraryForStorage, parseView } from '../domain/article';
+import { type CustomTheme, mergeCustomThemes } from '../domain/custom-themes';
 import type { DocumentRef } from '../domain/document-ref';
 import { isFutureSchema, LIBRARY_SCHEMA_VERSION, supportedSchemaVersion } from '../domain/schema';
 import { sanitizeSettings } from '../domain/settings';
@@ -106,6 +107,13 @@ function parsePersistedLibrary(raw: string | null): LibraryState | null {
       if (article) docs.push(article);
     }
     if (!docs.length) return null;
+    let sharedCustom: CustomTheme[] = [];
+    for (const doc of docs) {
+      sharedCustom = mergeCustomThemes(sharedCustom, doc.settings.customThemes);
+    }
+    const hydratedDocs = sharedCustom.length
+      ? docs.map((doc) => ({ ...doc, settings: { ...doc.settings, customThemes: sharedCustom } }))
+      : docs;
     const trash: Article[] = [];
     if (Array.isArray(data.trash)) {
       for (const entry of data.trash) {
@@ -115,10 +123,10 @@ function parsePersistedLibrary(raw: string | null): LibraryState | null {
       }
     }
     const activeId =
-      typeof data.activeId === 'string' && docs.some((entry) => entry.id === data.activeId)
+      typeof data.activeId === 'string' && hydratedDocs.some((entry) => entry.id === data.activeId)
         ? data.activeId
-        : docs[0].id;
-    return { activeId, docs, trash };
+        : hydratedDocs[0].id;
+    return { activeId, docs: hydratedDocs, trash };
   } catch {
     return null;
   }

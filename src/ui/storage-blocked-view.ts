@@ -18,6 +18,7 @@ export function StorageBlockedView(props: StorageBlockedViewProps): ReactNode {
 
   function exportOriginal(): void {
     try {
+      setExportFailed(false);
       const url = URL.createObjectURL(new Blob([rawLibrarySnapshot()], { type: 'application/json' }));
       const anchor = document.createElement('a');
       anchor.href = url;

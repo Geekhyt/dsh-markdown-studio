@@ -95,6 +95,11 @@ export function useScrollSync(options: ScrollSyncOptions): ScrollSyncApi {
 
   function syncPreviewFromEditor(): void {
     const ratio = readEditorRatio();
+    if (lockSourceRef.current !== 'preview' && lockSourceRef.current !== 'restore') {
+      pendingRelayoutRatioRef.current = null;
+      relayoutSeqRef.current++;
+      if (!enabledRef.current) pendingEditorSyncRef.current = false;
+    }
     if (ratio !== null && !pendingEditorSyncRef.current) lastRatioRef.current = ratio;
     if (
       !enabledRef.current ||
@@ -105,7 +110,6 @@ export function useScrollSync(options: ScrollSyncOptions): ScrollSyncApi {
       return;
     const preview = previewRef.current;
     if (!preview || preview.clientHeight === 0) return;
-    relayoutSeqRef.current++;
     acquireLock('editor');
     scrollToRatio(preview, ratio);
   }
@@ -117,10 +121,17 @@ export function useScrollSync(options: ScrollSyncOptions): ScrollSyncApi {
     if (max <= 0) return;
     const ratio = preview.scrollTop / max;
     lastRatioRef.current = ratio;
-    if (!enabledRef.current || lockSourceRef.current === 'editor' || lockSourceRef.current === 'restore') return;
+    if (lockSourceRef.current === 'editor' || lockSourceRef.current === 'restore') return;
+    pendingRelayoutRatioRef.current = null;
     relayoutSeqRef.current++;
+    if (!enabledRef.current) return;
     acquireLock('preview');
     pendingEditorSyncRef.current = !applyRatioToEditor(ratio);
+  }
+
+  function setEnabledAndSync(value: boolean): void {
+    if (!value) pendingEditorSyncRef.current = false;
+    setEnabled(value);
   }
 
   function restorePreviewScroll(): void {
@@ -221,7 +232,7 @@ export function useScrollSync(options: ScrollSyncOptions): ScrollSyncApi {
 
   return {
     enabled,
-    setEnabled,
+    setEnabled: setEnabledAndSync,
     previewRef,
     registerCodeMirror,
     syncPreviewFromEditor,

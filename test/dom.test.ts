@@ -530,6 +530,23 @@ check('prepareClipboardDom unwraps section blocks nested inside paragraphs with 
     );
     tintedHost.remove();
 
+    // G4 regression: loose <ol><li><p> and <ul><li><strong> list items lift <li> color so ::marker keeps >= 4.5:1 contrast
+    const listDarkHost = document.createElement('div');
+    listDarkHost.innerHTML =
+      '<section id="mdstudio" style="background-color: rgb(250, 249, 247); color: rgb(52, 50, 47);"><ol><li style="color: rgb(52, 50, 47);"><p style="color: rgb(52, 50, 47);">Loose item</p></li></ol><ul><li style="color: rgb(52, 50, 47);"><strong style="color: rgb(52, 50, 47);">Bold item</strong></li></ul></section>';
+    document.body.appendChild(listDarkHost);
+    await applyDarkPreview(listDarkHost);
+    const darkLis = Array.from(listDarkHost.querySelectorAll<HTMLElement>('li'));
+    assert.equal(darkLis.length, 2);
+    for (const li of darkLis) {
+      const m = /rgb\((\d+),\s*(\d+),\s*(\d+)\)/.exec(li.style.color);
+      assert.ok(
+        m && Number(m[1]) >= 140,
+        `dark preview lifts <li> color for ::marker contrast (got ${li.style.color})`,
+      );
+    }
+    listDarkHost.remove();
+
     const cmParent = document.createElement('div');
     document.body.appendChild(cmParent);
     let lastChange = '';

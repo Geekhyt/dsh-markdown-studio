@@ -102,7 +102,10 @@ export function createImageInserter(options: ImageInsertOptions): ImageInsertApi
   function handlePaste(event: ReactNamespace.ClipboardEvent<HTMLElement>): void {
     const clipboard = event.clipboardData;
     if (!clipboard) return;
-    const files: File[] = clipboard.files && clipboard.files.length ? Array.from(clipboard.files) : [];
+    const files: File[] =
+      clipboard.files && clipboard.files.length
+        ? Array.from(clipboard.files).filter((file) => Boolean(file && /^image\//i.test(file.type || '')))
+        : [];
     if (!files.length && clipboard.items) {
       for (let index = 0; index < clipboard.items.length; index++) {
         const item = clipboard.items[index];

@@ -125,8 +125,8 @@ export function isLoopbackReq(req: IncomingMessage): boolean {
   return remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
 }
 
-function isAllowedOrigin(origin: string, host: string, site: string): boolean {
-  if (host && !isLoopbackHostHeader(host)) return false;
+export function isAllowedOrigin(origin: string, host: string, site: string): boolean {
+  if (!isLoopbackHostHeader(host)) return false;
   if (!origin) return site !== 'cross-site';
   // An opaque `null` origin is only trusted when the browser vouches for it via Sec-Fetch-Site.
   if (origin === 'null') return site === 'same-origin' || site === 'none';
@@ -268,14 +268,15 @@ export function createAssetRoute(options: {
         sendAssetText(res, 405, 'method not allowed');
         return;
       }
+      const headOnly = req.method === 'HEAD';
       const pathname = new URL(req.url || '/', 'http://localhost').pathname;
       if (pathname.indexOf(ASSET_PREFIX) !== 0) {
-        sendAssetText(res, 404, 'not found');
+        sendAssetText(res, 404, 'not found', headOnly);
         return;
       }
       const asset = await service.readAsset(pathname.slice(ASSET_PREFIX.length));
       if (!asset) {
-        sendAssetText(res, 404, 'not found');
+        sendAssetText(res, 404, 'not found', headOnly);
         return;
       }
       res.writeHead(200, {

@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
-import type * as React from 'react';
+import { JSDOM } from 'jsdom';
+import * as React from 'react';
+import { createRoot } from 'react-dom/client';
+import { createFormattingCommands } from '../src/application/editor-formatting';
+import { createEditorSearch, type SearchState } from '../src/application/editor-search';
 import { createEditorShortcuts, type EditorShortcutsOptions } from '../src/application/editor-shortcuts';
+import { type DocumentHistoryApi, useDocumentHistory } from '../src/application/use-document-history';
+import { DEFAULT_SETTINGS } from '../src/themes';
 
 const called: string[] = [];
 const options = new Proxy(
@@ -237,4 +243,131 @@ press('e', 'insertMathBlock', { altKey: true, shiftKey: true, code: 'KeyE' });
   } as unknown as React.KeyboardEvent<HTMLElement>);
   assert.equal(tabPreventedAfterDisarm, true, 'disarmEscapeTab restores normal Tab indent after blur/click');
 }
+
+// G7 regressions: code fence/alert inner caret, insertHr collapseToEnd, multi-line setLinePrefix,
+// Unicode İ search/replace, outdentBlock clamped selection, and IME composing + CRLF history buffering.
+{
+  let doc = 'hello';
+  let sel = { start: 5, end: 5 };
+  const fmt = createFormattingCommands({
+    t: (k) => k,
+    notify: () => {},
+    editorValue: () => doc,
+    selection: () => sel,
+    replaceRange: (value, start, end, text, selectStart, selectEnd) => {
+      doc = value.slice(0, start) + text + value.slice(end);
+      const nextStart = selectStart == null ? start + text.length : selectStart;
+      const nextEnd = selectEnd == null ? nextStart : selectEnd;
+      sel = { start: nextStart, end: nextEnd };
+    },
+    setMarkdown: (value) => {
+      doc = value;
+    },
+    focusRange: (start, end) => {
+      sel = { start, end };
+    },
+    clearSlash: () => {},
+    imageRef: { current: null },
+    settings: { ...DEFAULT_SETTINGS },
+    updateSettings: () => {},
+  });
+  fmt.insertCodeBlock();
+  assert.equal(sel.start, sel.end, 'insertCodeBlock places collapsed caret inside fence when nothing is selected');
+  assert.equal(doc.slice(0, sel.start).endsWith('```\n'), true, 'caret lands on inner code line');
+  assert.equal(doc.slice(sel.end).startsWith('\n```'), true, 'closing fence follows inner caret');
+
+  doc = 'first line';
+  sel = { start: 10, end: 10 };
+  fmt.insertHr();
+  assert.equal(sel.start, sel.end, 'insertHr collapses selection after divider');
+
+  doc = '  a\nb\n  c';
+  sel = { start: 0, end: doc.length };
+  fmt.setLinePrefix('- ');
+  assert.equal(doc, '  - a\n- b\n  - c', 'setLinePrefix formats all selected lines while preserving indentation');
+
+  doc = 'first\n\nsecond';
+  sel = { start: 0, end: doc.length };
+  fmt.setLinePrefix('1. ');
+  assert.equal(doc, '1. first\n\n2. second', 'ordered list numbering stays consecutive across blank lines');
+
+  // Unicode case-folding search/replace (Turkish İ -> i\u0307 expands length under toLowerCase)
+  let searchDoc = 'İstanbul foo bar';
+  let searchSel = { start: 0, end: 0 };
+  let searchPanel: SearchState = { open: true, query: 'foo', replacement: 'BAZ' };
+  const makeSearch = () =>
+    createEditorSearch({
+      editorValue: () => searchDoc,
+      selection: () => searchSel,
+      setMarkdown: (next) => {
+        searchDoc = next;
+      },
+      focusRange: (start, end) => {
+        searchSel = { start, end };
+      },
+      notify: () => {},
+      t: (k) => k,
+      searchPanel,
+      setSearchPanel: (updater) => {
+        searchPanel = typeof updater === 'function' ? updater(searchPanel) : updater;
+      },
+      searchInputRef: { current: null },
+      setOutlineOpen: () => {},
+    });
+  makeSearch().findNext();
+  assert.equal(searchDoc.slice(searchSel.start, searchSel.end), 'foo', 'findNext aligns offset after Turkish İ');
+  makeSearch().replaceOne();
+  assert.equal(searchDoc, 'İstanbul BAZ bar', 'replaceOne replaces exact matched slice after Turkish İ');
+  searchDoc = 'İstanbul foo and FOO';
+  searchSel = { start: 0, end: 0 };
+  makeSearch().replaceAll();
+  assert.equal(searchDoc, 'İstanbul BAZ and BAZ', 'replaceAll matches Unicode case-insensitively without drift');
+
+  // IME composing + CRLF normalization in useDocumentHistory
+  const dom = new JSDOM('<div id="h"></div>', { url: 'http://localhost' });
+  Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
+  let hist!: DocumentHistoryApi;
+  let applied = 'init';
+  function HistProbe() {
+    hist = useDocumentHistory({
+      React,
+      initialMarkdown: 'line1\r\nline2',
+      onApply: (next) => {
+        applied = next;
+      },
+      getSelection: () => ({ start: applied.length, end: applied.length }),
+      focusRange: () => {},
+    });
+    return null;
+  }
+  const r = createRoot(dom.window.document.getElementById('h')!);
+  await React.act(async () => {
+    r.render(React.createElement(HistProbe));
+  });
+  assert.equal(hist.markdownRef.current, 'line1\nline2', 'initial CRLF normalized to LF');
+  await React.act(async () => {
+    hist.setMarkdown('line1\nline2n', { composing: true });
+    hist.setMarkdown('line1\nline2ni', { composing: true });
+    hist.setMarkdown('line1\nline2', { composing: false }); // cancelled IME
+  });
+  assert.equal(hist.undo(), false, 'cancelled IME preedit creates zero phantom undo snapshots');
+  await React.act(async () => {
+    hist.setMarkdown('line1\nline2n', { composing: true });
+    hist.setMarkdown('line1\nline2你', { composing: false }); // committed IME
+  });
+  assert.equal(applied, 'line1\nline2你');
+  assert.equal(hist.undo(), true, 'committed IME collapses into single undo snapshot');
+  assert.equal(applied, 'line1\nline2');
+  // Immediate undo right after composing frame without trailing composing:false still undoes cleanly
+  await React.act(async () => {
+    hist.setMarkdown('line1\nline2好', { composing: true });
+  });
+  assert.equal(hist.undo(), true, 'immediate undo flushes pending IME composition base snapshot');
+  assert.equal(applied, 'line1\nline2');
+  await React.act(async () => {
+    r.unmount();
+  });
+  dom.window.close();
+}
+
 console.log('ok - Notion-aligned, conflict-free formatting, document, multi-line Tab, and macOS Option shortcuts pass');

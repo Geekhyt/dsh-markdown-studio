@@ -32,7 +32,7 @@ import { createFileCommands } from './application/file-commands';
 import { importFolderAssets, writeFolderAssets } from './application/folder-assets';
 import { createImageInserter } from './application/image-inserter';
 import { useCopyActions } from './application/use-copy-actions';
-import { useDocumentHistory } from './application/use-document-history';
+import { normalizeLineEndings, useDocumentHistory } from './application/use-document-history';
 import { useDocumentLibrary } from './application/use-document-library';
 import { useFileContext } from './application/use-file-context';
 import {
@@ -321,6 +321,7 @@ export function createClientPlugin(
     const toastSeq = React.useRef(0);
     const inFlightAssetsRef = React.useRef<Map<string, number>>(new Map());
     const dirtyDiskRef = React.useRef(false);
+    const suppressAutosaveRef = React.useRef(false);
     const cancelAutosaveRef = React.useRef<() => void>(() => {});
 
     function trackInFlightAsset(filename: string, active: boolean): void {
@@ -510,8 +511,16 @@ export function createClientPlugin(
       notify,
       getDocument: () => store.getActive(),
       onReload: (text) => {
-        setMarkdown(text, { boundary: true, resetHistory: true, title: deriveTitleWithFallback(text) });
-        focusRange(text.length, text.length);
+        cancelAutosaveRef.current();
+        dirtyDiskRef.current = false;
+        suppressAutosaveRef.current = true;
+        try {
+          setMarkdown(text, { boundary: true, resetHistory: true, title: deriveTitleWithFallback(text) });
+        } finally {
+          suppressAutosaveRef.current = false;
+        }
+        const normalizedLen = markdownRef.current.length;
+        focusRange(normalizedLen, normalizedLen);
       },
     });
 
@@ -595,7 +604,7 @@ export function createClientPlugin(
     }
 
     function resetEditorTo(entry: DocumentSeed, alreadyActive = false): void {
-      const markdown = String(entry.markdown || '');
+      const markdown = normalizeLineEndings(String(entry.markdown || ''));
       resetDocumentSurface();
       docHistory.reset(markdown);
       if (!alreadyActive) {
@@ -610,6 +619,7 @@ export function createClientPlugin(
       window.setTimeout(() => focusRange(0, 0), 30);
     }
 
+    const deferredMarkdown = useDeferredText(doc.markdown);
     const deferredCssDraft = useDeferredText(liveCssDraft);
     const previewSettings = React.useMemo(
       () => resolvePreviewSettings(settings, cssWorkbench.open, deferredCssDraft),
@@ -633,7 +643,7 @@ export function createClientPlugin(
       theme: mermaidTheme,
       pageAliveRef,
     });
-    const mathAssets = useMathAssets({ React, markdown: doc.markdown });
+    const mathAssets = useMathAssets({ React, markdown: deferredMarkdown });
 
     const [assetGc] = React.useState(() =>
       createAssetGarbageCollector({
@@ -1043,10 +1053,11 @@ export function createClientPlugin(
     useWindowEvent(React, 'beforeunload', () => store.flush());
     useWindowEvent(React, 'pagehide', () => store.flush());
     useWindowEvent(React, 'storage', (event: StorageEvent) => {
-      if (event.key !== LIBRARY_KEY_V2 || store.getStatus() !== 'saved') return;
+      if (event.key !== LIBRARY_KEY_V2) return;
       const external = loadPersistedLibrary();
       if (!external) return;
       const prevActive = store.getActive();
+      const activeWasDirty = store.isDocDirty(prevActive.id);
       store.syncExternal(external);
       const nextActive = store.getActive();
       if (nextActive.id !== prevActive.id) {
@@ -1054,7 +1065,7 @@ export function createClientPlugin(
         detachFileContext();
         resetDocumentSurface();
         docHistory.reset(nextActive.markdown);
-      } else if (nextActive.markdown !== prevActive.markdown) {
+      } else if (!activeWasDirty && nextActive.markdown !== prevActive.markdown) {
         docHistory.reset(nextActive.markdown);
       }
     });
@@ -1155,6 +1166,10 @@ export function createClientPlugin(
         if (active.markdown === lastObservedMd) return;
         lastObservedMd = active.markdown;
         clearAutosaveTimer();
+        if (suppressAutosaveRef.current) {
+          dirtyDiskRef.current = false;
+          return;
+        }
         const targetArticleId = active.id;
         if (!fileContext.linkedFile()) return;
         dirtyDiskRef.current = true;
@@ -1231,7 +1246,11 @@ export function createClientPlugin(
       dismissTransientOverlays({ keepSearch: view !== 'preview' });
       setImmersive(null);
       window.setTimeout(() => {
-        rootRef.current?.querySelector<HTMLElement>('.mdstudio-focus-btn')?.focus();
+        resolveSafeFocusTarget(
+          rootRef.current?.querySelector<HTMLElement>('.mdstudio-focus-btn') || null,
+          rootRef.current,
+          ['.mdstudio-mobile-view', '.mdstudio-style-btn', '[data-mdstudio-menu-trigger="more"]'],
+        )?.focus();
       }, 0);
     }
 
@@ -1351,7 +1370,6 @@ export function createClientPlugin(
     }
 
     const useCodeMirror = !editorFailed && typeof window.ResizeObserver !== 'undefined';
-    const deferredMarkdown = useDeferredText(doc.markdown);
     const effectivePreviewMarkdown = React.useMemo(
       () =>
         shouldApplyAiPreview(cssWorkbench.open, Boolean(writingSkills.session))
@@ -1631,16 +1649,27 @@ export function createClientPlugin(
             },
             onPointerDown: selectionBubble.onPointerDown,
             onChange: (value: string, nextSelection: EditorSelection) => {
-              setMarkdown(value, { boundary: false, prevSelection: lastSelectionRef.current });
+              setMarkdown(value, {
+                boundary: Boolean(nextSelection.boundary),
+                composing: Boolean(nextSelection.composing),
+                prevSelection: lastSelectionRef.current,
+              });
               lastSelectionRef.current = nextSelection;
-              slashMenu.syncAtCaret(value, nextSelection.end);
+              if (!nextSelection.composing) slashMenu.syncAtCaret(value, nextSelection.end);
               selectionBubble.sync(value, nextSelection);
             },
             onSelection: (nextSelection: EditorSelection) => {
               lastSelectionRef.current = nextSelection;
               if (nextSelection.programmatic) selectionBubble.clear();
               else selectionBubble.sync(editorValue(), nextSelection);
-              if (nextSelection.start !== nextSelection.end || writingSkills.session || writingSkills.diffTransition) {
+              if (
+                nextSelection.programmatic ||
+                !panes.showMarkdownEditor ||
+                hasActiveModal() ||
+                nextSelection.start !== nextSelection.end ||
+                writingSkills.session ||
+                writingSkills.diffTransition
+              ) {
                 slashMenu.close();
               } else {
                 slashMenu.refreshFromCaret();

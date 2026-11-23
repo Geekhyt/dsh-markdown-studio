@@ -485,7 +485,7 @@ export function LibraryDialog(props: LibraryDialogProps): ReactNode {
             {
               variant: 'ghost',
               size: 'sm',
-              className: 'mdstudio-library-empty-trash',
+              className: 'mdstudio-library-empty-trash is-danger',
               onClick: props.actions.onEmptyTrash,
             },
             t('library.emptyTrash'),
@@ -997,6 +997,7 @@ export function WorkspaceDialog(props: WorkspaceDialogProps): ReactNode {
     collapsed,
     forceExpand: Boolean(query.trim()),
     onToggleDir: function (dirPath: string) {
+      if (query.trim()) return;
       setCollapsed(function (prev) {
         return { ...prev, [dirPath]: !prev[dirPath] };
       });
@@ -1112,13 +1113,13 @@ export function WorkspaceDialog(props: WorkspaceDialogProps): ReactNode {
     ),
     h(
       'div',
-      { ref: bodyRef, className: 'mdstudio-library-body mdstudio-workspace-body' },
+      { className: 'mdstudio-library-body mdstudio-workspace-body' },
       props.error ? h('div', { className: 'mdstudio-host-error' }, props.error) : null,
       props.loading
         ? h('p', { className: 'mdstudio-help mdstudio-library-empty', role: 'status' }, t('workspace.loading'))
         : h(
             'div',
-            { className: 'mdstudio-workspace-tree' },
+            { ref: bodyRef, className: 'mdstudio-workspace-tree' },
             h(
               'button',
               {

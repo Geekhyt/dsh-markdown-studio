@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { AiHostError, type AiHostService } from '../application/ai-service';
+import { isAllowedOrigin, isLoopbackReq } from './routes';
 
 export const AI_ROUTE_PATH = '/api/markdown-studio/ai';
 export const MAX_AI_BODY_BYTES = 512 * 1024;
@@ -9,41 +10,9 @@ function headerValue(value: string | string[] | undefined): string {
   return value || '';
 }
 
-function isLoopback(remote: string): boolean {
-  return remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
-}
-
 /** Exact MIME essence check: `text/plain;x=application/json` must not pass as JSON. */
 function isJsonContentType(value: string): boolean {
   return value.split(';')[0].trim().toLowerCase() === 'application/json';
-}
-
-const ALLOWED_DESKTOP_PROTOCOLS = new Set(['dsh-app:', 'dsh:', 'app:', 'file:']);
-const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
-
-function isLoopbackHost(host: string): boolean {
-  if (!host) return true;
-  try {
-    return LOOPBACK_HOSTS.has(new URL('http://' + host.trim()).hostname.toLowerCase());
-  } catch {
-    return false;
-  }
-}
-
-function isAllowedOrigin(origin: string, host: string, site: string): boolean {
-  if (!isLoopbackHost(host)) return false;
-  if (!origin) return site !== 'cross-site';
-  // An opaque `null` origin is only trusted when the browser vouches for it via Sec-Fetch-Site.
-  if (origin === 'null') return site === 'same-origin' || site === 'none';
-  try {
-    const parsed = new URL(origin);
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      return ALLOWED_DESKTOP_PROTOCOLS.has(parsed.protocol);
-    }
-    return parsed.host.toLowerCase() === host.toLowerCase() && LOOPBACK_HOSTS.has(parsed.hostname.toLowerCase());
-  } catch {
-    return false;
-  }
 }
 
 function sendJson(res: ServerResponse, status: number, payload: unknown): void {
@@ -130,8 +99,7 @@ function verifyRequestEnvelope(req: IncomingMessage, res: ServerResponse): boole
     sendJson(res, 405, { ok: false, error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed' } });
     return false;
   }
-  const remote = req.socket?.remoteAddress ? String(req.socket.remoteAddress) : '';
-  if (!isLoopback(remote)) {
+  if (!isLoopbackReq(req)) {
     sendJson(res, 403, { ok: false, error: { code: 'LOOPBACK_ONLY', message: 'AI 接口仅允许本机访问' } });
     return false;
   }

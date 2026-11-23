@@ -1,11 +1,26 @@
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { css } from '@codemirror/lang-css';
-import { markdown } from '@codemirror/lang-markdown';
-import { bracketMatching, HighlightStyle, indentOnInput, syntaxHighlighting, syntaxTree } from '@codemirror/language';
+import { markdownKeymap, markdownLanguage, pasteURLAsLink } from '@codemirror/lang-markdown';
+import {
+  bracketMatching,
+  HighlightStyle,
+  indentOnInput,
+  LanguageSupport,
+  syntaxHighlighting,
+  syntaxTree,
+} from '@codemirror/language';
 import { highlightSelectionMatches } from '@codemirror/search';
 import type { Extension, Range, Text } from '@codemirror/state';
-import { Annotation, Compartment, EditorState, RangeSetBuilder, StateEffect, StateField } from '@codemirror/state';
+import {
+  Annotation,
+  Compartment,
+  EditorState,
+  Prec,
+  RangeSetBuilder,
+  StateEffect,
+  StateField,
+} from '@codemirror/state';
 import type { DecorationSet, ViewUpdate } from '@codemirror/view';
 import {
   Decoration,
@@ -135,7 +150,7 @@ const markdownMonoLines = ViewPlugin.fromClass(
       this.decorations = buildMonoLineDecorations(view);
     }
     update(update: ViewUpdate): void {
-      if (update.docChanged || update.viewportChanged) {
+      if (update.docChanged || update.viewportChanged || syntaxTree(update.state) !== syntaxTree(update.startState)) {
         this.decorations = buildMonoLineDecorations(update.view);
       }
     }
@@ -563,6 +578,7 @@ export function computeMinimalChange(
 export function create(options: EditorOptions): EditorApi {
   const opts = options;
   const isCss = opts.language === 'css';
+  let wasComposing = false;
   const onUpdate = (update: ViewUpdate): void => {
     const isSilentSync =
       update.transactions.length > 0 && update.transactions.every((tr) => tr.annotation(ProgrammaticUpdate) === true);
@@ -571,9 +587,25 @@ export function create(options: EditorOptions): EditorApi {
       update.transactions.every(
         (tr) => tr.annotation(ProgrammaticSelection) === true || tr.annotation(ProgrammaticUpdate) === true,
       );
-    if (update.docChanged && !isSilentSync && opts.onChange) {
-      const selection = update.state.selection.main;
-      opts.onChange(update.state.doc.toString(), { start: selection.from, end: selection.to, head: selection.head });
+    const nowComposing = update.view.composing;
+    const endedComposing = wasComposing && !nowComposing;
+    if ((update.docChanged && !isSilentSync) || endedComposing) {
+      wasComposing = nowComposing;
+      if (opts.onChange) {
+        const selection = update.state.selection.main;
+        const boundary = update.transactions.some(
+          (tr) => tr.isUserEvent('input.paste') || tr.isUserEvent('input.drop') || tr.isUserEvent('delete.cut'),
+        );
+        opts.onChange(update.state.doc.toString(), {
+          start: selection.from,
+          end: selection.to,
+          head: selection.head,
+          composing: nowComposing,
+          boundary,
+        });
+      }
+    } else if (nowComposing) {
+      wasComposing = true;
     }
     if ((update.selectionSet || (update.docChanged && !isSilentSync)) && opts.onSelection) {
       const selection = update.state.selection.main;
@@ -607,7 +639,7 @@ export function create(options: EditorOptions): EditorApi {
     rectangularSelection(),
     highlightSelectionMatches(),
     highlightCompartment.of(syntaxHighlighting(dark ? darkHighlightStyle : lightHighlightStyle, { fallback: true })),
-    isCss ? css() : markdown(),
+    isCss ? css() : new LanguageSupport(markdownLanguage, [pasteURLAsLink, Prec.high(keymap.of(markdownKeymap))]),
     EditorView.lineWrapping,
     contentAttrsCompartment.of(
       EditorView.contentAttributes.of({ 'aria-label': resolveAriaLabel(opts.ariaLabel, opts.placeholder) }),
@@ -619,6 +651,23 @@ export function create(options: EditorOptions): EditorApi {
     EditorView.domEventHandlers({
       blur: () => {
         if (opts.onBlur) opts.onBlur();
+        return false;
+      },
+      compositionend: (_event, currentView) => {
+        if (wasComposing && opts.onChange) {
+          queueMicrotask(() => {
+            if (!wasComposing || currentView.composing) return;
+            wasComposing = false;
+            const selection = currentView.state.selection.main;
+            opts.onChange?.(currentView.state.doc.toString(), {
+              start: selection.from,
+              end: selection.to,
+              head: selection.head,
+              composing: false,
+              boundary: false,
+            });
+          });
+        }
         return false;
       },
     }),

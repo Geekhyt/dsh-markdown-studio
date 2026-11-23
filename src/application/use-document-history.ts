@@ -3,9 +3,14 @@ import type { SelectionRange } from '../domain/article';
 
 export interface SetMarkdownOptions {
   boundary?: boolean;
+  composing?: boolean;
   title?: string;
   prevSelection?: SelectionRange;
   resetHistory?: boolean;
+}
+
+export function normalizeLineEndings(text: string): string {
+  return text.indexOf('\r') === -1 ? text : text.replace(/\r\n?/g, '\n');
 }
 
 interface HistoryEntry {
@@ -56,7 +61,9 @@ export interface DocumentHistoryApi {
  */
 export function useDocumentHistory(options: DocumentHistoryOptions): DocumentHistoryApi {
   const React = options.React;
-  const markdownRef = React.useRef<string>(options.initialMarkdown);
+  const initialNormalized = normalizeLineEndings(options.initialMarkdown);
+  const markdownRef = React.useRef<string>(initialNormalized);
+  const composingBaseRef = React.useRef<HistoryEntry | null>(null);
   const historyRef = React.useRef<HistoryState>({
     undo: [],
     redo: [],
@@ -66,21 +73,82 @@ export function useDocumentHistory(options: DocumentHistoryOptions): DocumentHis
     forceBoundary: true,
   });
   const lastSelectionRef = React.useRef<SelectionRange>({
-    start: options.initialMarkdown.length,
-    end: options.initialMarkdown.length,
+    start: initialNormalized.length,
+    end: initialNormalized.length,
   });
 
-  function setMarkdown(next: string, nextOptions?: SetMarkdownOptions): void {
+  function pushUndoSnapshot(history: HistoryState, entry: HistoryEntry): void {
+    history.undo.push(entry);
+    history.undoChars += entry.markdown.length;
+    while (history.undo.length > 1 && (history.undo.length > 80 || history.undoChars > 3500000)) {
+      const dropped = history.undo.shift();
+      if (!dropped) break;
+      history.undoChars -= dropped.markdown.length;
+    }
+  }
+
+  function resetHistoryState(history: HistoryState): void {
+    composingBaseRef.current = null;
+    history.undo = [];
+    history.redo = [];
+    history.undoChars = 0;
+    history.redoChars = 0;
+    history.lastAt = 0;
+    history.forceBoundary = true;
+  }
+
+  function snapshotSelection(previous: string, prevSelection?: SelectionRange): HistoryEntry {
+    const pre = prevSelection || lastSelectionRef.current || { start: previous.length, end: previous.length };
+    return { markdown: previous, selStart: pre.start, selEnd: pre.end };
+  }
+
+  function recordUndoChange(history: HistoryState, entry: HistoryEntry, boundary: boolean): void {
+    pushUndoSnapshot(history, entry);
+    history.redo = [];
+    history.redoChars = 0;
+    history.lastAt = (options.now || Date.now)();
+    history.forceBoundary = boundary;
+  }
+
+  function applyComposingFrame(next: string, previous: string, opts: SetMarkdownOptions): void {
+    if (!composingBaseRef.current) composingBaseRef.current = snapshotSelection(previous, opts.prevSelection);
+    if (next !== previous) {
+      markdownRef.current = next;
+      options.onApply(next, opts.title);
+    }
+  }
+
+  function flushComposingFrame(
+    next: string,
+    previous: string,
+    opts: SetMarkdownOptions,
+    history: HistoryState,
+    pendingCompose: HistoryEntry,
+  ): void {
+    if (next !== pendingCompose.markdown && !opts.resetHistory) {
+      recordUndoChange(history, pendingCompose, true);
+    }
+    if (next !== previous || opts.title !== undefined) {
+      markdownRef.current = next;
+      options.onApply(next, opts.title);
+    }
+  }
+
+  function setMarkdown(rawNext: string, nextOptions?: SetMarkdownOptions): void {
+    const next = normalizeLineEndings(rawNext);
     const previous = markdownRef.current;
     const opts = nextOptions || {};
     const history = historyRef.current;
-    if (opts.resetHistory) {
-      history.undo = [];
-      history.redo = [];
-      history.undoChars = 0;
-      history.redoChars = 0;
-      history.lastAt = 0;
-      history.forceBoundary = true;
+    if (opts.resetHistory) resetHistoryState(history);
+    if (opts.composing && !opts.resetHistory) {
+      applyComposingFrame(next, previous, opts);
+      return;
+    }
+    const pendingCompose = composingBaseRef.current;
+    composingBaseRef.current = null;
+    if (pendingCompose) {
+      flushComposingFrame(next, previous, opts, history, pendingCompose);
+      return;
     }
     if (next === previous) {
       if (opts.title !== undefined) options.onApply(next, opts.title);
@@ -90,16 +158,7 @@ export function useDocumentHistory(options: DocumentHistoryOptions): DocumentHis
       const now = (options.now || Date.now)();
       const canCoalesce =
         !opts.boundary && !history.forceBoundary && history.undo.length > 0 && now - history.lastAt < 700;
-      if (!canCoalesce) {
-        const pre = opts.prevSelection || lastSelectionRef.current || { start: previous.length, end: previous.length };
-        history.undo.push({ markdown: previous, selStart: pre.start, selEnd: pre.end });
-        history.undoChars += previous.length;
-        while (history.undo.length > 1 && (history.undo.length > 80 || history.undoChars > 3500000)) {
-          const dropped = history.undo.shift();
-          if (!dropped) break;
-          history.undoChars -= dropped.markdown.length;
-        }
-      }
+      if (!canCoalesce) pushUndoSnapshot(history, snapshotSelection(previous, opts.prevSelection));
       history.redo = [];
       history.redoChars = 0;
       history.lastAt = now;
@@ -111,6 +170,11 @@ export function useDocumentHistory(options: DocumentHistoryOptions): DocumentHis
 
   function undo(): boolean {
     const history = historyRef.current;
+    const pendingCompose = composingBaseRef.current;
+    composingBaseRef.current = null;
+    if (pendingCompose && markdownRef.current !== pendingCompose.markdown) {
+      pushUndoSnapshot(history, pendingCompose);
+    }
     const entry = history.undo.pop();
     if (!entry) return false;
     const current = options.getSelection();
@@ -128,6 +192,7 @@ export function useDocumentHistory(options: DocumentHistoryOptions): DocumentHis
   }
 
   function redo(): boolean {
+    composingBaseRef.current = null;
     const history = historyRef.current;
     const entry = history.redo.pop();
     if (!entry) return false;
@@ -146,8 +211,10 @@ export function useDocumentHistory(options: DocumentHistoryOptions): DocumentHis
   }
 
   function reset(markdown: string): void {
-    markdownRef.current = markdown;
-    lastSelectionRef.current = { start: markdown.length, end: markdown.length };
+    const normalized = normalizeLineEndings(markdown);
+    composingBaseRef.current = null;
+    markdownRef.current = normalized;
+    lastSelectionRef.current = { start: normalized.length, end: normalized.length };
     historyRef.current = { undo: [], redo: [], undoChars: 0, redoChars: 0, lastAt: 0, forceBoundary: true };
   }
 

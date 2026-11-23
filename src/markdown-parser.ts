@@ -1,3 +1,4 @@
+import { parseFrontmatterBlock } from './domain/article';
 import { sanitizeImageUrl, sanitizeLinkUrl } from './domain/urls';
 
 /*
@@ -302,7 +303,9 @@ export function highlightCode(code: string, language?: string): string {
 
 function normalizeLabel(label: string): string {
   return String(label || '')
-    .replace(/[`*_~=+]/g, '')
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/(\*\*\*|___|\*\*|__|~~|==|\+\+)([\s\S]*?)\1/g, '$2')
+    .replace(/(^|[\s(])([*_])([^\s*_][\s\S]*?)\2(?=$|[\s).,;:!?])/g, '$1$3')
     .trim();
 }
 
@@ -367,7 +370,8 @@ function stripQuotes(value: string): string {
 
 function findMatching(text: string, start: number, open: string, close: string): number {
   let depth = 0;
-  let quote = null;
+  let quote: string | null = null;
+  let inAngle = false;
   for (let i = start; i < text.length; i++) {
     const ch = text[i];
     if (quote) {
@@ -380,6 +384,14 @@ function findMatching(text: string, start: number, open: string, close: string):
     }
     if (ch === '\\') {
       i++;
+      continue;
+    }
+    if (inAngle) {
+      if (ch === '>' || ch === '\n') inAngle = false;
+      continue;
+    }
+    if (ch === '<' && open === '(' && depth === 1 && text.slice(start + 1, i).trim() === '') {
+      inAngle = true;
       continue;
     }
     // Only treat quotes as title delimiters after whitespace so apostrophes inside URLs (e.g. Newton's_laws) stay intact.
@@ -518,6 +530,14 @@ function stepStarOrUnderRun(
   return -1;
 }
 
+function skipInlineLinkOrImage(text: string, i: number): number {
+  const ch = text.charAt(i);
+  const start = ch === '!' && text.charAt(i + 1) === '[' ? i + 1 : ch === '[' ? i : -1;
+  if (start === -1) return i;
+  const link = parseLinkAt(text, start);
+  return link ? link.end - 1 : i;
+}
+
 function findClosingDelimiter(text: string, from: number, delimiter: string): number {
   const ch = delimiter.charAt(0);
   const len = delimiter.length;
@@ -528,6 +548,11 @@ function findClosingDelimiter(text: string, from: number, delimiter: string): nu
     const jumped = skipCodeOrMath(text, i);
     if (jumped > i) {
       i = jumped;
+      continue;
+    }
+    const linkEnd = skipInlineLinkOrImage(text, i);
+    if (linkEnd > i) {
+      i = linkEnd;
       continue;
     }
     const cur = text.charAt(i);
@@ -732,10 +757,10 @@ function inlineLink(text: string, index: number, ctx: RenderContext): InlineToke
 }
 
 function inlineAutoLink(text: string, index: number, ctx: RenderContext): InlineToken | null {
-  if (text.charAt(index) !== '<') return null;
-  const auto = /^<((?:https?:\/\/|mailto:)[^>\s]+)>/.exec(text.slice(index));
+  if (ctx.inLink || text.charAt(index) !== '<') return null;
+  const auto = /^<((?:https?:\/\/|mailto:)[^>\s]+)>/i.exec(text.slice(index));
   if (!auto) return null;
-  const label = auto[1].replace(/^mailto:/, '');
+  const label = auto[1].replace(/^mailto:/i, '');
   const hidden = ctx.options.linkFootnotes && isExternalHref(auto[1]);
   return {
     html: renderLink(ctx, hidden ? '' : escapeHtml(label), hidden ? '' : label, auto[1], ''),
@@ -747,13 +772,14 @@ function trimBareUrl(raw: string): string {
   let url = raw;
   while (url.length > 0) {
     const last = url.charAt(url.length - 1);
-    if (/[?!.,:*_~;'"，。！？；：、》」』】]/.test(last)) {
+    if (/[?!.,:*_~;'"\u2018\u2019\u201c\u201d\u2014，。！？；：、》」』】]/.test(last)) {
       url = url.slice(0, -1);
       continue;
     }
-    if (last === ')') {
-      const opens = (url.match(/\(/g) || []).length;
-      const closes = (url.match(/\)/g) || []).length;
+    if (last === ')' || last === ']') {
+      const openCh = last === ')' ? '(' : '[';
+      const opens = url.split(openCh).length - 1;
+      const closes = url.split(last).length - 1;
       if (closes > opens) {
         url = url.slice(0, -1);
         continue;
@@ -765,13 +791,16 @@ function trimBareUrl(raw: string): string {
 }
 
 function inlineBareLink(text: string, index: number, ctx: RenderContext): InlineToken | null {
+  if (ctx.inLink) return null;
   const ch = text.charAt(index);
   if (ch !== 'h' && ch !== 'H') return null;
   if (index !== 0 && /[A-Za-z0-9/@._\-=]/.test(text.charAt(index - 1))) return null;
-  const bare = /^(https?:\/\/[^\s<>"'\u3000-\u303f\uff00-\uffef]+)/.exec(text.slice(index));
+  const bare = /^(https?:\/\/[^\s<>"'\u2018-\u201f\u2014\u3000-\u303f\u4e00-\u9fff\uff00-\uffef]+)/i.exec(
+    text.slice(index),
+  );
   if (!bare) return null;
   const url = trimBareUrl(bare[1]);
-  if (!/^https?:\/\/\S/.test(url)) return null;
+  if (!/^https?:\/\/\S/i.test(url)) return null;
   const hidden = ctx.options.linkFootnotes && isExternalHref(url);
   return {
     html: renderLink(ctx, hidden ? '' : escapeHtml(url), hidden ? '' : url, url, ''),
@@ -1028,7 +1057,7 @@ function renderTable(lines: string[], start: number, ctx: RenderContext): BlockR
 
 function listMarkerMatches(line: string, match: RegExpExecArray | null, indent: number, ordered: boolean): boolean {
   if (!match || isHr(line)) return false;
-  return match[1].length === indent && /\d/.test(match[2]) === ordered;
+  return leadingColumns(match[1]) === indent && /\d/.test(match[2]) === ordered;
 }
 
 function parseTaskLine(raw: string): { text: string; checked: boolean | null } {
@@ -1083,6 +1112,37 @@ function renderListHtml(
   return html + (ordered ? '</ol>' : '</ul>');
 }
 
+function leadingColumns(line: string): number {
+  let cols = 0;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line.charAt(i);
+    if (ch === ' ') cols++;
+    else if (ch === '\t') cols += 4 - (cols % 4);
+    else break;
+  }
+  return cols;
+}
+
+function stripLeadingColumns(line: string, count: number): string {
+  let cols = 0;
+  let i = 0;
+  while (i < line.length && cols < count) {
+    const ch = line.charAt(i);
+    if (ch === ' ') {
+      cols++;
+      i++;
+    } else if (ch === '\t') {
+      const step = 4 - (cols % 4);
+      if (cols + step > count) return ' '.repeat(cols + step - count) + line.slice(i + 1);
+      cols += step;
+      i++;
+    } else {
+      break;
+    }
+  }
+  return line.slice(i);
+}
+
 function appendListContinuationLine(
   line: string,
   lines: string[],
@@ -1092,15 +1152,15 @@ function appendListContinuationLine(
   ordered: boolean,
   current: ListItem,
 ): boolean {
-  const indent = (line.match(/^\s*/) || [''])[0].length;
+  const indent = leadingColumns(line);
   if (listMarkerMatches(line, match, baseIndent, !ordered)) return false;
-  if (match && match[1].length < baseIndent) return false;
+  if (match && leadingColumns(match[1]) < baseIndent) return false;
   if (indent >= current.indent) {
-    current.lines.push(line.slice(current.indent));
+    current.lines.push(stripLeadingColumns(line, current.indent));
     return true;
   }
-  if (indent > baseIndent && !isBlockStart(line, lines, i)) {
-    current.lines.push(line.slice(indent));
+  if (indent > baseIndent && (Boolean(match) || !isBlockStart(line, lines, i))) {
+    current.lines.push(stripLeadingColumns(line, indent));
     return true;
   }
   if (!match && !isBlockStart(line, lines, i)) {
@@ -1114,7 +1174,7 @@ function parseList(lines: string[], start: number, ctx: RenderContext): BlockRes
   const marker = /^(\s*)([-+*]|\d{1,9}[.)])(?:[ \t]+(.*)|[ \t]*)$/;
   const first = marker.exec(lines[start]);
   if (!first) return { html: '', next: start + 1 };
-  const baseIndent = first[1].length;
+  const baseIndent = leadingColumns(first[1]);
   const ordered = /\d/.test(first[2]);
   const startNumber = ordered ? parseInt(first[2], 10) : 1;
   const items: ListItem[] = [];
@@ -1132,7 +1192,7 @@ function parseList(lines: string[], start: number, ctx: RenderContext): BlockRes
       current = {
         lines: [task.text],
         checked: task.checked,
-        indent: itemMatch[1].length + itemMatch[2].length + 1,
+        indent: leadingColumns(itemMatch[1]) + itemMatch[2].length + 1,
       };
       i++;
       continue;
@@ -1149,7 +1209,7 @@ function parseList(lines: string[], start: number, ctx: RenderContext): BlockRes
       }
       const nextLine = lines[nextIndex];
       const nextMatch = marker.exec(nextLine);
-      const nextIndent = (nextLine.match(/^\s*/) || [''])[0].length;
+      const nextIndent = leadingColumns(nextLine);
       const sibling = listMarkerMatches(nextLine, nextMatch, baseIndent, ordered);
       if (sibling || nextIndent >= current.indent) {
         current.lines.push('');
@@ -1213,6 +1273,7 @@ function quoteEndsInOpenParagraph(content: string[]): boolean {
   const last = content[content.length - 1] || '';
   if (!last.trim()) return false;
   if (/^ {0,3}(?:#{1,6}(?:\s|$)|(?:[-+*]|\d{1,9}[.)])(?:\s|$))/.test(last)) return false;
+  if (/^ {0,3}(?:\$\$|:::+|\\\])$/.test(last.trim())) return false;
   if (isHr(last) || last.includes('|')) return false;
   return true;
 }
@@ -1475,33 +1536,8 @@ function parseScrollContainer(lines: string[], start: number, ctx: RenderContext
 }
 
 function parseFrontmatter(text: string): { meta: Record<string, string>; rest: string } | null {
-  const match = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text);
-  if (!match) return null;
-  const lines = match[1].split(/\r?\n/);
-  const meta: Record<string, string> = {};
-  let lastKey = '';
-  for (let i = 0; i < lines.length; i++) {
-    const raw = lines[i];
-    const line = raw.trim();
-    if (!line || line.charAt(0) === '#') continue;
-    if (lastKey && /^[ \t]+-[ \t]+(.*)$/.test(raw)) {
-      const item = raw.replace(/^[ \t]+-[ \t]+/, '').trim();
-      meta[lastKey] = meta[lastKey] ? meta[lastKey] + ', ' + item : item;
-      continue;
-    }
-    const pair = /^([A-Za-z_][\w-]*)\s*:\s*(.*)$/.exec(line);
-    if (!pair) return null;
-    let value = pair[2].trim();
-    if (
-      (value.charAt(0) === '"' && value.charAt(value.length - 1) === '"') ||
-      (value.charAt(0) === "'" && value.charAt(value.length - 1) === "'")
-    ) {
-      value = value.slice(1, -1);
-    }
-    lastKey = pair[1];
-    meta[lastKey] = value;
-  }
-  return { meta: meta, rest: text.slice(match[0].length) };
+  const parsed = parseFrontmatterBlock(text);
+  return parsed ? { meta: parsed.meta, rest: parsed.body } : null;
 }
 
 function renderDisplayMathHtml(tex: string): string {
@@ -1594,7 +1630,7 @@ function renderPullEditorial(arg: string, lines: string[], start: number, ctx: R
   }
   const collected = collectScrollBody(lines, start + 1);
   const inner = blocks(collected.body, ctx);
-  const singlePara = /^<p>([\s\S]*?)<\/p>$/.exec(inner);
+  const singlePara = /^<p>((?:(?!<\/p>)[\s\S])*)<\/p>$/.exec(inner);
   const pullBody = singlePara ? singlePara[1] : inner;
   return { html: '<section class="mdstudio-pull">' + pullBody + '</section>', next: collected.next };
 }
@@ -1839,7 +1875,9 @@ function buildFrontmatterMetaHtml(meta: Record<string, string>, rawBody: string,
   const custom = (meta.meta || '').trim();
   if (custom) return '<p class="mdstudio-meta">' + escapeHtml(custom) + '</p>';
   const category = (meta.category || '').trim();
-  const showReadingTime = /^(?:true|1|yes)$/i.test((meta.readingTime || '').trim());
+  const rawReadingTime = (meta.readingTime || '').trim();
+  const hideReadingTime = /^(?:false|0|no)$/i.test(rawReadingTime);
+  const showReadingTime = /^(?:true|1|yes)$/i.test(rawReadingTime);
   if (!category && !showReadingTime) return '';
   const plain = rawBody
     .replace(/```[\s\S]*?```/g, '')
@@ -1847,7 +1885,9 @@ function buildFrontmatterMetaHtml(meta: Record<string, string>, rawBody: string,
     .replace(/\s+/g, '');
   const minutes = Math.max(1, Math.round(plain.length / 350));
   const timeLabel = locale === 'en' ? minutes + ' min read' : '约 ' + minutes + ' 分钟读完';
-  const parts = category ? [category, timeLabel] : [timeLabel];
+  const parts: string[] = [];
+  if (category) parts.push(category);
+  if (showReadingTime || (category && !hideReadingTime)) parts.push(timeLabel);
   return '<p class="mdstudio-meta">' + escapeHtml(parts.join(' · ')) + '</p>';
 }
 

@@ -241,19 +241,24 @@ function outdentBlock(
   nextEnd: number;
   changed: boolean;
 } {
-  let firstDrop = 0;
-  let totalDrop = 0;
-  const out = lines.map(function (line, idx) {
+  let startDrop = 0;
+  let endDrop = 0;
+  let changed = false;
+  let lineOffset = blockStart;
+  const out = lines.map(function (line) {
     const match = /^(?: {1,2}|\t)/.exec(line);
-    if (!match) return line;
-    const drop = match[0].length;
-    if (idx === 0) firstDrop = drop;
-    totalDrop += drop;
-    return line.slice(drop);
+    const drop = match ? match[0].length : 0;
+    if (drop > 0) {
+      changed = true;
+      startDrop += Math.min(drop, Math.max(0, start - lineOffset));
+      endDrop += Math.min(drop, Math.max(0, end - lineOffset));
+    }
+    lineOffset += line.length + 1;
+    return drop > 0 ? line.slice(drop) : line;
   });
-  const nextStart = Math.max(blockStart, start - firstDrop);
-  const nextEnd = Math.max(nextStart, end - totalDrop);
-  return { text: out.join('\n'), nextStart, nextEnd, changed: totalDrop > 0 };
+  const nextStart = Math.max(blockStart, start - startDrop);
+  const nextEnd = Math.max(nextStart, end - endDrop);
+  return { text: out.join('\n'), nextStart, nextEnd, changed };
 }
 
 function indentBlock(

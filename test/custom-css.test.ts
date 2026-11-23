@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import { stripExternalCssUrls } from '../src/domain/custom-css';
+import { JSDOM } from 'jsdom';
+import { inlineCss } from '../src/css-inliner';
+import { hasExternalCssUrl, stripExternalCssUrls } from '../src/domain/custom-css';
 import {
   createCustomThemeId,
   extractCustomThemePreview,
@@ -198,4 +200,72 @@ const shorthandDark = extractCustomThemePreview(':root { background: #1e1b4b no-
 assert.equal(shorthandDark.bg, '#1e1b4b', 'extractCustomThemePreview supports :root + background shorthand');
 assert.equal(shorthandDark.fg, '#e2e8f0');
 
-console.log('46 custom-css and custom-themes checks passed.');
+// G3 regressions: quote-aware comment stripping, CSS var /* bypass, body p specificity,
+// quoted var() preservation, prototype-key var(toString) safety, and @ inside declaration blocks.
+assert.equal(
+  hasExternalCssUrl(':root { --a: "/*"; --b: url("https://evil.example/track.png"); --c: "*/"; }'),
+  true,
+  'hasExternalCssUrl detects external url() hidden between quoted "/*" and "*/" custom properties',
+);
+assert.equal(
+  stripExternalCssUrls(':root { --a: "/*"; --b: url("https://evil.example/track.png"); --c: "*/"; }').includes(
+    'evil.example',
+  ),
+  false,
+  'stripExternalCssUrls strips external url() even when wrapped between quoted "/*" and "*/" custom properties',
+);
+{
+  const dom = new JSDOM(
+    '<!doctype html><section id="mdstudio" class="mdstudio-content"><h1>Title</h1><section class="mdstudio-alert mdstudio-alert-warning"><p class="mdstudio-alert-title">WARNING</p><p>Body</p></section><p class="prose">Hello</p></section>',
+  );
+  const root = dom.window.document.getElementById('mdstudio')!;
+  inlineCss(
+    root,
+    [
+      '.mdstudio-content { background-color: #ffffff; }',
+      '.mdstudio-content p { color: #3b4048; }',
+      '.mdstudio-content .mdstudio-alert-warning .mdstudio-alert-title { color: #92400e; }',
+      'body { background-color: #1e1b4b; }',
+      'body p { color: #333333; }',
+      ':root { --a: "/*"; --b: url("https://evil.example/track.png"); --c: "*/"; --txt: "REPLACED"; }',
+      '#mdstudio { background-image: var(--b); color: var(toString, #111111); }',
+      '#mdstudio h1::before { content: "/* "; }',
+      '#mdstudio h1::after { content: " */"; }',
+      '#mdstudio p.prose::before { content: "var(--txt) @import"; }',
+    ].join('\n'),
+    { allowExternalCssResources: false },
+  );
+  assert.equal(
+    root.style.backgroundImage.includes('evil.example'),
+    false,
+    'var(/*) external URL bypass is stripped when allowExternalCssResources is false',
+  );
+  assert.equal(root.style.color, 'rgb(17, 17, 17)', 'var(toString, fallback) ignores Object.prototype properties');
+  assert.equal(
+    root.style.backgroundColor,
+    'rgb(30, 27, 75)',
+    'custom body rule matches .mdstudio-content specificity and overrides built-in root background by source order',
+  );
+  assert.equal(
+    root.querySelector<HTMLElement>('p.prose')?.style.color,
+    'rgb(51, 51, 51)',
+    'custom body p rule matches .mdstudio-content p specificity and overrides prose paragraph color',
+  );
+  assert.equal(
+    root.querySelector<HTMLElement>('.mdstudio-alert-title')?.style.color,
+    'rgb(146, 64, 14)',
+    'body p specificity does not inflate to #mdstudio p and override .mdstudio-content .mdstudio-alert-warning .mdstudio-alert-title',
+  );
+  const h1Text = root.querySelector('h1')?.textContent || '';
+  assert.ok(
+    h1Text.includes('/*') && h1Text.includes('*/'),
+    'quoted /* and */ inside content: survive comment stripping',
+  );
+  const proseText = root.querySelector('p.prose')?.textContent || '';
+  assert.ok(
+    proseText.includes('var(--txt) @import'),
+    'quoted var(--txt) and @import inside content: are preserved verbatim',
+  );
+}
+
+console.log('52 custom-css and custom-themes checks passed.');

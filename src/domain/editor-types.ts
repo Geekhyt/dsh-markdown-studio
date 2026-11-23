@@ -7,6 +7,8 @@ export interface EditorSelection {
   end: number;
   head?: number;
   programmatic?: boolean;
+  composing?: boolean;
+  boundary?: boolean;
 }
 
 export interface EditorScrollInfo {

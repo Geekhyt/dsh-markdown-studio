@@ -98,7 +98,7 @@ function attachSharedCustomThemes(docs: Article[], customThemes: CustomTheme[]):
   }));
 }
 
-function dedupeIncomingDocs(incomingDocs: readonly Article[], existingDocs: ReadonlyMap<string, Article>): Article[] {
+function dedupeIncomingDocs(incomingDocs: readonly Article[], existingIds: ReadonlySet<string>): Article[] {
   const seen = new Set<string>();
   return incomingDocs.map(function (entry) {
     if (!seen.has(entry.id)) {
@@ -106,7 +106,7 @@ function dedupeIncomingDocs(incomingDocs: readonly Article[], existingDocs: Read
       return entry;
     }
     let suffix = 2;
-    while (seen.has(`${entry.id}-${suffix}`) || existingDocs.has(`${entry.id}-${suffix}`)) suffix++;
+    while (seen.has(`${entry.id}-${suffix}`) || existingIds.has(`${entry.id}-${suffix}`)) suffix++;
     const nextId = `${entry.id}-${suffix}`;
     seen.add(nextId);
     return { ...entry, id: nextId };
@@ -122,10 +122,11 @@ export function mergeLibraryBackup(
 ): LibraryState {
   const docs = new Map(current.docs.map((entry) => [entry.id, entry] as const));
   const trash = new Map((current.trash || []).map((entry) => [entry.id, entry] as const));
+  const existingIds = new Set<string>([...docs.keys(), ...trash.keys()]);
   const decisionFor = (id: string, exists: boolean): MergeDecision =>
     Object.hasOwn(decisions, id) ? decisions[id] : exists ? prefer : 'incoming';
   const incomingDocIds = new Set<string>();
-  for (const entry of dedupeIncomingDocs(incoming.docs, docs)) {
+  for (const entry of dedupeIncomingDocs(incoming.docs, existingIds)) {
     const exists = docs.has(entry.id) || trash.has(entry.id);
     const decision = decisionFor(entry.id, exists);
     if (decision === 'incoming' || !exists) {

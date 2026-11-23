@@ -224,6 +224,8 @@ export function core(p: Palette): string {
           v('heading') +
           ';',
       ),
+      rule('.mdstudio-pull p', 'margin: 0; text-align: center;'),
+      rule('.mdstudio-pull p + p', 'margin-top: 0.5em;'),
       rule(
         'pre',
         'margin: 1.45em 0; padding: 0.85em 1em; background-color: ' +
@@ -288,6 +290,10 @@ export function core(p: Palette): string {
           '; border-radius: ' +
           v('radius') +
           ';',
+      ),
+      rule(
+        'span.mdstudio-img-placeholder',
+        'display: inline-block; margin: 0 0.2em; padding: 0.15em 0.5em; vertical-align: middle;',
       ),
       rule(
         '.mdstudio-alert',

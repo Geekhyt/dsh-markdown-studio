@@ -208,7 +208,7 @@ export function useLazyChunkReady(
             });
         },
         function (err: unknown) {
-          if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+          if (!cancelled) setError((err instanceof Error && err.message) || String(err || '') || 'load failed');
         },
       );
       return function () {

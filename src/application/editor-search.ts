@@ -30,6 +30,25 @@ export interface EditorSearchApi {
   focusHeading: (heading: Heading) => void;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function findNextMatch(text: string, query: string, from: number): { start: number; end: number } | null {
+  const pattern = new RegExp(escapeRegExp(query), 'gi');
+  pattern.lastIndex = Math.max(0, Math.min(from, text.length));
+  let match = pattern.exec(text);
+  if (!match && from > 0) {
+    pattern.lastIndex = 0;
+    match = pattern.exec(text);
+  }
+  return match ? { start: match.index, end: match.index + match[0].length } : null;
+}
+
+function isExactInsensitiveMatch(slice: string, query: string): boolean {
+  return new RegExp('^' + escapeRegExp(query) + '$', 'i').test(slice);
+}
+
 export function createEditorSearch(options: EditorSearchOptions): EditorSearchApi {
   function openSearch(): void {
     options.setOutlineOpen(false);
@@ -59,15 +78,12 @@ export function createEditorSearch(options: EditorSearchOptions): EditorSearchAp
     const query = options.searchPanel.query;
     if (!query) return;
     const selected = options.selection();
-    const haystack = text.toLowerCase();
-    const needle = query.toLowerCase();
-    let index = haystack.indexOf(needle, selected.end);
-    if (index < 0) index = haystack.indexOf(needle);
-    if (index < 0) {
+    const found = findNextMatch(text, query, selected.end);
+    if (!found) {
       options.notify(options.t('search.notFound'), 'error');
       return;
     }
-    reveal(index, index + query.length);
+    reveal(found.start, found.end);
   }
 
   function replaceOne(): void {
@@ -76,7 +92,7 @@ export function createEditorSearch(options: EditorSearchOptions): EditorSearchAp
     if (!query) return;
     const selected = options.selection();
     const current = text.slice(selected.start, selected.end);
-    if (current.toLowerCase() !== query.toLowerCase()) {
+    if (!isExactInsensitiveMatch(current, query)) {
       findNext();
       return;
     }
@@ -87,11 +103,8 @@ export function createEditorSearch(options: EditorSearchOptions): EditorSearchAp
       prevSelection: { start: selected.start, end: selected.end },
     });
     const afterEnd = selected.start + replacement.length;
-    const needle = query.toLowerCase();
-    const lowerNext = next.toLowerCase();
-    let nextIdx = lowerNext.indexOf(needle, afterEnd);
-    if (nextIdx < 0) nextIdx = lowerNext.indexOf(needle);
-    if (nextIdx >= 0) reveal(nextIdx, nextIdx + query.length);
+    const nextMatch = findNextMatch(next, query, afterEnd);
+    if (nextMatch) reveal(nextMatch.start, nextMatch.end);
     else reveal(afterEnd, afterEnd);
   }
 
@@ -99,8 +112,7 @@ export function createEditorSearch(options: EditorSearchOptions): EditorSearchAp
     const text = options.editorValue();
     const query = options.searchPanel.query;
     if (!query) return;
-    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const pattern = new RegExp(escaped, 'gi');
+    const pattern = new RegExp(escapeRegExp(query), 'gi');
     const count = (text.match(pattern) || []).length;
     if (!count) {
       options.notify(options.t('search.notFound'), 'error');

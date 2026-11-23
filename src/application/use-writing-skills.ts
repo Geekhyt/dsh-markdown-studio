@@ -298,7 +298,11 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
     const id = input.id && input.id !== BUILTIN_HUMANIZER_ID ? input.id : createCustomSkillId();
     const saved: WritingSkill = { id, name, description: input.description.trim(), instructions };
     const nextList = upsertCustomSkill(current.customSkills, saved);
-    const activeSkillId = input.setAsDefault ? id : current.activeSkillId;
+    const activeSkillId = input.setAsDefault
+      ? id
+      : current.activeSkillId === id
+        ? BUILTIN_HUMANIZER_ID
+        : current.activeSkillId;
     commitSkillState({ activeSkillId, customSkills: nextList });
     optionsRef.current.notify(t('ai.skillSaved'));
     return saved;
@@ -369,7 +373,7 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
       },
     });
     if (abortRef.current !== controller || controller.signal.aborted) return;
-    const unwrapped = unwrapMarkdownFenceIfProse((raw || res.text).trimEnd(), selectedText);
+    const unwrapped = unwrapMarkdownFenceIfProse((raw || res.text).trimEnd(), selectedText).replace(/\r\n?/g, '\n');
     const cleanText = unwrapped.trim();
     if (!cleanText || cleanText === selectedText.trim()) {
       setSession(null);

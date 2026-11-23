@@ -1165,4 +1165,98 @@ const h = React.createElement;
   console.log('ok - safe visible focus resolution and CodeMirror minimal text diff');
 }
 
+// 10. G8 regressions: FallbackModal drag-out scrim guard & FallbackMenuPanel Tab trap
+{
+  const bridge = createDshBridge(React, null);
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  let root: Root | null = null;
+  let modalCloses = 0;
+  let menuOpen = true;
+  let triggerFocused = false;
+
+  function TrapHarness() {
+    const [open, setOpen] = React.useState(true);
+    return h(
+      bridge.Modal,
+      {
+        open: true,
+        title: 'Drag Guard',
+        closeLabel: 'Close',
+        onClose: () => {
+          modalCloses++;
+        },
+      },
+      h(
+        'div',
+        null,
+        h('input', { id: 'modal-draft-input', defaultValue: 'keep me' }),
+        h(bridge.Menu, {
+          open,
+          ariaLabel: 'More',
+          items: [{ id: 'a', label: 'Action A' }],
+          onSelect: () => {},
+          onClose: () => {
+            menuOpen = false;
+            setOpen(false);
+          },
+          anchor: h(
+            'button',
+            {
+              id: 'modal-menu-trigger',
+              type: 'button',
+              onFocus: () => {
+                triggerFocused = true;
+              },
+            },
+            'Menu',
+          ),
+        }),
+      ),
+    );
+  }
+
+  await act(async () => {
+    root = ReactDOM.createRoot(container);
+    root.render(h(TrapHarness));
+  });
+
+  const scrim = document.querySelector<HTMLElement>('.mdstudio-modal-scrim')!;
+  const input = document.querySelector<HTMLInputElement>('#modal-draft-input')!;
+  // Mousedown inside input, mouseup/click on scrim (drag-out text selection) MUST NOT close modal
+  await act(async () => {
+    input.dispatchEvent(new win.MouseEvent('mousedown', { bubbles: true }));
+    scrim.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  });
+  assert.equal(modalCloses, 0, 'dragging selection from inside FallbackModal onto scrim does not close modal');
+
+  // Genuine mousedown + click on scrim DOES close modal
+  await act(async () => {
+    scrim.dispatchEvent(new win.MouseEvent('mousedown', { bubbles: true }));
+    scrim.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  });
+  assert.equal(modalCloses, 1, 'genuine click starting on scrim closes FallbackModal');
+
+  // Bare synthetic click without preceding mousedown (assistive tech / legacy DOM callers) ALSO closes modal
+  await act(async () => {
+    scrim.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  });
+  assert.equal(modalCloses, 2, 'bare synthetic scrim click without mousedown still closes FallbackModal');
+
+  // Pressing Tab inside FallbackMenuPanel closes menu and restores focus to trigger
+  const menuPanel = document.querySelector<HTMLElement>('.mdstudio-menu')!;
+  await act(async () => {
+    menuPanel.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+    await new Promise((r) => setTimeout(r, 25));
+  });
+  assert.equal(menuOpen, false, 'Tab closes FallbackMenuPanel');
+  assert.equal(triggerFocused, true, 'Tab restores focus to FallbackMenuPanel trigger inside modal');
+
+  await act(async () => {
+    root?.unmount();
+  });
+  container.remove();
+  console.log('ok - FallbackModal drag-out scrim guard and FallbackMenuPanel Tab focus trap');
+}
+
 win.close();

@@ -6,7 +6,7 @@
  */
 
 import { codeThemeCss } from './code-themes';
-import { isRootThemeSelector, parseCssRules, stripExternalCssUrls } from './domain/custom-css';
+import { isRootThemeSelector, parseCssRules, stripCssComments, stripExternalCssUrls } from './domain/custom-css';
 import { type CustomTheme, extractCustomThemePreview, findCustomTheme, isCustomThemeId } from './domain/custom-themes';
 import { mix, rgba } from './theme-system/color';
 import { composeRecipe, type Recipe, recipePalette } from './theme-system/compose';
@@ -778,7 +778,7 @@ export function themeCodePreview(
 ): { bg: string; fg: string; accent: string } {
   const custom = findCustomTheme(settings.customThemes, settings.theme);
   if (custom) {
-    const cleanCustomCss = custom.css.replace(/\/\*[\s\S]*?\*\//g, '');
+    const cleanCustomCss = stripCssComments(custom.css);
     const lastHex = function (prop: string): string {
       const re = new RegExp(prop + '\\s*:\\s*(#[0-9a-f]{3}(?:[0-9a-f]{3})?)\\b', 'gi');
       let found = '';

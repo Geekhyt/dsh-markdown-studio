@@ -317,19 +317,24 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
         );
         const missing: string[] = [];
         try {
-          const fetched = await runWithConcurrency(files, 4, async (filename) => {
+          let writeChain = Promise.resolve();
+          await runWithConcurrency(files, 4, async (filename) => {
+            let data: Uint8Array | null = null;
             try {
               const response = await fetch(assetFetchUrl(base, filename));
-              if (!response.ok) return { filename, data: null as Uint8Array | null };
-              return { filename, data: new Uint8Array(await response.arrayBuffer()) };
+              if (response.ok) data = new Uint8Array(await response.arrayBuffer());
             } catch {
-              return { filename, data: null as Uint8Array | null };
+              data = null;
             }
+            const nextWrite = writeChain.then(async () => {
+              if (!data) missing.push(filename);
+              else await writer.add('assets/' + filename, data);
+              data = null;
+            });
+            writeChain = nextWrite;
+            await nextWrite;
           });
-          for (const item of fetched) {
-            if (!item.data) missing.push(item.filename);
-            else await writer.add('assets/' + item.filename, item.data);
-          }
+          await writeChain;
           await writer.add(
             LIBRARY_ARCHIVE_BACKUP,
             encoder.encode(
@@ -501,11 +506,11 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
           failedAssets++;
         }
       });
-      if (!mountedRef.current) {
-        restoreImportRecovery(recovery.previous);
-        return;
-      }
-      if (options.flushBeforeSwitch && !(await options.flushBeforeSwitch())) {
+      if (
+        !mountedRef.current ||
+        (options.flushBeforeSwitch && !(await options.flushBeforeSwitch())) ||
+        !mountedRef.current
+      ) {
         restoreImportRecovery(recovery.previous);
         return;
       }
@@ -530,15 +535,19 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
     }
   }
 
+  const importingRef = React.useRef(false);
+
   async function importFile(
     file: File | null | undefined,
     merge?: boolean,
     prefer: 'current' | 'incoming' = 'incoming',
   ): Promise<void> {
-    if (!file) return;
+    if (!file || importingRef.current) return;
+    importingRef.current = true;
     try {
       if (file.size > ZIP_LIMITS.archiveBytes) throw new Error('ZIP_LIMIT_EXCEEDED');
       const buffer = await file.arrayBuffer();
+      if (!mountedRef.current) return;
       const bytes = new Uint8Array(buffer);
       if (bytes.length >= 2 && bytes[0] === 0x50 && bytes[1] === 0x4b) {
         await importArchive(file.name || '', buffer, merge, prefer);
@@ -557,6 +566,7 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
       );
       if (!plan || !mountedRef.current) return;
       if (options.flushBeforeSwitch && !(await options.flushBeforeSwitch())) return;
+      if (!mountedRef.current) return;
       const recovery = snapshotImportRecovery();
       if (!recovery.ok) return;
       try {
@@ -572,6 +582,7 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
         throw error;
       }
     } catch (error) {
+      if (!mountedRef.current) return;
       options.notify(
         t(
           error instanceof Error && error.message === 'LIBRARY_SAVE_FAILED'
@@ -582,10 +593,14 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
         ),
         'error',
       );
+    } finally {
+      importingRef.current = false;
     }
   }
 
   async function recover(): Promise<void> {
+    if (importingRef.current) return;
+    importingRef.current = true;
     try {
       const raw = window.localStorage.getItem(IMPORT_RECOVERY_KEY);
       if (!raw) {
@@ -597,8 +612,9 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
       const parsed = parseLibraryBackup(rawPayload, t('untitled'));
       if (!parsed) throw new Error('invalid recovery');
       const ok = await options.confirm({ title: t('library.recoverConfirm') });
-      if (!ok) return;
+      if (!ok || !mountedRef.current) return;
       if (options.flushBeforeSwitch && !(await options.flushBeforeSwitch())) return;
+      if (!mountedRef.current) return;
       const nextActive = store.replaceAll(parsed, true);
       applyImportedSkills(rawPayload, false, 'incoming');
       replace(nextActive);
@@ -606,6 +622,7 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
       setRecoveryAvailable(false);
       options.notify(t('library.recovered'));
     } catch (error) {
+      if (!mountedRef.current) return;
       options.notify(
         t(
           error instanceof Error && error.message === 'LIBRARY_SAVE_FAILED'
@@ -616,6 +633,8 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
         ),
         'error',
       );
+    } finally {
+      importingRef.current = false;
     }
   }
 

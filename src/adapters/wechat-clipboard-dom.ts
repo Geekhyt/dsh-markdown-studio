@@ -15,28 +15,63 @@ export function prepareClipboardDom(root: HTMLElement): void {
   markHorizontalScrollExemptions(root);
 }
 
+const TASK_BLOCK_CHILD = 'p,pre,blockquote,ul,ol,table,section,div,hr,h1,h2,h3,h4,h5,h6';
+
+function taskItemToNode(child: Element, doc: Document): Element {
+  if (child.tagName.toLowerCase() !== 'li') return child;
+  const tag = child.querySelector(TASK_BLOCK_CHILD) ? 'section' : 'p';
+  const row = doc.createElement(tag);
+  row.className = (child as HTMLElement).className;
+  while (child.firstChild) row.appendChild(child.firstChild);
+  return row;
+}
+
+function appendTaskRun(doc: Document, parent: DocumentFragment, className: string, items: Element[]): void {
+  const section = doc.createElement('section');
+  section.className = className || 'mdstudio-task-list';
+  for (const child of items) section.appendChild(taskItemToNode(child, doc));
+  parent.appendChild(section);
+}
+
+function appendRegularRun(doc: Document, parent: DocumentFragment, items: Element[]): void {
+  const ul = doc.createElement('ul');
+  for (const child of items) ul.appendChild(child);
+  parent.appendChild(ul);
+}
+
 function convertTaskListToSection(list: HTMLElement): void {
-  const blockChild = 'p,pre,blockquote,ul,ol,table,section,div,hr,h1,h2,h3,h4,h5,h6';
-  const container = list.ownerDocument.createElement('section');
-  container.className = list.className || 'mdstudio-task-list';
-  Array.from(list.children).forEach(function (child) {
-    if (child.tagName.toLowerCase() !== 'li') {
-      container.appendChild(child);
-      return;
-    }
-    const tag = child.querySelector(blockChild) ? 'section' : 'p';
-    const row = list.ownerDocument.createElement(tag);
-    row.className = (child as HTMLElement).className;
-    while (child.firstChild) row.appendChild(child.firstChild);
-    container.appendChild(row);
-  });
-  list.replaceWith(container);
+  const doc = list.ownerDocument;
+  const children = Array.from(list.children);
+  const hasRegular = children.some(
+    (child) => child.tagName.toLowerCase() === 'li' && !child.classList.contains('mdstudio-task'),
+  );
+  const frag = doc.createDocumentFragment();
+  if (!hasRegular) {
+    appendTaskRun(doc, frag, list.className || 'mdstudio-task-list', children);
+    list.replaceWith(frag);
+    return;
+  }
+  let runKind: 'task' | 'regular' | null = null;
+  let bucket: Element[] = [];
+  const flush = (): void => {
+    if (!bucket.length) return;
+    if (runKind === 'task') appendTaskRun(doc, frag, 'mdstudio-task-list', bucket);
+    else appendRegularRun(doc, frag, bucket);
+    bucket = [];
+  };
+  for (const child of children) {
+    const isTaskLi = child.tagName.toLowerCase() === 'li' && child.classList.contains('mdstudio-task');
+    const kind: 'task' | 'regular' = isTaskLi ? 'task' : 'regular';
+    if (runKind && runKind !== kind) flush();
+    runKind = kind;
+    bucket.push(child);
+  }
+  flush();
+  list.replaceWith(frag);
 }
 
 function normalizeTaskLists(root: HTMLElement): void {
   Array.from(root.querySelectorAll<HTMLElement>('ul')).forEach(function (list) {
-    const parent = list.parentElement;
-    if (parent && /^(UL|OL)$/i.test(parent.tagName)) return;
     const isTask =
       list.classList.contains('mdstudio-task-list') || Boolean(list.querySelector(':scope > li.mdstudio-task'));
     if (!isTask) return;
@@ -78,6 +113,8 @@ function moveNestedLists(root: HTMLElement): void {
   Array.from(root.querySelectorAll<HTMLElement>('li ul, li ol')).forEach(function (list) {
     const item = list.closest<HTMLElement>('li');
     if (!item || !root.contains(item)) return;
+    // Never hoist lists nested inside blockquotes, callouts/sections, or table cells within an `<li>`.
+    if (list.parentElement?.closest('li, blockquote, section, td, th') !== item) return;
     const anchor = anchors.get(item) || item;
     anchor.insertAdjacentElement('afterend', list);
     anchors.set(item, list);

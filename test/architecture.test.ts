@@ -495,6 +495,55 @@ assert.ok(
   'CHROME_CSS must scope coarse-pointer 44px override to button.mdstudio-skill-item (not span.is-draft)',
 );
 
+// Single canonical Host loopback/origin security boundary (G2): ai-route and local-server must
+// import isLoopbackHostHeader/isLoopbackReq from host/http/routes.ts instead of duplicating parsers.
+for (const hostRouteFile of ['host/http/ai-route.ts', 'host/local-server.ts']) {
+  const src = stripComments(fs.readFileSync(path.join(root, hostRouteFile), 'utf8'));
+  assert.ok(
+    (src.includes('isLoopbackHostHeader') || src.includes('isAllowedOrigin')) &&
+      !/\bfunction\s+(?:isLoopbackHost|isAllowedOrigin|isLoopback)\b/.test(src),
+    `${hostRouteFile} must delegate Host/Origin validation to canonical helpers in host/http/routes.ts`,
+  );
+}
+
+// Dark-mode hot-disable & toast icon contrast invariants (G4).
+const styleLifecycleSrc = stripComments(fs.readFileSync(path.join(root, 'src/ui/style-lifecycle.ts'), 'utf8'));
+assert.ok(
+  /classList\??\.remove\(['"]data_color_scheme_dark['"]\)/.test(styleLifecycleSrc),
+  'src/ui/style-lifecycle.ts must remove data_color_scheme_dark from documentElement on unmount',
+);
+for (const token of ['--mdstudio-ui-toast-success', '--mdstudio-ui-toast-info', '--mdstudio-ui-toast-error']) {
+  assert.ok(CHROME_CSS.includes(token), `CHROME_CSS defines high-contrast dark-toast icon token ${token}`);
+}
+
+// CodeMirror Markdown GFM language invariant (G7): use markdownLanguage directly so GFM Tables/Tasks work
+// without dragging in unused @codemirror/lang-html / @lezer/javascript parsers.
+const cmCoreSrc = stripComments(fs.readFileSync(path.join(root, 'src/ui/codemirror-core.ts'), 'utf8'));
+assert.ok(
+  cmCoreSrc.includes('markdownLanguage') && !/\bmarkdown\(\s*\)/.test(cmCoreSrc),
+  'src/ui/codemirror-core.ts must configure GFM-capable markdownLanguage instead of bare markdown()',
+);
+
+// CSS cascade ordering invariant (G8): base .mdstudio-input must precede specialized .mdstudio-search-input
+// and .mdstudio-css-name overrides in CHROME_CSS.
+const baseInputPos = CHROME_CSS.indexOf('\n.mdstudio-input {');
+const searchInputPos = CHROME_CSS.indexOf('\n.mdstudio-search-input {');
+const cssNamePos = CHROME_CSS.indexOf('\n.mdstudio-css-name');
+assert.ok(
+  baseInputPos > 0 && searchInputPos > baseInputPos && cssNamePos > baseInputPos,
+  'CHROME_CSS must declare base .mdstudio-input before .mdstudio-search-input and .mdstudio-css-name overrides',
+);
+
+// FallbackModal scrim drag-out guard & FallbackMenuPanel Tab trap guard (G8).
+assert.ok(
+  primitivesSrc.includes('pointerDownInsideModalRef') && primitivesSrc.includes('onMouseDown'),
+  'src/ui/dsh-primitives.ts must guard FallbackModal scrim clicks against drag-out text selection',
+);
+assert.ok(
+  /key === 'Tab'[\s\S]{0,160}closeAndFocusTrigger/.test(primitivesSrc),
+  'src/ui/dsh-primitives.ts must trap Tab inside FallbackMenuPanel and return focus to its trigger',
+);
+
 // i18n hygiene: zh / en dictionaries stay in exact key parity and every key is referenced by
 // runtime source (dynamic `theme.<id>.name|desc` and `code.<id>.name` lookups are allowlisted).
 const { UI_STRINGS_ZH, UI_STRINGS_EN } = await import('../src/locales/ui-strings');

@@ -25,6 +25,8 @@ export interface FormattingOptions {
 
 export interface InsertBlockOptions {
   collapseToEnd?: boolean;
+  selectStart?: number;
+  selectEnd?: number;
 }
 
 export interface FormattingApi {
@@ -58,10 +60,25 @@ function resolveBlockSelection(
   leadLen: number,
   blockLen: number,
   totalLen: number,
-  collapseToEnd?: boolean,
+  blockOptions?: InsertBlockOptions,
 ): [number, number] {
-  if (collapseToEnd) return [start + totalLen, start + totalLen];
+  if (blockOptions?.selectStart != null) {
+    const s = start + leadLen + blockOptions.selectStart;
+    const e = start + leadLen + (blockOptions.selectEnd ?? blockOptions.selectStart);
+    return [s, e];
+  }
+  if (blockOptions?.collapseToEnd) return [start + totalLen, start + totalLen];
   return [start + leadLen, start + leadLen + blockLen];
+}
+
+const LINE_PREFIX_STRIP_RE = /^([ \t]*)(?:#{1,6}\s+|>\s?|[-+*]\s+(?:\[[ xX]\](?:\s+|$))?|\d{1,9}[.)]\s+)?/;
+
+function transformPrefixLine(line: string, prefix: string, index: number, isOrdered: boolean): string {
+  const m = LINE_PREFIX_STRIP_RE.exec(line);
+  const indent = m ? m[1] : '';
+  const body = m ? line.slice(m[0].length) : line;
+  const linePrefix = isOrdered ? index + 1 + '. ' : prefix;
+  return indent + linePrefix + body;
 }
 
 export function createFormattingCommands(options: FormattingOptions): FormattingApi {
@@ -83,18 +100,30 @@ export function createFormattingCommands(options: FormattingOptions): Formatting
   function setLinePrefix(prefix: string): void {
     const value = options.editorValue();
     const range = options.selection();
-    const lineStart = range.start > 0 ? value.lastIndexOf('\n', range.start - 1) + 1 : 0;
-    let lineEnd = value.indexOf('\n', range.start);
-    if (lineEnd === -1) lineEnd = value.length;
-    const line = value.slice(lineStart, lineEnd);
-    const stripped = line.replace(/^\s*(?:#{1,6}\s+|>\s?|[-+*]\s+(?:\[[ xX]\]\s+)?|\d{1,9}[.)]\s+)?/, '');
-    const next = value.slice(0, lineStart) + prefix + stripped + value.slice(lineEnd);
-    const delta = prefix.length - (line.length - stripped.length);
+    const blockStart = range.start > 0 ? value.lastIndexOf('\n', range.start - 1) + 1 : 0;
+    const effectiveEnd = range.end > range.start && value[range.end - 1] === '\n' ? range.end - 1 : range.end;
+    const rawEnd = value.indexOf('\n', effectiveEnd);
+    const blockEnd = rawEnd === -1 ? value.length : rawEnd;
+    const lines = value.slice(blockStart, blockEnd).split('\n');
+    const isOrdered = /^\d+[.)]\s+$/.test(prefix);
+    let orderIdx = 0;
+    const updatedLines = lines.map((line) => {
+      if (lines.length > 1 && !line.trim()) return line;
+      return transformPrefixLine(line, prefix, orderIdx++, isOrdered);
+    });
+    const replaced = updatedLines.join('\n');
+    const next = value.slice(0, blockStart) + replaced + value.slice(blockEnd);
     options.clearSlash();
     options.setMarkdown(next, { boundary: true, prevSelection: range });
-    const start = Math.max(lineStart + prefix.length, range.start + delta);
-    const end = Math.max(start, range.end + delta);
-    options.focusRange(start, end);
+    if (lines.length === 1) {
+      const delta = replaced.length - lines[0].length;
+      const indentLen = (lines[0].match(/^[ \t]*/) || [''])[0].length;
+      const start = Math.max(blockStart + indentLen + prefix.length, range.start + delta);
+      const end = Math.max(start, range.end + delta);
+      options.focusRange(start, end);
+    } else {
+      options.focusRange(blockStart, blockStart + replaced.length);
+    }
   }
 
   function applyHeadingLevel(level: number): void {
@@ -118,7 +147,7 @@ export function createFormattingCommands(options: FormattingOptions): Formatting
       lead.length,
       block.length,
       insertion.length,
-      blockOptions?.collapseToEnd,
+      blockOptions,
     );
     options.replaceRange(value, range.start, range.end, insertion, selStart, selEnd);
   }
@@ -131,6 +160,7 @@ export function createFormattingCommands(options: FormattingOptions): Formatting
     const value = options.editorValue();
     const range = options.selection();
     const selected = value.slice(range.start, range.end).trim();
+    const placeholder = options.t('slash.alertPlaceholder');
     const body = selected
       ? selected
           .split('\n')
@@ -138,8 +168,14 @@ export function createFormattingCommands(options: FormattingOptions): Formatting
             return '> ' + line;
           })
           .join('\n')
-      : '> ' + options.t('slash.alertPlaceholder');
-    insertBlock('> [!NOTE]\n' + body);
+      : '> ' + placeholder;
+    const header = '> [!NOTE]\n';
+    insertBlock(
+      header + body,
+      selected
+        ? { collapseToEnd: true }
+        : { selectStart: header.length + 2, selectEnd: header.length + 2 + placeholder.length },
+    );
   }
 
   function insertList(): void {
@@ -166,15 +202,22 @@ export function createFormattingCommands(options: FormattingOptions): Formatting
   }
 
   function insertHr(): void {
-    insertBlock('---');
+    insertBlock('---', { collapseToEnd: true });
   }
 
   function insertFencedBlock(fence: string): void {
     const value = options.editorValue();
     const range = options.selection();
     const selected = value.slice(range.start, range.end);
-    const block = fence + '\n' + selected + (selected && !/\n$/.test(selected) ? '\n' : '') + fence;
-    insertBlock(block);
+    const inner = selected ? selected + (/\n$/.test(selected) ? '' : '\n') : '\n';
+    const block = fence + '\n' + inner + fence;
+    const innerStart = fence.length + 1;
+    insertBlock(
+      block,
+      selected
+        ? { selectStart: innerStart, selectEnd: innerStart + selected.length }
+        : { selectStart: innerStart, selectEnd: innerStart },
+    );
   }
 
   function insertCodeBlock(): void {

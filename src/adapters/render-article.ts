@@ -137,9 +137,13 @@ export function renderArticle(
   }
   const mathNodes = Array.from(root.querySelectorAll<HTMLElement>('.mdstudio-math'));
   const math = typeof window !== 'undefined' ? window.__MDSTUDIO_MATH__ : undefined;
-  if (mathNodes.length && math) {
+  if (mathNodes.length) {
     const mathLabelPrefix = options.locale === 'en' ? 'Formula: ' : '公式：';
     mathNodes.forEach(function (node) {
+      if (!math) {
+        node.textContent = node.getAttribute('data-mdstudio-tex') || '';
+        return;
+      }
       try {
         node.innerHTML = math.render(
           node.getAttribute('data-mdstudio-tex'),
@@ -167,23 +171,31 @@ export function renderArticle(
         name = base.split('?')[0];
       }
     }
-    const placeholder = document.createElement('section');
-    placeholder.className = 'mdstudio-img-placeholder';
     const placeholderPrefix =
       options.imagePlaceholderPrefix || (options.locale === 'en' ? '🖼 Insert image here: ' : '🖼 此处插入图片：');
     const placeholderFallback =
       options.imagePlaceholderFallback || (options.locale === 'en' ? 'Local image' : '本地图片');
-    placeholder.textContent = placeholderPrefix + (name || placeholderFallback);
     const parent = img.parentElement;
+    let onlyImage = false;
     if (parent && parent.tagName === 'P') {
+      onlyImage = Array.from(parent.childNodes).every(
+        (node) => node === img || (node.nodeType === 3 && !(node.nodeValue || '').trim()),
+      );
+    }
+    const inlineParent = Boolean(
+      parent &&
+        ((parent.tagName === 'P' && !onlyImage) ||
+          /^(A|SPAN|STRONG|EM|DEL|INS|MARK|CODE|SUB|SUP|SMALL|LABEL|FIGCAPTION|H[1-6])$/.test(parent.tagName)),
+    );
+    const placeholder = document.createElement(inlineParent ? 'span' : 'section');
+    placeholder.className = 'mdstudio-img-placeholder';
+    placeholder.textContent = placeholderPrefix + (name || placeholderFallback);
+    if (parent && parent.tagName === 'P' && onlyImage) {
       parent.classList.remove('mdstudio-figure');
       if (parent.nextElementSibling?.classList.contains('mdstudio-caption')) {
         parent.nextElementSibling.remove();
       }
-      const onlyImage = Array.from(parent.childNodes).every(
-        (node) => node === img || (node.nodeType === 3 && !(node.nodeValue || '').trim()),
-      );
-      if (onlyImage && parent.parentNode) {
+      if (parent.parentNode) {
         parent.parentNode.replaceChild(placeholder, parent);
         return;
       }

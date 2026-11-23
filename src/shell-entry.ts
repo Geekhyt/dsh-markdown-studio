@@ -152,7 +152,7 @@ export function create(
     );
 
     if (cachedMain) return h(cachedMain, props);
-    if (loadError) {
+    if (loadError !== null) {
       return h(
         'div',
         {

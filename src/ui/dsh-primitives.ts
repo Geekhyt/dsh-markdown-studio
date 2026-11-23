@@ -1,7 +1,7 @@
 import type * as ReactNamespace from 'react';
 import type { ComponentType, ReactElement, ReactNode } from 'react';
 import { isElementVisible } from '../runtime/dom-surfaces';
-import { useAutoDismissTimer, useDocumentEvent, useWindowEvent } from '../runtime/react-lifecycle';
+import { useAutoDismissTimer, useDocumentEvent, useMountDisposable, useWindowEvent } from '../runtime/react-lifecycle';
 import type {
   DshButtonProps,
   DshCheckboxProps,
@@ -187,8 +187,11 @@ function alignFixedTooltip(el: HTMLSpanElement | null, tip: TipAnchor): void {
   const desiredTop = computeTooltipTop(tip.anchorTop, tip.anchorBottom, rect.height || 26, vh, tip.side === 'top');
   const shiftX = Math.round(clampedCenter - (rect.left + half));
   const shiftY = Math.round(desiredTop - rect.top);
-  if (Math.abs(shiftX) > 1) el.style.left = Math.round(tip.left + shiftX) + 'px';
-  if (Math.abs(shiftY) > 1) el.style.top = Math.round(tip.top + shiftY) + 'px';
+  const baseLeft = Number.parseFloat(el.style.left);
+  const baseTop = Number.parseFloat(el.style.top);
+  if (Math.abs(shiftX) > 1)
+    el.style.left = Math.round((Number.isFinite(baseLeft) ? baseLeft : tip.left) + shiftX) + 'px';
+  if (Math.abs(shiftY) > 1) el.style.top = Math.round((Number.isFinite(baseTop) ? baseTop : tip.top) + shiftY) + 'px';
 }
 
 export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPrimitivesModule | null) {
@@ -351,6 +354,11 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
       tooltipScrollQuietUntil = Date.now() + 250;
       hide();
     };
+    useMountDisposable(React, function () {
+      return function () {
+        if (dismissActiveTip === closeSelf) dismissActiveTip = null;
+      };
+    });
     if (props.disabled && tip !== null) setTip(null);
     const activeTip = Boolean(tip && !props.disabled);
     useDocumentEvent(
@@ -374,7 +382,6 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
               {
                 id: tipId,
                 ref: function (el: HTMLSpanElement | null): void {
-                  if (!el && dismissActiveTip === closeSelf) dismissActiveTip = null;
                   alignFixedTooltip(el, tip);
                 },
                 className: 'mdstudio-tooltip',
@@ -485,6 +492,7 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
       },
       props.open,
     );
+    const pointerDownInsideModalRef = React.useRef(false);
     if (!props.open) return null;
     const modalBase =
       (props.tone === 'warning'
@@ -493,7 +501,17 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
     return portalOverlay(
       h(
         'div',
-        { className: 'mdstudio-modal-scrim', onClick: props.onClose },
+        {
+          className: 'mdstudio-modal-scrim',
+          onMouseDown: function (event: ReactNamespace.MouseEvent<HTMLDivElement>) {
+            pointerDownInsideModalRef.current = event.target !== event.currentTarget;
+          },
+          onClick: function (event: ReactNamespace.MouseEvent<HTMLDivElement>) {
+            const shouldClose = !pointerDownInsideModalRef.current && event.target === event.currentTarget;
+            pointerDownInsideModalRef.current = false;
+            if (shouldClose) props.onClose();
+          },
+        },
         h(
           'div',
           {
@@ -680,7 +698,9 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
     );
     const onMenuKeyDown = function (event: ReactNamespace.KeyboardEvent<HTMLDivElement>): void {
       if (event.key === 'Tab') {
-        panelProps.onClose();
+        event.preventDefault();
+        event.stopPropagation();
+        closeAndFocusTrigger();
         return;
       }
       const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]:not([disabled])'));

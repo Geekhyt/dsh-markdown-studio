@@ -103,16 +103,17 @@ function resolveFgHex(element: HTMLElement, bgRgb: [number, number, number]): st
   return rgbToHex(effective[0], effective[1], effective[2]);
 }
 
-function shouldLiftElement(element: HTMLElement): boolean {
-  return !element.closest('svg') && hasDirectTextOrMath(element);
+function shouldLiftElement(element: HTMLElement, darkened: ReadonlySet<HTMLElement>): boolean {
+  if (element.closest('svg')) return false;
+  return element.tagName === 'LI' || darkened.has(element) || hasDirectTextOrMath(element);
 }
 
 function needsContrastLift(fgHex: string | null, bgHex: string): fgHex is string {
   return Boolean(fgHex) && contrast(fgHex as string, bgHex) < DARK_TEXT_MIN_CONTRAST;
 }
 
-function liftElementContrast(element: HTMLElement, root: HTMLElement): void {
-  if (!shouldLiftElement(element)) return;
+function liftElementContrast(element: HTMLElement, root: HTMLElement, darkened: ReadonlySet<HTMLElement>): void {
+  if (!shouldLiftElement(element, darkened)) return;
   const bg = nearestOpaqueBgHex(element, root);
   if (bg.lum >= 0.25) return;
   const fgHex = resolveFgHex(element, bg.rgb);
@@ -122,13 +123,13 @@ function liftElementContrast(element: HTMLElement, root: HTMLElement): void {
 
 /**
  * Guarantee WCAG AA (>= 4.5:1) legibility on dark surfaces across every
- * text-bearing element rather than relying on a fixed tag allowlist.
+ * text-bearing element, list marker owner (`<li>`), and darkened surface container.
  */
-function liftDarkText(root: HTMLElement): void {
+function liftDarkText(root: HTMLElement, darkened: ReadonlySet<HTMLElement>): void {
   if (typeof window === 'undefined') return;
-  liftElementContrast(root, root);
+  liftElementContrast(root, root, darkened);
   root.querySelectorAll<HTMLElement>('*').forEach(function (element) {
-    liftElementContrast(element, root);
+    liftElementContrast(element, root, darkened);
   });
 }
 
@@ -142,19 +143,24 @@ function clearNonUrlBgImage(element: HTMLElement, image: string): void {
   }
 }
 
-function normalizeSurfaceElement(element: HTMLElement): void {
+function normalizeSurfaceElement(element: HTMLElement, darkened: Set<HTMLElement>): void {
   if (isMediaOrSvg(element)) return;
   const style = window.getComputedStyle(element);
   clearNonUrlBgImage(element, style.backgroundImage);
   const background = style.backgroundColor;
   if (alphaOf(background) < 0.08 || luminance(background) <= 0.42) return;
   element.style.setProperty('background-color', 'color-mix(in srgb, ' + background + ' 12%, #1b1d22)', 'important');
+  darkened.add(element);
 }
 
-function normalizeDarkSurfaces(root: HTMLElement): void {
-  if (typeof window === 'undefined') return;
-  normalizeSurfaceElement(root);
-  root.querySelectorAll<HTMLElement>('*').forEach(normalizeSurfaceElement);
+function normalizeDarkSurfaces(root: HTMLElement): Set<HTMLElement> {
+  const darkened = new Set<HTMLElement>();
+  if (typeof window === 'undefined') return darkened;
+  normalizeSurfaceElement(root, darkened);
+  root.querySelectorAll<HTMLElement>('*').forEach(function (element) {
+    normalizeSurfaceElement(element, darkened);
+  });
+  return darkened;
 }
 
 type DarkmodeApi = typeof import('mp-darkmode');
@@ -206,8 +212,8 @@ function runDarkmodeOnTarget(Darkmode: DarkmodeApi, target: HTMLElement): void {
 
 function finalizeDarkRoot(root: HTMLElement | null): void {
   if (!root) return;
-  normalizeDarkSurfaces(root);
-  liftDarkText(root);
+  const darkened = normalizeDarkSurfaces(root);
+  liftDarkText(root, darkened);
 }
 
 function warnDarkPreviewFailure(error: unknown): void {

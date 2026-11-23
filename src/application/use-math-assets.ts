@@ -66,7 +66,14 @@ export function useMathAssets(options: MathAssetsOptions): MathAssetsApi {
   const [version, setVersion] = React.useState(0);
   const [loadFailed, setLoadFailed] = React.useState(false);
   const mountedRef = React.useRef(true);
-  const needsMath = !isMathLoaded() && hasMath(options.markdown);
+  const loaded = isMathLoaded();
+  const hasMathInDoc = React.useMemo(
+    function () {
+      return loaded ? false : hasMath(options.markdown);
+    },
+    [loaded, options.markdown],
+  );
+  const needsMath = !loaded && hasMathInDoc;
 
   useMountDisposable(React, function () {
     mountedRef.current = true;

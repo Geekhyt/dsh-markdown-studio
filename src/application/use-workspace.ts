@@ -54,8 +54,54 @@ function normalizeRelPath(raw: string): string {
     .join('/');
 }
 
-function isCaseOnlyRename(oldName: string, nextName: string): boolean {
-  return oldName !== nextName && oldName.toLowerCase() === nextName.toLowerCase();
+function makeTempEntryName(prefix: string): string {
+  return `.mdstudio-tmp-${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+async function isSameHandle(a: FileSystemHandle, b: FileSystemHandle): Promise<boolean> {
+  if (a === b) return true;
+  if (typeof a.isSameEntry === 'function') {
+    try {
+      return await a.isSameEntry(b);
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+async function isDescendantHandle(ancestor: FileSystemDirectoryHandle, candidate: FileSystemHandle): Promise<boolean> {
+  if (typeof ancestor.resolve === 'function') {
+    try {
+      const resolved = await ancestor.resolve(candidate);
+      return Boolean(resolved);
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+async function lookupFileHandle(
+  directory: FileSystemDirectoryHandle,
+  name: string,
+): Promise<FileSystemFileHandle | null> {
+  try {
+    return await directory.getFileHandle(name);
+  } catch {
+    return null;
+  }
+}
+
+async function lookupDirectoryHandle(
+  directory: FileSystemDirectoryHandle,
+  name: string,
+): Promise<FileSystemDirectoryHandle | null> {
+  try {
+    return await directory.getDirectoryHandle(name);
+  } catch {
+    return null;
+  }
 }
 
 function joinPath(parent: string, name: string): string {
@@ -130,32 +176,16 @@ async function fileExists(directory: FileSystemDirectoryHandle, name: string): P
 }
 
 async function writeNewMarkdown(directory: FileSystemDirectoryHandle, name: string): Promise<void> {
-  const handle = await directory.getFileHandle(name, { create: true });
-  const writable = await handle.createWritable();
   const title = name.replace(/\.(md|markdown)$/i, '');
-  await writable.write('# ' + title + '\n\n');
-  await writable.close();
+  await copyFileSafe(directory, name, '# ' + title + '\n\n');
 }
 
 async function directoryExists(directory: FileSystemDirectoryHandle, name: string): Promise<boolean> {
-  try {
-    await directory.getDirectoryHandle(name);
-    return true;
-  } catch {
-    return false;
-  }
+  return (await lookupDirectoryHandle(directory, name)) !== null;
 }
 
 async function isSameFileHandle(a: FileSystemFileHandle, b: FileSystemFileHandle): Promise<boolean> {
-  if (a === b) return true;
-  if (typeof a.isSameEntry === 'function') {
-    try {
-      return await a.isSameEntry(b);
-    } catch {
-      return false;
-    }
-  }
-  return false;
+  return isSameHandle(a, b);
 }
 
 async function entryMatchesOpenFile(entry: WorkspaceEntry, openFile: FileSystemFileHandle | null): Promise<boolean> {
@@ -206,6 +236,58 @@ async function copyDirectory(
       const file = await (entry as FileSystemFileHandle).getFile();
       await copyFileSafe(target, entry.name, await file.arrayBuffer());
     }
+  }
+}
+
+async function copyDirectoryToName(
+  parent: FileSystemDirectoryHandle,
+  source: FileSystemDirectoryHandle,
+  targetName: string,
+): Promise<FileSystemDirectoryHandle> {
+  const target = await parent.getDirectoryHandle(targetName, { create: true });
+  try {
+    await copyDirectory(source, target);
+    return target;
+  } catch (error) {
+    await parent.removeEntry(targetName, { recursive: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function renameFileTwoHop(
+  directory: FileSystemDirectoryHandle,
+  oldName: string,
+  nextName: string,
+  data: ArrayBuffer,
+): Promise<void> {
+  const tmpName = makeTempEntryName('file');
+  await copyFileSafe(directory, tmpName, data);
+  try {
+    await directory.removeEntry(oldName);
+    await copyFileSafe(directory, nextName, data);
+  } catch (error) {
+    await copyFileSafe(directory, oldName, data).catch(() => undefined);
+    throw error;
+  } finally {
+    await directory.removeEntry(tmpName).catch(() => undefined);
+  }
+}
+
+async function renameDirectoryTwoHop(
+  parent: FileSystemDirectoryHandle,
+  entry: import('../domain/workspace').WorkspaceDirectory,
+  nextName: string,
+): Promise<void> {
+  const tmpName = makeTempEntryName('dir');
+  const tmpHandle = await copyDirectoryToName(parent, entry.handle, tmpName);
+  try {
+    await parent.removeEntry(entry.name, { recursive: true });
+    await copyDirectoryToName(parent, tmpHandle, nextName);
+  } catch (error) {
+    await copyDirectoryToName(parent, tmpHandle, entry.name).catch(() => undefined);
+    throw error;
+  } finally {
+    await parent.removeEntry(tmpName, { recursive: true }).catch(() => undefined);
   }
 }
 
@@ -409,23 +491,18 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
         options.notify(options.t('workspace.permission'), 'error');
         return;
       }
-      const caseOnly = isCaseOnlyRename(entry.name, filename);
-      if (!caseOnly && (await fileExists(directory, filename))) {
+      const existing = await lookupFileHandle(directory, filename);
+      const sameEntry = existing ? await isSameHandle(existing, entry.handle) : false;
+      if (existing && !sameEntry) {
         options.notify(options.t('workspace.exists'), 'error');
         return;
       }
       const file = await entry.handle.getFile();
-      const text = await file.text();
-      if (caseOnly) {
-        await directory.removeEntry(entry.name);
-        try {
-          await copyFileSafe(directory, filename, text);
-        } catch (error) {
-          await copyFileSafe(directory, entry.name, text).catch(() => {});
-          throw error;
-        }
+      const data = await file.arrayBuffer();
+      if (sameEntry) {
+        await renameFileTwoHop(directory, entry.name, filename, data);
       } else {
-        await copyFileSafe(directory, filename, text);
+        await copyFileSafe(directory, filename, data);
         await directory.removeEntry(entry.name);
       }
       await refresh();
@@ -453,20 +530,18 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
         options.notify(options.t('workspace.permission'), 'error');
         return;
       }
-      if (!isCaseOnlyRename(entry.name, dirname) && (await directoryExists(parent, dirname))) {
+      const existing = await lookupDirectoryHandle(parent, dirname);
+      const sameEntry = existing ? await isSameHandle(existing, entry.handle) : false;
+      if (existing && !sameEntry) {
         options.notify(options.t('workspace.exists'), 'error');
         return;
       }
-      const target = await parent.getDirectoryHandle(dirname, { create: true });
-      try {
-        await copyDirectory(entry.handle, target);
-      } catch (error) {
-        await parent.removeEntry(dirname, { recursive: true }).catch(function () {
-          /* best effort */
-        });
-        throw error;
+      if (sameEntry) {
+        await renameDirectoryTwoHop(parent, entry, dirname);
+      } else {
+        await copyDirectoryToName(parent, entry.handle, dirname);
+        await parent.removeEntry(entry.name, { recursive: true });
       }
-      await parent.removeEntry(entry.name, { recursive: true });
       const renamedPath = joinPath(parentPath(entry.path), dirname);
       setState((prev) => ({ ...prev, selectedDir: remapSelectedDir(prev.selectedDir, entry.path, renamedPath) }));
       await refresh();
@@ -493,6 +568,14 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
       if (!root) throw new Error('workspace directory is unavailable');
       const source = await resolveDirectory(root, parentPath(entry.path));
       const target = await resolveDirectory(root, targetPath);
+      if (await isSameHandle(source, target)) return;
+      if (
+        entry.kind === 'directory' &&
+        ((await isSameHandle(entry.handle, target)) || (await isDescendantHandle(entry.handle, target)))
+      ) {
+        options.notify(options.t('workspace.moveInvalid'), 'error');
+        return;
+      }
       if (!(await ensurePermission(source)) || !(await ensurePermission(target))) {
         options.notify(options.t('workspace.permission'), 'error');
         return;
@@ -502,15 +585,7 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
           options.notify(options.t('workspace.exists'), 'error');
           return;
         }
-        const destination = await target.getDirectoryHandle(entry.name, { create: true });
-        try {
-          await copyDirectory(entry.handle, destination);
-        } catch (error) {
-          await target.removeEntry(entry.name, { recursive: true }).catch(function () {
-            /* best effort */
-          });
-          throw error;
-        }
+        await copyDirectoryToName(target, entry.handle, entry.name);
         await source.removeEntry(entry.name, { recursive: true });
         const movedPath = joinPath(targetPath, entry.name);
         setState((prev) => ({ ...prev, selectedDir: remapSelectedDir(prev.selectedDir, entry.path, movedPath) }));

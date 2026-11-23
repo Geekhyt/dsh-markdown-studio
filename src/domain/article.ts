@@ -42,13 +42,47 @@ export function parseView(value: unknown): ViewMode {
   return value === 'edit' || value === 'preview' ? value : 'split';
 }
 
-const FRONTMATTER_RE = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/;
+const FRONTMATTER_BLOCK_RE = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
 
-/** Strip leading YAML frontmatter block, returning remaining text and its starting char offset. */
+/** Parse validated leading YAML frontmatter (`key: value` / list items / comments only, never leading `---` HR). */
+export function parseFrontmatterBlock(
+  text: string,
+): { meta: Record<string, string>; body: string; offset: number } | null {
+  const match = FRONTMATTER_BLOCK_RE.exec(text);
+  if (!match) return null;
+  const lines = match[1].split(/\r?\n/);
+  const meta: Record<string, string> = {};
+  let lastKey = '';
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    const line = raw.trim();
+    if (!line || line.charAt(0) === '#') continue;
+    if (lastKey && /^[ \t]+-[ \t]+(.*)$/.test(raw)) {
+      const item = raw.replace(/^[ \t]+-[ \t]+/, '').trim();
+      meta[lastKey] = meta[lastKey] ? meta[lastKey] + ', ' + item : item;
+      continue;
+    }
+    const pair = /^([A-Za-z_][\w-]*)\s*:\s*(.*)$/.exec(line);
+    if (!pair) return null;
+    let value = pair[2].trim();
+    if (
+      value.length >= 2 &&
+      ((value.charAt(0) === '"' && value.charAt(value.length - 1) === '"') ||
+        (value.charAt(0) === "'" && value.charAt(value.length - 1) === "'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    lastKey = pair[1];
+    meta[lastKey] = value;
+  }
+  const offset = match[0].length;
+  return { meta, body: text.slice(offset), offset };
+}
+
+/** Strip leading validated YAML frontmatter block, returning remaining text and its starting char offset. */
 export function stripLeadingFrontmatter(text: string): { body: string; offset: number } {
-  const match = FRONTMATTER_RE.exec(text);
-  if (!match) return { body: text, offset: 0 };
-  return { body: text.slice(match[0].length), offset: match[0].length };
+  const parsed = parseFrontmatterBlock(text);
+  return parsed ? { body: parsed.body, offset: parsed.offset } : { body: text, offset: 0 };
 }
 
 function stripFencedCodeLines(text: string): string {
@@ -66,10 +100,9 @@ function stripFencedCodeLines(text: string): string {
 
 export function deriveTitle(markdown: unknown, fallback: string): string {
   const text = String(markdown || '');
-  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
-  if (frontmatter) {
-    const titleLine = /^title\s*:\s*(.+)$/m.exec(frontmatter[1]);
-    if (titleLine) return titleLine[1].trim().replace(/^["']|["']$/g, '') || fallback;
+  const frontmatter = parseFrontmatterBlock(text);
+  if (frontmatter?.meta.title) {
+    return frontmatter.meta.title.trim() || fallback;
   }
   const h1 = markdownHeadings(text).find((item) => item.level === 1);
   return h1 ? h1.text.trim() || fallback : fallback;

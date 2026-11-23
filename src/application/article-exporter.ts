@@ -3,12 +3,12 @@ import { renderArticle } from '../adapters/render-article';
 import { assertZipBudget, type ZipEntry, zipStore } from '../adapters/zip';
 import type { Article } from '../domain/article';
 import { slugify } from '../domain/article';
-import { findCustomTheme, mergeCustomThemes } from '../domain/custom-themes';
+import { findCustomTheme, isCustomThemeId, mergeCustomThemes } from '../domain/custom-themes';
 import { assetFilesInMarkdown } from '../domain/images';
+import type { MermaidCacheEntry } from '../domain/mermaid';
 import { parseThemePatch } from '../domain/settings';
-import { mermaidThemeFor, type ThemeSettings } from '../themes';
+import { mermaidThemeFor, type MermaidTheme, type ThemeSettings } from '../themes';
 import type { MathAssetsApi } from './use-math-assets';
-import type { MermaidAssetsApi } from './use-mermaid-assets';
 
 type Notify = (text: string, tone?: 'success' | 'error' | 'info') => void;
 
@@ -20,7 +20,10 @@ export interface ArticleExportOptions {
   doc: Article;
   settings: ThemeSettings;
   localImageServerUrl: string;
-  mermaidAssets: Pick<MermaidAssetsApi, 'ensure' | 'cache'>;
+  mermaidAssets: {
+    ensure: (markdown: string, targetTheme?: MermaidTheme) => Promise<Map<string, MermaidCacheEntry> | void>;
+    cache: Map<string, MermaidCacheEntry>;
+  };
   mathAssets: Pick<MathAssetsApi, 'ensure'>;
   download: (name: string, content: Blob | string, mime: string) => boolean;
   closeMenu: () => void;
@@ -82,6 +85,10 @@ export function createArticleExporter(options: ArticleExportOptions): ArticleExp
       if (patch.customThemes) {
         patch.customThemes = mergeCustomThemes(settings.customThemes, patch.customThemes);
       }
+      const nextCustomThemes = patch.customThemes || settings.customThemes || [];
+      if (patch.theme && isCustomThemeId(patch.theme) && !findCustomTheme(nextCustomThemes, patch.theme)) {
+        delete patch.theme;
+      }
       options.updateSettings(patch);
       options.notify(t('toast.themeImported'));
     } catch {
@@ -137,14 +144,15 @@ export function createArticleExporter(options: ArticleExportOptions): ArticleExp
 
   async function exportHtml(): Promise<void> {
     try {
-      await Promise.all([
+      const [mermaidSnapshot] = await Promise.all([
         options.mermaidAssets.ensure(doc.markdown, mermaidThemeFor(settings)),
         options.mathAssets.ensure(doc.markdown),
       ]);
+      const mermaidMap = mermaidSnapshot && mermaidSnapshot.size ? mermaidSnapshot : options.mermaidAssets.cache;
       const article = renderArticle(doc.markdown, settings, {
         locale: options.locale,
         imageBaseUrl: base || 'http://127.0.0.1:4010',
-        mermaidAssets: options.mermaidAssets.cache,
+        mermaidAssets: mermaidMap,
         footnotesTitle: t('footnotes.title'),
         referencesTitle: t('references.title'),
         scrollVerticalHint: t('scroll.verticalHint'),

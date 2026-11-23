@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { AiClientError, formatAiClientError } from '../src/adapters/ai-client';
+import { AiClient, AiClientError, formatAiClientError } from '../src/adapters/ai-client';
 import { formatHostClientError, HostClient, HostClientError } from '../src/adapters/host-client';
 import { UI_STRINGS_EN } from '../src/locales/ui-strings';
 
@@ -107,4 +107,57 @@ assert.equal(
   'No model API key is configured. Add one under DeepSeek Harness → Models, then retry.',
 );
 
-console.log('17 host-client checks passed.');
+// G6 regressions: Object.prototype safe error code lookup, non-NDJSON 200 OK rejection, and HostClient network/HTTP error branches
+assert.equal(
+  formatAiClientError(new AiClientError('toString', 'raw'), tEn),
+  'raw',
+  'formatAiClientError ignores Object.prototype keys like toString',
+);
+assert.equal(
+  formatHostClientError(new HostClientError('toString', 'raw'), { ...labels, t: tEn }),
+  'raw [toString]',
+  'formatHostClientError ignores Object.prototype keys like toString',
+);
+await assert.rejects(
+  () =>
+    new AiClient(
+      '/api/ai',
+      async () => new Response('<html>login</html>', { status: 200, headers: { 'content-type': 'text/html' } }),
+    ).stream({ system: 'sys', prompt: 'p' }),
+  (error: unknown) => error instanceof AiClientError && error.code === 'HOST_BAD_RESPONSE',
+  'AiClient.stream rejects 200 OK HTML/non-NDJSON responses as HOST_BAD_RESPONSE',
+);
+await assert.rejects(
+  () =>
+    new HostClient('/api/test', async () => {
+      throw new Error('ECONNREFUSED');
+    }).health(),
+  (error: unknown) => error instanceof HostClientError && error.code === 'HOST_UNAVAILABLE',
+);
+await assert.rejects(
+  () =>
+    new HostClient(
+      '/api/test',
+      async () => new Response('nope', { status: 502, headers: { 'content-type': 'text/plain' } }),
+    ).health(),
+  (error: unknown) => error instanceof HostClientError && error.code === 'HOST_UNAVAILABLE',
+);
+await assert.rejects(
+  () =>
+    new HostClient(
+      '/api/test',
+      async () => new Response('{"bad', { status: 200, headers: { 'content-type': 'application/json' } }),
+    ).health(),
+  (error: unknown) => error instanceof HostClientError && error.code === 'HOST_BAD_RESPONSE',
+);
+await assert.rejects(
+  () =>
+    new HostClient(
+      '/api/test',
+      async () =>
+        new Response(JSON.stringify({ ok: false }), { status: 500, headers: { 'content-type': 'application/json' } }),
+    ).health(),
+  (error: unknown) => error instanceof HostClientError && error.code === 'HOST_ERROR',
+);
+
+console.log('24 host-client checks passed.');

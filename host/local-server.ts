@@ -9,6 +9,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import http from 'node:http';
 import type { LocalAsset, LocalServerInfo } from './application/image-store';
+import { isLoopbackHostHeader, isLoopbackReq } from './http/routes';
 
 export const LOCAL_SERVER_PORTS = [4010, 4011, 4012, 4013, 4014, 4015, 4016, 4017, 4018, 4019];
 
@@ -22,18 +23,6 @@ export interface LocalServerHandle {
   server: http.Server;
   info: LocalServerInfo;
   stop(): Promise<void>;
-}
-
-const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
-
-function isLoopbackHost(req: IncomingMessage): boolean {
-  const raw = Array.isArray(req.headers.host) ? req.headers.host[0] : req.headers.host;
-  if (!raw) return true;
-  try {
-    return LOOPBACK_HOSTS.has(new URL('http://' + raw.trim()).hostname.toLowerCase());
-  } catch {
-    return false;
-  }
 }
 
 function cors(headers: Record<string, string> = {}): Record<string, string> {
@@ -56,7 +45,8 @@ export function createLocalImageServer(options: { service: LocalAssetReader }): 
   return http.createServer(async function (req: IncomingMessage, res: ServerResponse) {
     const headOnly = req.method === 'HEAD';
     try {
-      if (!isLoopbackHost(req)) {
+      const host = Array.isArray(req.headers.host) ? req.headers.host[0] || '' : req.headers.host || '';
+      if (!isLoopbackReq(req) || !isLoopbackHostHeader(host)) {
         sendText(res, 403, 'loopback only', headOnly);
         return;
       }

@@ -1,4 +1,4 @@
-import { hasExternalCssUrl } from './domain/custom-css';
+import { hasExternalCssUrl, stripCssComments } from './domain/custom-css';
 
 /**
  * Pure CSS rule parser, specificity calculator, CSS variable/counter evaluator,
@@ -93,10 +93,6 @@ function cascadeOrder(a: [string, StyleValue], b: [string, StyleValue]): number 
 /* CSS parsing                                                                */
 /* ------------------------------------------------------------------------- */
 
-function stripCssComments(css: string): string {
-  return String(css || '').replace(/\/\*[\s\S]*?\*\//g, '');
-}
-
 function findCssBlockEnd(css: string, openIndex: number): number {
   let depth = 1;
   let quote = null;
@@ -146,6 +142,7 @@ export function parseDeclarations(body: string): Declaration[] {
 function stripStatementAtRules(css: string): string {
   let out = '';
   let quote = '';
+  let depth = 0;
   for (let i = 0; i < css.length; i++) {
     const ch = css[i];
     if (quote) {
@@ -159,7 +156,11 @@ function stripStatementAtRules(css: string): string {
       out += ch;
       continue;
     }
-    if (ch === '@' && (i === 0 || /[\s;{}]/.test(css[i - 1]))) {
+    if (ch === '{') {
+      depth++;
+    } else if (ch === '}' && depth > 0) {
+      depth--;
+    } else if (depth === 0 && ch === '@' && (i === 0 || /[\s;{}]/.test(css[i - 1]))) {
       const end = findStatementAtRuleEnd(css, i);
       if (end !== -1) {
         i = end;
@@ -214,12 +215,15 @@ export function parseRules(css: string): ParsedRule[] {
   return rules;
 }
 
-export function normalizeSelector(selector: string): string {
+export function normalizeSelector(selector: string, rootReplacement = '#mdstudio'): string {
   let value = String(selector || '').trim();
   if (!value) return '';
-  value = value.replace(/(^|[\s>+~,])(?::root|html|body)(?=$|[\s>+~,.#[:])/gi, '$1#mdstudio');
-  value = value.replace(/#mdstudio(\s+)#mdstudio/gi, '#mdstudio');
-  value = value.replace(/#mdstudio(\s*>\s*)#mdstudio/gi, '#mdstudio');
+  if (rootReplacement) {
+    value = value.replace(/(^|[\s>+~,])(?::root|html|body)(?=$|[\s>+~,.#[:])/gi, '$1' + rootReplacement);
+    const escaped = rootReplacement.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    value = value.replace(new RegExp(`${escaped}(\\s+)${escaped}`, 'gi'), rootReplacement);
+    value = value.replace(new RegExp(`${escaped}(\\s*>\\s*)${escaped}`, 'gi'), rootReplacement);
+  }
   value = value.replace(
     /\.mdstudio-notes-title\b/g,
     ':is(.mdstudio-notes-title, .mdstudio-refs-title, .mdstudio-footnotes-title)',
@@ -353,10 +357,27 @@ interface VarBudget {
 }
 
 function findNextVarCall(input: string, from: number): number {
-  const re = /var\(/gi;
-  re.lastIndex = from;
-  const m = re.exec(input);
-  return m ? m.index : -1;
+  let quote = '';
+  for (let i = from; i < input.length; i++) {
+    const ch = input[i];
+    if (quote) {
+      if (ch === '\\') i++;
+      else if (ch === quote) quote = '';
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (
+      (ch === 'v' || ch === 'V') &&
+      input.slice(i, i + 4).toLowerCase() === 'var(' &&
+      (i === 0 || !/[a-zA-Z0-9_-]/.test(input[i - 1]))
+    ) {
+      return i;
+    }
+  }
+  return -1;
 }
 
 function resolveVarsInternal(
@@ -386,7 +407,7 @@ function resolveVarsInternal(
     const comma = findTopLevelComma(inner);
     const name = (comma === -1 ? inner : inner.slice(0, comma)).trim();
     const fallback = comma === -1 ? '' : inner.slice(comma + 1).trim();
-    const raw = vars[name];
+    const raw = Object.hasOwn(vars, name) ? vars[name] : undefined;
     if (raw != null && raw !== '' && !visiting.has(name)) {
       visiting.add(name);
       out += resolveVarsInternal(raw, vars, level + 1, visiting, budget);
@@ -563,12 +584,14 @@ export function inlineCss<T extends HTMLElement>(root: T, css: string, options?:
       const normalized = normalizeSelector(selector);
       if (!normalized) return;
       const pseudo = splitPseudoElement(normalized);
+      const specSelector = normalizeSelector(selector, '.mdstudio-content');
+      const specPseudo = splitPseudoElement(specSelector);
       entries.push({
         selector: pseudo ? pseudo.base : normalized,
         pseudo: pseudo ? pseudo.pseudo : null,
         decls: rule.decls,
         order: rule.order,
-        specificity: selectorSpecificity(pseudo ? pseudo.base : normalized),
+        specificity: selectorSpecificity(specPseudo ? specPseudo.base : specSelector),
       });
     });
   });

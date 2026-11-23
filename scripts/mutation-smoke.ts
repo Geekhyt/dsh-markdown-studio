@@ -17,7 +17,7 @@ const mutations: Mutation[] = [
   {
     name: 'allow unsafe URL schemes',
     file: 'src/domain/urls.ts',
-    find: 'if (/^(https?:|mailto:)/i.test(probe)) return value;',
+    find: 'if (/^(?:https?:\\/\\/|mailto:)/i.test(probe) && /^(?:https?:\\/\\/|mailto:)/i.test(value)) return value;',
     replace: 'if (true) return value;',
     test: 'test/engine.test.ts',
   },
@@ -52,7 +52,7 @@ const mutations: Mutation[] = [
   {
     name: 'allow unsafe image schemes',
     file: 'src/domain/urls.ts',
-    find: 'if (/^https?:/i.test(probe)) return value;',
+    find: 'if (/^https?:\\/\\//i.test(probe) && /^https?:\\/\\//i.test(value)) return value;',
     replace: 'return value;',
     test: 'test/engine.test.ts',
   },
@@ -182,6 +182,49 @@ const mutations: Mutation[] = [
     find: 'if (props.disabled && tip !== null) setTip(null);',
     replace: 'if (false && props.disabled && tip !== null) setTip(null);',
     test: 'test/dsh-primitives.test.ts',
+  },
+  {
+    name: 'enforce canonical non-empty Host header in host/http/routes.ts',
+    file: 'host/http/routes.ts',
+    find: 'if (!trimmed) return false;',
+    replace: 'if (!trimmed) return true;',
+    test: 'test/host.test.ts',
+  },
+  {
+    name: 'block CSS var(/*) external resource smuggling with quote-aware comment strip',
+    file: 'src/domain/custom-css.ts',
+    find: "return stripCssComments(value).replace(/\\\\(?:\\r\\n|\\r|\\n|\\f)/g, '');",
+    replace: "return value.replace(/\\/\\*[\\s\\S]*?\\*\\//g, '').replace(/\\\\(?:\\r\\n|\\r|\\n|\\f)/g, '');",
+    test: 'test/custom-css.test.ts',
+  },
+  {
+    name: 'lift dark-preview <li> color for loose/bold list ::marker contrast',
+    file: 'src/adapters/dark-preview.ts',
+    find: "return element.tagName === 'LI' || darkened.has(element) || hasDirectTextOrMath(element);",
+    replace: 'return hasDirectTextOrMath(element);',
+    test: 'test/dom.test.ts',
+  },
+  {
+    name: 'guard FallbackModal against drag-out text selection clicks on scrim',
+    file: 'src/ui/dsh-primitives.ts',
+    find: 'const shouldClose = !pointerDownInsideModalRef.current && event.target === event.currentTarget;',
+    replace: 'const shouldClose = event.target === event.currentTarget;',
+    test: 'test/dsh-primitives.test.ts',
+  },
+  {
+    name: 'protect APFS case-only directory rename via handle identity check',
+    file: 'src/application/use-workspace.ts',
+    find: 'const sameEntry = existing ? await isSameHandle(existing, entry.handle) : false;',
+    replace: 'const sameEntry = false;',
+    test: 'test/file-session.test.ts',
+  },
+  {
+    name: 'align Unicode case-folding search offsets without toLowerCase length drift',
+    file: 'src/application/editor-search.ts',
+    find: "const pattern = new RegExp(escapeRegExp(query), 'gi');\n  pattern.lastIndex = Math.max(0, Math.min(from, text.length));\n  let match = pattern.exec(text);\n  if (!match && from > 0) {\n    pattern.lastIndex = 0;\n    match = pattern.exec(text);\n  }\n  return match ? { start: match.index, end: match.index + match[0].length } : null;",
+    replace:
+      'const i = text.toLowerCase().indexOf(query.toLowerCase(), from);\n  return i >= 0 ? { start: i, end: i + query.length } : null;',
+    test: 'test/shortcuts-regression.test.ts',
   },
 ];
 

@@ -3,6 +3,7 @@ import { performance } from 'node:perf_hooks';
 import { JSDOM } from 'jsdom';
 import { markdownHeadings, markdownToPlain } from '../src/domain/article';
 import { hasExternalCssUrl, stripExternalCssUrls } from '../src/domain/custom-css';
+import { assetFilesInMarkdown, collectLocalImages, replaceLocalImages } from '../src/domain/images';
 import { computeTextDiff } from '../src/domain/text-diff';
 import { sanitizeImageUrl, sanitizeLinkUrl } from '../src/domain/urls';
 import { inspectWechatHtml } from '../src/domain/wechat-html-lint';
@@ -149,11 +150,14 @@ for (let i = 0; i < 200; i++) {
   assert.ok(!/@import\b/i.test(clean), `CSS fuzz #${i} leaked @import`);
 }
 
-// Exhaustive dangerous URL vectors
+// Exhaustive dangerous URL vectors (including embedded control chars inside http/https scheme)
 const DANGEROUS_URLS = [
   'javascript:alert(1)',
   '  JaVaScRiPt:alert(1)',
   'java\tscript:alert(1)',
+  'ht\ttp://evil.example/x',
+  'ht\ntp://evil.example/x',
+  'https:evil.example/no-slashes',
   'vbscript:msgbox(1)',
   'data:text/html,<script>alert(1)</script>',
   '//evil.example/path',
@@ -166,6 +170,41 @@ for (const bad of DANGEROUS_URLS) {
   assert.equal(sanitizeLinkUrl(bad), null, `sanitizeLinkUrl rejects ${JSON.stringify(bad)}`);
   assert.equal(sanitizeImageUrl(bad), null, `sanitizeImageUrl rejects ${JSON.stringify(bad)}`);
 }
+
+// Linear O(n) image scanning ReDoS probes (G7)
+for (const [label, payload, runner] of [
+  ['unclosed ![' as const, '!['.repeat(20_000), (s: string) => assetFilesInMarkdown(s)],
+  ['unclosed <img ' as const, '<img '.repeat(20_000), (s: string) => assetFilesInMarkdown(s)],
+  ['unclosed ![a](<' as const, '![a](<'.repeat(12_000), (s: string) => collectLocalImages(s)],
+] as const) {
+  const t0 = performance.now();
+  runner(payload);
+  const dt = performance.now() - t0;
+  assert.ok(dt < 150, `Image scan ReDoS probe (${label}) exceeded 150ms (${dt.toFixed(1)}ms)`);
+}
+// Image destination parser + replaceLocalImages coverage (angled, nested parens, single/double/paren titles)
+const imgDoc = [
+  '![a](<assets/0123456789abcdef01234567.png> "double title")',
+  "![b](assets/fedcba9876543210fedcba98.jpg 'single title')",
+  '![c](assets/aaaaaaaaaaaaaaaaaaaaaaaa.png (paren title))',
+  '![d](https://example.com/a(1).png)',
+  '![e](data:image/png;base64,AAAA)',
+].join('\n');
+assert.equal(collectLocalImages(imgDoc).size, 4);
+const replacedImgs = replaceLocalImages(
+  imgDoc,
+  new Map([
+    ['assets/0123456789abcdef01234567.png', 'assets/111111111111111111111111.png'],
+    ['data:image/png;base64,AAAA', 'assets/222222222222222222222222.png'],
+  ]),
+);
+assert.ok(replacedImgs.includes('![a](<assets/111111111111111111111111.png> "double title")'));
+assert.ok(replacedImgs.includes('![e](assets/222222222222222222222222.png)'));
+assert.equal(replaceLocalImages('plain text', new Map([['x', 'y']])), 'plain text');
+assert.equal(
+  replaceLocalImages('![a](assets/0123456789abcdef01234567.png)', new Map()),
+  '![a](assets/0123456789abcdef01234567.png)',
+);
 
 /* ------------------------------------------------------------------------- */
 /* 3. Large-Document Hot-Path Performance Budget (~10,000 chars)             */

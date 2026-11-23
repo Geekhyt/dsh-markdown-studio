@@ -21,14 +21,14 @@ function escapesBaseOrigin(probe: string): boolean {
   }
 }
 
-/** Allow safe article links; reject script/data/file schemes and protocol-relative bypasses. */
+/** Allow safe article links; reject script/data/file schemes, scheme control chars, and protocol-relative bypasses. */
 export function sanitizeLinkUrl(raw: string): string | null {
   const value = String(raw || '').trim();
   if (!value) return null;
   if (value.startsWith('#')) return value;
   const probe = schemeProbe(value);
   if (!SCHEME.test(probe)) return escapesBaseOrigin(probe) ? null : value;
-  if (/^(https?:|mailto:)/i.test(probe)) return value;
+  if (/^(?:https?:\/\/|mailto:)/i.test(probe) && /^(?:https?:\/\/|mailto:)/i.test(value)) return value;
   return null;
 }
 
@@ -38,7 +38,11 @@ export function sanitizeImageUrl(raw: string): string | null {
   if (!value) return null;
   const probe = schemeProbe(value);
   if (!SCHEME.test(probe)) return escapesBaseOrigin(probe) ? null : value;
-  if (/^https?:/i.test(probe)) return value;
-  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(probe)) return value;
+  if (/^https?:\/\//i.test(probe) && /^https?:\/\//i.test(value)) return value;
+  if (
+    /^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(probe) &&
+    /^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(value)
+  )
+    return value;
   return null;
 }

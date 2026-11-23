@@ -56,7 +56,7 @@ export interface MermaidAssetsOptions {
 export interface MermaidAssetsApi {
   cache: Map<string, MermaidCacheEntry>;
   version: number;
-  ensure: (markdown: string, targetTheme?: MermaidTheme) => Promise<void>;
+  ensure: (markdown: string, targetTheme?: MermaidTheme) => Promise<Map<string, MermaidCacheEntry>>;
   filenames: () => Set<string>;
 }
 
@@ -156,7 +156,9 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
   const [version, setVersion] = React.useState(0);
   const ensureGenRef = React.useRef(0);
   const renderSeqRef = React.useRef(0);
-  const inFlightEnsureRef = React.useRef<{ key: string; promise: Promise<void> } | null>(null);
+  const inFlightEnsureRef = React.useRef<{ key: string; promise: Promise<Map<string, MermaidCacheEntry>> } | null>(
+    null,
+  );
   const pinnedKeysRef = React.useRef<Map<string, number>>(new Map());
   const themeRef = useLatest(React, options.theme);
 
@@ -164,24 +166,31 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
     return loadMermaidModule();
   }
 
-  function updateCacheIfActive(key: string, entry: MermaidCacheEntry): void {
-    if (cacheRef.current.has(key)) cacheRef.current.set(key, entry);
+  function isTaskOwner(key: string, token: Promise<void>): boolean {
+    const slot = cacheRef.current.get(key);
+    return Boolean(slot && slot.status === 'loading' && slot.promise === token);
+  }
+
+  function updateCacheIfOwner(key: string, token: Promise<void>, entry: MermaidCacheEntry): void {
+    if (isTaskOwner(key, token)) cacheRef.current.set(key, entry);
   }
 
   async function renderMermaidToAsset(
     mermaid: MermaidModule,
     theme: MermaidTheme,
-    currentKey: string,
     currentCode: string,
     currentIndex: number,
+    isOwner: () => boolean,
   ): Promise<MermaidCacheEntry | null> {
     const svg = await mermaid.render(
       prependMermaidDirective(currentCode, theme.directive),
       'mdstudio-mermaid-' + ++renderSeqRef.current + '-' + currentIndex,
     );
-    if (!cacheRef.current.has(currentKey)) return null;
+    if (!isOwner()) return null;
     const png = await svgToPng(svg, theme.background);
+    if (!isOwner()) return null;
     const prepared = await prepareImageForWechat(png);
+    if (!isOwner()) return null;
     const stored = await options.hostClient.storeAsset(prepared.dataUrl, prepared.filename);
     return {
       status: 'ready',
@@ -196,13 +205,15 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
     currentKey: string,
     currentCode: string,
     currentIndex: number,
+    getToken: () => Promise<void>,
   ): Promise<void> {
+    const checkOwner = (): boolean => isTaskOwner(currentKey, getToken());
     try {
-      const entry = await renderMermaidToAsset(mermaid, theme, currentKey, currentCode, currentIndex);
+      const entry = await renderMermaidToAsset(mermaid, theme, currentCode, currentIndex, checkOwner);
       if (!entry) return;
-      updateCacheIfActive(currentKey, entry);
+      updateCacheIfOwner(currentKey, getToken(), entry);
     } catch (error) {
-      updateCacheIfActive(currentKey, { status: 'error', error: errorText(error) });
+      updateCacheIfOwner(currentKey, getToken(), { status: 'error', error: errorText(error) });
     }
     if (options.pageAliveRef.current) setVersion((value) => value + 1);
   }
@@ -230,9 +241,11 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
       await existing;
       return;
     }
-    cacheRef.current.set(key, { status: 'loading' });
-    const task = renderAndStore(mermaid, theme, key, code, index);
-    cacheRef.current.set(key, { status: 'loading', promise: task });
+    let task!: Promise<void>;
+    const entry: MermaidCacheEntry = { status: 'loading' };
+    cacheRef.current.set(key, entry);
+    task = renderAndStore(mermaid, theme, key, code, index, () => task);
+    entry.promise = task;
     await task;
   }
 
@@ -274,14 +287,20 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
     blocks: string[],
     gen: number,
     unstoppable: boolean,
-  ): Promise<void> {
+  ): Promise<Map<string, MermaidCacheEntry>> {
     const keys = blocks.map((code) => mermaidCacheKey(code, theme));
+    const snapshot = new Map<string, MermaidCacheEntry>();
     beginBlockScope(keys, unstoppable);
     try {
       for (let index = 0; index < blocks.length; index++) {
-        if (isStaleGen(gen, unstoppable)) return;
+        if (isStaleGen(gen, unstoppable)) return snapshot;
         await ensureBlock(mermaid, theme, keys[index], blocks[index], index);
       }
+      for (const k of keys) {
+        const item = cacheRef.current.get(k);
+        if (item) snapshot.set(k, item);
+      }
+      return snapshot;
     } finally {
       endBlockScope(keys, unstoppable);
     }
@@ -295,15 +314,20 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
     return Boolean(mermaid && typeof mermaid.render === 'function' && !isStaleGen(gen, unstoppable));
   }
 
-  async function runEnsure(markdown: string, theme: MermaidTheme, gen: number, unstoppable: boolean): Promise<void> {
+  async function runEnsure(
+    markdown: string,
+    theme: MermaidTheme,
+    gen: number,
+    unstoppable: boolean,
+  ): Promise<Map<string, MermaidCacheEntry>> {
     const blocks = extractMermaidBlocks(markdown);
     if (!blocks.length) {
       clearIdleCacheIfUnpinned(gen, unstoppable);
-      return;
+      return new Map();
     }
     const mermaid = await load();
-    if (!isMermaidUsable(mermaid, gen, unstoppable)) return;
-    await renderAllBlocks(mermaid, theme, blocks, gen, unstoppable);
+    if (!isMermaidUsable(mermaid, gen, unstoppable)) return new Map();
+    return await renderAllBlocks(mermaid, theme, blocks, gen, unstoppable);
   }
 
   function ensureRunKey(markdown: string, directive: string, unstoppable: boolean): string {
@@ -314,13 +338,17 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
     return unstoppable ? ensureGenRef.current : ++ensureGenRef.current;
   }
 
-  function releaseInFlight(promise: Promise<void>): void {
+  function releaseInFlight(promise: Promise<Map<string, MermaidCacheEntry>>): void {
     if (inFlightEnsureRef.current && inFlightEnsureRef.current.promise === promise) {
       inFlightEnsureRef.current = null;
     }
   }
 
-  async function ensureInternal(markdown: string, unstoppable: boolean, targetTheme?: MermaidTheme): Promise<void> {
+  async function ensureInternal(
+    markdown: string,
+    unstoppable: boolean,
+    targetTheme?: MermaidTheme,
+  ): Promise<Map<string, MermaidCacheEntry>> {
     const theme = targetTheme || themeRef.current;
     const runKey = ensureRunKey(markdown, theme.directive, unstoppable);
     const existing = inFlightEnsureRef.current;
@@ -333,7 +361,7 @@ export function useMermaidAssets(options: MermaidAssetsOptions): MermaidAssetsAp
     return promise;
   }
 
-  function ensure(markdown: string, targetTheme?: MermaidTheme): Promise<void> {
+  function ensure(markdown: string, targetTheme?: MermaidTheme): Promise<Map<string, MermaidCacheEntry>> {
     return ensureInternal(markdown, true, targetTheme);
   }
 

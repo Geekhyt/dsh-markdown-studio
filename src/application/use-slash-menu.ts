@@ -392,12 +392,33 @@ export function useSlashMenu(options: SlashMenuOptions): SlashMenuApi {
     });
   }
 
+  function isInsideFencedCode(value: string, pos: number): boolean {
+    let fence = '';
+    const lines = value.slice(0, pos).split('\n');
+    for (let i = 0; i < lines.length - 1; i++) {
+      const line = lines[i];
+      if (!fence) {
+        const open = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+        if (open && !(open[1].charAt(0) === '`' && open[2].includes('`'))) fence = open[1];
+      } else if (new RegExp('^ {0,3}' + fence.charAt(0) + '{' + fence.length + ',}[ \\t]*$').test(line)) {
+        fence = '';
+      }
+    }
+    return Boolean(fence);
+  }
+
+  function findSlashTokenEnd(value: string, slashStart: number, fallbackEnd: number): number {
+    let end = Math.max(slashStart + 1, fallbackEnd);
+    while (end < value.length && !/[\s/]/.test(value.charAt(end))) end++;
+    return end;
+  }
+
   function syncAtCaret(value: string, caret: number): void {
     const previousBreak = caret > 0 ? value.lastIndexOf('\n', caret - 1) : -1;
     const lineStart = previousBreak + 1;
     const line = value.slice(lineStart, caret);
     const match = /^\s*\/([^\s/]{0,18})$/.exec(line);
-    if (!match) {
+    if (!match || isInsideFencedCode(value, lineStart)) {
       if (slash) setSlash(null);
       return;
     }
@@ -452,7 +473,8 @@ export function useSlashMenu(options: SlashMenuOptions): SlashMenuApi {
       setSlash(null);
       return;
     }
-    const next = value.slice(0, slash.start) + command.text + value.slice(range.start);
+    const tokenEnd = findSlashTokenEnd(value, slash.start, range.start);
+    const next = value.slice(0, slash.start) + command.text + value.slice(tokenEnd);
     const selStart = slash.start + (command.selectStart == null ? command.text.length : command.selectStart);
     const selEnd = slash.start + (command.selectEnd == null ? command.text.length : command.selectEnd);
     setSlash(null);

@@ -241,9 +241,7 @@ function candidateHasExternalUrl(candidate: string): boolean {
 }
 
 function precleanCss(value: string): string {
-  return String(value || '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/\\(?:\r\n|\r|\n|\f)/g, '');
+  return stripCssComments(value).replace(/\\(?:\r\n|\r|\n|\f)/g, '');
 }
 
 export function hasExternalCssUrl(value: string): boolean {

@@ -338,7 +338,7 @@ function SkillManagerDialogContent(props: SkillManagerDialogProps): ReactNode {
         name: saved.name,
         description: saved.description,
         instructions: saved.instructions,
-        setAsDefault: normalized.setAsDefault || saved.id === props.activeSkillId,
+        setAsDefault: normalized.setAsDefault,
       });
     }
   }

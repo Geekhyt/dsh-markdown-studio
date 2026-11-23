@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+import { loadPersistedLibrary, savePersistedLibrary } from '../src/adapters/storage';
 import { DocumentStore } from '../src/application/document-store';
 import type { Article, LibraryState } from '../src/domain/article';
+import { mergeLibraryBackup } from '../src/domain/library-backup';
 import { DEFAULT_SETTINGS } from '../src/themes';
 
 function article(id: string, markdown = ''): Article {
@@ -206,4 +209,115 @@ assert.equal(customStore.getActive().settings.theme, 'classic', 'deleting custom
   );
 }
 
-console.log('41 document-store checks passed.');
+// G6 multi-tab persistence regressions:
+// 1) Custom themes survive real storage round-trip across tabs (unified across docs).
+// 2) Purging a trashed doc never clobbers a sibling tab's newly created doc.
+// 3) Clean tab accepts backup recovery (replaceAll) even with older timestamps.
+// 4) mergeLibraryBackup dedupes incoming doc IDs against trash IDs as well as active docs.
+{
+  const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' });
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: dom.window.localStorage });
+
+  const seed: LibraryState = {
+    activeId: 'd0',
+    docs: [
+      { ...article('d0', '# 0'), updatedAt: 1000 },
+      { ...article('d1', '# 1'), updatedAt: 1000 },
+    ],
+    trash: [{ ...article('t0', '# trash'), updatedAt: 900, deletedAt: 950 }],
+  };
+  savePersistedLibrary(seed);
+
+  const tabA = new DocumentStore(
+    loadPersistedLibrary()!,
+    (s) => savePersistedLibrary(s),
+    () => loadPersistedLibrary(),
+  );
+  const tabB = new DocumentStore(
+    loadPersistedLibrary()!,
+    (s) => savePersistedLibrary(s),
+    () => loadPersistedLibrary(),
+  );
+
+  // 1) Custom theme created in tabA survives tabB editing doc d1
+  tabA.updateActive({
+    settings: {
+      ...DEFAULT_SETTINGS,
+      theme: 'custom:mint',
+      customThemes: [{ id: 'custom:mint', name: 'Mint', css: '#mdstudio { color: #059669; }' }],
+    },
+  });
+  assert.equal(tabA.flush(), true);
+  tabB.switchTo('d1');
+  tabB.updateActive({ markdown: '# 1 edited in B' });
+  assert.equal(tabB.flush(), true);
+  const loadedAfterTheme = loadPersistedLibrary()!;
+  assert.ok(
+    loadedAfterTheme.docs.every((d) => d.settings.customThemes?.some((c) => c.id === 'custom:mint')),
+    'custom theme from tab A survives tab B flush and stays unified across docs',
+  );
+
+  // 2) tabB purging t0 does not erase tabA's newly created doc
+  const createdInA = tabA.create({
+    title: 'From A',
+    markdown: '# A',
+    settings: { ...DEFAULT_SETTINGS },
+    view: 'split',
+  });
+  assert.equal(tabA.flush(), true);
+  tabB.purge('t0');
+  assert.equal(tabB.flush(), true);
+  const loadedAfterPurge = loadPersistedLibrary()!;
+  assert.ok(
+    loadedAfterPurge.docs.some((d) => d.id === createdInA.id),
+    'purge tombstone does not drop sibling tab newly created article',
+  );
+  assert.equal(
+    loadedAfterPurge.trash?.some((t) => t.id === 't0'),
+    false,
+    'purged trash item remains purged',
+  );
+
+  // 3) Clean tab accepts older-timestamp backup recovery via replaceAll
+  tabA.replaceAll({
+    activeId: 'd0',
+    docs: [{ ...article('d0', 'recovered-backup'), updatedAt: 500 }],
+    trash: [],
+  });
+  assert.equal(tabA.flush(), true);
+  tabB.syncExternal(loadPersistedLibrary()!);
+  assert.equal(
+    tabB.getSnapshot().docs.find((d) => d.id === 'd0')?.markdown,
+    'recovered-backup',
+    'clean tab accepts replaceAll backup recovery even with older updatedAt',
+  );
+
+  // 4) mergeLibraryBackup avoids trash ID collisions when deduping incoming docs
+  const merged = mergeLibraryBackup(
+    {
+      activeId: 'keep',
+      docs: [{ ...article('keep', 'K'), title: 'Keep', updatedAt: 100 }],
+      trash: [{ ...article('dup-1', 'T'), title: 'Trashed', updatedAt: 90, deletedAt: 95 }],
+    },
+    {
+      activeId: 'dup-1',
+      docs: [
+        { ...article('dup-1', 'A1'), title: 'In A1', updatedAt: 200 },
+        { ...article('dup-1', 'A2'), title: 'In A2', updatedAt: 201 },
+      ],
+      trash: [],
+    },
+  );
+  assert.equal(merged.docs.length, 3, 'incoming duplicate IDs colliding with trash are preserved with unique IDs');
+  assert.equal(new Set(merged.docs.map((d) => d.id)).size, 3);
+  assert.equal(
+    merged.docs.some((d) => d.id === 'dup-1' && merged.trash?.some((t) => t.id === 'dup-1')),
+    false,
+    'no active doc shares an ID with a trashed doc',
+  );
+
+  dom.window.close();
+}
+
+console.log('49 document-store checks passed.');

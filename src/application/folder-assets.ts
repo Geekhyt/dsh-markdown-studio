@@ -74,8 +74,13 @@ export async function writeFolderAssets(
         const bytes = new Uint8Array(await response.arrayBuffer());
         const target = await assetsDir.getFileHandle(filename, { create: true });
         const writable = await target.createWritable();
-        await writable.write(bytes);
-        await writable.close();
+        try {
+          await writable.write(bytes);
+          await writable.close();
+        } catch (writeError) {
+          await writable.abort().catch(() => undefined);
+          throw writeError;
+        }
         written++;
       } catch {
         /* keep going */

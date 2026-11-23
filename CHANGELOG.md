@@ -2,6 +2,41 @@
 
 All notable changes to `dsh-markdown-studio` are documented in this file.
 
+## [0.1.17] - 2026-11-23
+
+### Fixed
+- **Handle-Identity Workspace FileSystem Operations (`G1`, P0)**:
+  - Replaced string-based case-only rename heuristics in `src/application/use-workspace.ts` with `FileSystemHandle.isSameEntry` / `resolve` handle-identity checks and atomic two-hop temp renames (`renameFileTwoHop`, `renameDirectoryTwoHop`), preventing case-only directory renames on macOS APFS/Windows from erasing folders and preventing case-sensitive Linux ext4 sibling overwrites.
+  - Hardened `moveEntry` with handle-level `isDescendantHandle` checks (blocking case-variant self/descendant moves) and aborted partial writables cleanly on error in `copyFileSafe` and `src/application/folder-assets.ts`.
+- **Single Canonical Host Loopback & Origin Security Boundary (`G2`, P0)**:
+  - Consolidated `isLoopbackHostHeader`, `isLoopbackReq`, and `isAllowedOrigin` in `host/http/routes.ts` and removed drifted duplicate parsers from `host/http/ai-route.ts` and `host/local-server.ts`, rejecting empty `Host` headers as well as userinfo/path-forged `Host` headers across every host route.
+  - Preserved empty bodies for `HEAD` 404 responses on `createAssetRoute`.
+- **Quote-Aware CSS Lexer, Container-Class Specificity Parity & URL Hardening (`G3`, P0)**:
+  - Replaced naive `/* ... */` regexes with shared quote-aware `stripCssComments` across `src/domain/custom-css.ts`, `src/css-inliner.ts`, and `src/themes.ts` (blocking `--a:"/*" --b:url(...) --c:"*/"` external resource smuggling while preserving quoted `content: "/* "` / `" */"`).
+  - Computed CSS selector specificity using container-class equivalent `.mdstudio-content` (`0,1,0`) for `:root`/`html`/`body` before DOM rewriting to `#mdstudio` so custom `body` / `body p` rules still override built-in `.mdstudio-content` / `.mdstudio-content p` by source order without inflating to `#mdstudio p` (`1,0,1`) and clobbering `.mdstudio-alert-warning .mdstudio-alert-title` or `.mdstudio-pull p`.
+  - Scoped `stripStatementAtRules` to top-level brace depth, skipped quoted strings in `findNextVarCall`, guarded `var()` lookups with `Object.hasOwn`, and rejected control-character-injected URL schemes (e.g. `ht\ttp://`) in `src/domain/urls.ts`.
+- **Dark-Mode Contrast, `BrandMark` Tokens & High-Contrast Toast Icons (`G4`)**:
+  - Updated `src/adapters/dark-preview.ts` to lift contrast on every `<li>` and darkened surface, raising dark-preview `li::marker` contrast on loose/bold/code/link list items from `1.03:1` to `>= 4.63:1` across all themes (verified in both standalone Chromium and real DeepSeek Harness).
+  - Added dedicated dark-surface toast icon tokens (`--mdstudio-ui-toast-success/info/error`) in `src/ui/styles.ts` (lifting light-mode toast icon contrast from `2.44:1` to `12.4:1`), bound `BrandMark` (`src/ui/brand-mark.ts`) to dark-aware UI surface tokens, and removed `data_color_scheme_dark` from `document.documentElement` on hot disable in `src/ui/style-lifecycle.ts`.
+- **Markdown Engine & WeChat Clipboard DOM Correctness (`G5`)**:
+  - Unified strict YAML frontmatter validation (`parseFrontmatterBlock`) across `src/domain/article.ts` and `src/markdown-parser.ts` so leading `---` horizontal rules never swallow article bodies; fixed multi-paragraph `:::pull` empty `<p>` artifacts and centered `.mdstudio-pull p` (`src/theme-system/core.ts`); fixed CJK-adjacent & uppercase `HTTPS://` bare URLs, `ctx.inLink` nested `<a>` guard, emphasis spanning links containing `==`/`++`, `normalizeLabel` preserving literal `C++`, `readingTime: false` alongside `category`, and tab-indented nested lists.
+  - Updated `src/adapters/wechat-clipboard-dom.ts` to split mixed regular+task `<ul>` into contiguous `<ul>` and `<section class="mdstudio-task-list">` runs, convert nested task lists, and keep lists inside `<blockquote>`/`<td>` inside their containers.
+  - Updated `src/adapters/render-article.ts` to emit `inline-block` `<span>` placeholders for inline missing local images (preserving `<section>` in block/figure contexts) and fall back to raw TeX text when `__MDSTUDIO_MATH__` is unavailable.
+- **Tombstone Multi-Tab Persistence, File-Reload Guard & Archive/Client Hardening (`G6`, P0)**:
+  - Replaced coarse `structuralDirty` with explicit `MergeTombstones` (`pendingDeletedIds`, `pendingPurgedIds`, `pendingEmptyTrash`, `pendingCustomThemes`, `pendingReplace`) and `isDocDirty(id)` in `src/application/document-store.ts`, re-unified shared `customThemes` across docs in `src/adapters/storage.ts`, and checked both `docs` and `trash` during backup ID deduplication (`src/domain/library-backup.ts`).
+  - Added `suppressAutosaveRef` around linked local file reloads in `src/app.ts`, `Object.hasOwn` error-code lookups + NDJSON `content-type` validation in `src/adapters/ai-client.ts` & `src/adapters/host-client.ts`, single-flight / unmount-safe streaming archive import in `src/application/use-library-archive.ts`, and 24-theme-cap dangling-theme cleanup in `src/application/article-exporter.ts`.
+- **CodeMirror GFM Optimization (`-118 KiB`), Linear `O(n)` Image Scanner & Editor Polish (`G7`)**:
+  - Switched `src/ui/codemirror-core.ts` to direct `new LanguageSupport(markdownLanguage, [pasteURLAsLink, Prec.high(keymap.of(markdownKeymap))])`, restoring GFM table `.cm-md-mono-line` monospace alignment while eliminating ~106 KiB of unused `@codemirror/lang-html` / `@lezer/javascript` parser tables (`dist/client.studio.js`: `1273.4 KiB → 1155.3 KiB`, `gzip 354.9 KiB`).
+  - Replaced quadratic image scans in `src/domain/images.ts` with strictly linear `O(n)` scanning (300×–2800× speedup on pathological unclosed syntax).
+  - Normalized CRLF line endings at history/editor ingress (`src/application/use-document-history.ts`, `src/app.ts`) restoring AI Writing Skill diffs on Windows `.md` files; buffered IME composition frames with `compositionend` & immediate-`undo()` flushing; fixed inner caret placement for `insertFencedBlock` / `insertAlert` / `insertHr` and consecutive multi-line ordered numbering (`src/application/editor-formatting.ts`); fixed Unicode case-folding (`İ`) search/replace offsets (`src/application/editor-search.ts`); prevented `SlashMenu` undo re-pop and mid-token `/co|de` corruption (`src/application/use-slash-menu.ts`); fixed `Mermaid` ensure cache snapshot races (`src/application/use-mermaid-assets.ts`, `src/application/use-copy-actions.ts`); and persisted unchecking default custom skills (`src/application/use-writing-skills.ts`).
+- **Fallback Primitive Guards, CSS Cascade Order & Mobile/Narrow Focus Polish (`G8`)**:
+  - Moved base `.mdstudio-input`/`.mdstudio-select` declarations ahead of `.mdstudio-search-input` and `.mdstudio-css-name` in `src/ui/styles.ts`, bounded `.mdstudio-editor-stats` overflow, stacked `.mdstudio-conflict-row` on `<= 720px` viewports, and bounded modal `max-height: 100%`.
+  - Guarded `FallbackModal` against drag-out text selection clicks on the scrim (while keeping synthetic `scrim.click()` compatible), trapped `Tab` inside `FallbackMenuPanel`, moved `FallbackTooltip` cleanup to `useMountDisposable` with delta re-alignment (`src/ui/dsh-primitives.ts`), added `is-danger` styling to Empty Trash (`src/ui/library-dialogs.ts`), and restored focus to visible controls on narrow `exitImmersive()` (`src/app.ts`).
+
+### Verification & Regression Gates
+- Verified 25/25 new live probes (Core 5 + Standalone Chromium 16 + real DeepSeek Harness 4) and 41/41 historical real-device component-composition regression probes with zero regressions.
+- Expanded permanent gates across `test/architecture.test.ts`, `test/host.test.ts`, `test/custom-css.test.ts`, `test/fuzz-and-perf.test.ts`, `test/engine.test.ts`, `test/wechat-html.test.ts`, `test/dom.test.ts`, `test/document-store.test.ts`, `test/host-client.test.ts`, `test/file-session.test.ts`, `test/dsh-primitives.test.ts`, `test/shortcuts-regression.test.ts`, and `scripts/mutation-smoke.ts` (30/30 killed mutants, 95.14% statement coverage, all 2,355 runtime AST functions `CRAP <= 30`, `dist/client.studio.js` `1155.3 KiB` / `gzip 354.9 KiB`).
+
 ## [0.1.16] - 2026-11-23
 
 ### Fixed
