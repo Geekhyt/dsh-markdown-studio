@@ -51,7 +51,19 @@ export async function importFolderAssets(
   }
 }
 
-export async function writeFolderAssets(
+const folderAssetWriteQueues = new WeakMap<FileSystemDirectoryHandle, Promise<void>>();
+
+async function assetAlreadyWritten(assetsDir: FileSystemDirectoryHandle, filename: string): Promise<boolean> {
+  try {
+    const existing = await assetsDir.getFileHandle(filename);
+    const file = await existing.getFile();
+    return file.size > 0;
+  } catch {
+    return false;
+  }
+}
+
+async function writeFolderAssetsSerialized(
   dirHandle: FileSystemDirectoryHandle,
   markdown: string,
   localImageServerUrl: string,
@@ -68,6 +80,7 @@ export async function writeFolderAssets(
   await Promise.all(
     files.map(async function (filename) {
       try {
+        if (await assetAlreadyWritten(assetsDir, filename)) return;
         const url = base ? base + '/uploads/' + filename : '/api/markdown-studio/assets/' + filename;
         const response = await fetch(url);
         if (!response.ok) return;
@@ -88,4 +101,24 @@ export async function writeFolderAssets(
     }),
   );
   return written;
+}
+
+export function writeFolderAssets(
+  dirHandle: FileSystemDirectoryHandle,
+  markdown: string,
+  localImageServerUrl: string,
+): Promise<number> {
+  const prev = folderAssetWriteQueues.get(dirHandle) || Promise.resolve();
+  const run = prev.then(
+    () => writeFolderAssetsSerialized(dirHandle, markdown, localImageServerUrl),
+    () => writeFolderAssetsSerialized(dirHandle, markdown, localImageServerUrl),
+  );
+  folderAssetWriteQueues.set(
+    dirHandle,
+    run.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return run;
 }

@@ -9,7 +9,13 @@ import { ImageHostError, ImageHostService, MAX_IMAGE_BYTES, parseDataUrl } from 
 import { AI_ROUTE_PATH, createAiRoute } from '../host/http/ai-route';
 import { MATH_PATH, mathRoute } from '../host/http/math-route';
 import { MERMAID_PATH, mermaidRoute } from '../host/http/mermaid-route';
-import { ASSET_PREFIX, createAssetRoute, createImageRoute, isLoopbackHostHeader } from '../host/http/routes';
+import {
+  ASSET_PREFIX,
+  createAssetRoute,
+  createImageRoute,
+  isAllowedOrigin,
+  isLoopbackHostHeader,
+} from '../host/http/routes';
 import { startLocalImageServer } from '../host/local-server';
 import { SAMPLE_IMAGE_FILENAME } from '../host/sample-asset';
 import { resolveStorageDir } from '../index';
@@ -508,6 +514,52 @@ try {
         assert.equal(isLoopbackHostHeader('127.0.0.1/extra'), false);
         assert.equal(isLoopbackHostHeader('evil.example'), false);
         assert.equal(isLoopbackHostHeader('http://bad host'), false);
+
+        // G2 regressions: isAllowedOrigin canonical :80/:443 + cross-site rejection for file:/https:
+        assert.equal(
+          isAllowedOrigin('http://127.0.0.1', '127.0.0.1:80', 'same-origin'),
+          true,
+          'http://127.0.0.1 matches canonical Host 127.0.0.1:80',
+        );
+        assert.equal(
+          isAllowedOrigin('https://localhost', 'localhost:443', 'same-origin'),
+          true,
+          'https://localhost matches canonical Host localhost:443',
+        );
+        assert.equal(
+          isAllowedOrigin('file:///tmp/evil.html', '127.0.0.1:3000', 'cross-site'),
+          false,
+          'file: origin with Sec-Fetch-Site: cross-site is rejected',
+        );
+        assert.equal(
+          isAllowedOrigin('https://127.0.0.1:3000', '127.0.0.1:3000', 'cross-site'),
+          false,
+          'https: origin with Sec-Fetch-Site: cross-site is rejected',
+        );
+        assert.equal(
+          isAllowedOrigin('dsh-app://harness', '127.0.0.1:3000', 'cross-site'),
+          true,
+          'trusted Electron dsh-app: desktop scheme succeeds even with Sec-Fetch-Site: cross-site',
+        );
+        assert.equal(
+          isAllowedOrigin('app://main', '127.0.0.1:3000', 'cross-site'),
+          true,
+          'trusted Electron app: desktop scheme succeeds even with Sec-Fetch-Site: cross-site',
+        );
+
+        // Symlink read rejection in ImageHostService (O_NOFOLLOW)
+        const symDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-sym-'));
+        try {
+          const symSvc = new ImageHostService({ storageDir: symDir });
+          const secret = path.join(symDir, 'secret.txt');
+          await fs.writeFile(secret, 'TOP-SECRET');
+          await fs.mkdir(path.join(symDir, 'assets'), { recursive: true });
+          const symName = 'deadbeefdeadbeefdeadbeef.png';
+          await fs.symlink(secret, path.join(symDir, 'assets', symName));
+          assert.equal(await symSvc.readAsset(symName), null, 'ImageHostService refuses to follow symlinks in assets/');
+        } finally {
+          await fs.rm(symDir, { recursive: true, force: true });
+        }
       } finally {
         mathServer.server.close();
         mermaidServer.server.close();

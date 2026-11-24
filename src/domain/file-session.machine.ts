@@ -197,6 +197,7 @@ function stepLifecycleEvent(state: FileSessionState, event: FileSessionEvent): F
     const fresh = state.diskContent[event.handle];
     return {
       ...state,
+      restoring: false,
       linkedDocId: state.activeDocId,
       linkedHandle: event.handle,
       generation: state.generation + 1,
@@ -211,6 +212,7 @@ function stepLifecycleEvent(state: FileSessionState, event: FileSessionEvent): F
     if (event.docId === state.activeDocId) return state;
     return {
       ...state,
+      restoring: false,
       activeDocId: event.docId,
       linkedDocId: null,
       linkedHandle: 'none',
@@ -224,6 +226,7 @@ function stepLifecycleEvent(state: FileSessionState, event: FileSessionEvent): F
   if (event.type === 'DETACH') {
     return {
       ...state,
+      restoring: false,
       linkedDocId: null,
       linkedHandle: 'none',
       generation: state.generation + 1,

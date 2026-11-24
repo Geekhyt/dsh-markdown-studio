@@ -6,7 +6,16 @@
  */
 
 import { codeThemeCss } from './code-themes';
-import { isRootThemeSelector, parseCssRules, stripCssComments, stripExternalCssUrls } from './domain/custom-css';
+import {
+  findCssBlockEnd,
+  findCssBlockOpen,
+  isRootThemeSelector,
+  parseCssRules,
+  preprocessCssInput,
+  splitCssTopLevel,
+  stripCssComments,
+  stripExternalCssUrls,
+} from './domain/custom-css';
 import { type CustomTheme, extractCustomThemePreview, findCustomTheme, isCustomThemeId } from './domain/custom-themes';
 import { mix, rgba } from './theme-system/color';
 import { composeRecipe, type Recipe, recipePalette } from './theme-system/compose';
@@ -129,35 +138,9 @@ function cssSection(selector: string, body: string): string {
 }
 
 function cssDeclarations(body: string): string[] {
-  const parts: string[] = [];
-  let depth = 0;
-  let quote: string | null = null;
-  let start = 0;
-  for (let i = 0; i < body.length; i++) {
-    const ch = body[i];
-    if (quote) {
-      if (ch === '\\') {
-        i++;
-        continue;
-      }
-      if (ch === quote) quote = null;
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      quote = ch;
-      continue;
-    }
-    if (ch === '(' || ch === '[') depth++;
-    else if (ch === ')' || ch === ']') depth = Math.max(0, depth - 1);
-    else if (ch === ';' && depth === 0) {
-      const part = body.slice(start, i).trim();
-      if (part) parts.push(part);
-      start = i + 1;
-    }
-  }
-  const tail = body.slice(start).trim();
-  if (tail) parts.push(tail);
-  return parts;
+  return splitCssTopLevel(body, ';')
+    .map((part) => part.trim())
+    .filter(Boolean);
 }
 
 function variableGroup(declaration: string): string {
@@ -212,7 +195,7 @@ function componentLabel(selector: string, locale: 'zh' | 'en' = 'zh'): string {
 
 /** Pretty-print theme CSS with section comments and one declaration per line. */
 export function formatCssSource(css: string, locale: 'zh' | 'en' = 'zh'): string {
-  const source = String(css || '');
+  const source = preprocessCssInput(css);
   const sections = locale === 'en' ? CSS_SECTIONS_EN : CSS_SECTIONS;
   const groupLabels =
     locale === 'en'
@@ -223,12 +206,21 @@ export function formatCssSource(css: string, locale: 'zh' | 'en' = 'zh'): string
   let lastComponent = '';
   let at = 0;
   while (at < source.length) {
-    const open = source.indexOf('{', at);
+    const open = findCssBlockOpen(source, at);
     if (open === -1) break;
-    const selector = source.slice(at, open).trim();
-    const close = source.indexOf('}', open);
-    if (!selector || close === -1) break;
+    const prefixParts = splitCssTopLevel(source.slice(at, open), ';').map((p) => p.trim());
+    for (let p = 0; p < prefixParts.length - 1; p++) {
+      if (prefixParts[p]) blocks.push(prefixParts[p] + ';');
+    }
+    const selector = (prefixParts[prefixParts.length - 1] || '').trim();
+    const close = findCssBlockEnd(source, open);
+    if (!selector || close >= source.length) break;
     const body = source.slice(open + 1, close);
+    if (selector.startsWith('@')) {
+      blocks.push(selector + ' {\n' + body.trim() + '\n}');
+      at = close + 1;
+      continue;
+    }
     const section = cssSection(selector, body);
     if (!seen.has(section)) {
       seen.add(section);
@@ -241,11 +233,11 @@ export function formatCssSource(css: string, locale: 'zh' | 'en' = 'zh'): string
     } else if (!component) {
       lastComponent = '';
     }
-    const selectors = selector
-      .split(',')
+    const selectors = splitCssTopLevel(selector, ',')
       .map(function (part) {
         return part.trim();
       })
+      .filter(Boolean)
       .join(',\n');
     const declarations = cssDeclarations(body);
     const lines: string[] = [];

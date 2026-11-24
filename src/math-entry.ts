@@ -80,22 +80,32 @@ function sanitizeSvgNode(node: Element, isRoot: boolean): void {
   sanitizeSvgPaintAttrs(node);
 }
 
-/** Defense in depth: unwrap SVG links, drop `<foreignObject>`, and enforce CSS-escape-aware paint & style allowlists. */
-function stripSvgLinks(root: Element): void {
-  Array.from(root.querySelectorAll('foreignObject')).forEach(function (node) {
+const XLINK_NS = 'http://www.w3.org/1999/xlink';
+
+function stripNodeLinks(node: Element): void {
+  const isUse = node.tagName.toLowerCase() === 'use';
+  const href = node.getAttribute('href');
+  if (href && (!isUse || !href.trim().startsWith('#'))) node.removeAttribute('href');
+  const xlink = node.getAttributeNS?.(XLINK_NS, 'href') || node.getAttribute('xlink:href');
+  if (xlink && (!isUse || !xlink.trim().startsWith('#'))) {
+    node.removeAttribute('xlink:href');
+    node.removeAttributeNS?.(XLINK_NS, 'href');
+  }
+}
+
+/** Defense in depth: unwrap SVG links, drop `<foreignObject>`/`<image>`/`<script>`, and enforce paint & style allowlists. */
+export function stripSvgLinks(root: Element): void {
+  Array.from(root.querySelectorAll('foreignObject, image, script')).forEach(function (node) {
     node.remove();
   });
   Array.from(root.querySelectorAll('a')).forEach(function (link) {
     while (link.firstChild) link.parentNode?.insertBefore(link.firstChild, link);
     link.remove();
   });
-  Array.from(root.querySelectorAll('[href], [xlink\\:href]')).forEach(function (node) {
-    if (node.tagName.toLowerCase() === 'use') return;
-    node.removeAttribute('href');
-    node.removeAttribute('xlink:href');
-  });
+  stripNodeLinks(root);
   sanitizeSvgNode(root, true);
   Array.from(root.querySelectorAll('*')).forEach(function (node) {
+    stripNodeLinks(node);
     sanitizeSvgNode(node, false);
   });
 }

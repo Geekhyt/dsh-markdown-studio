@@ -298,7 +298,7 @@ export const UI_STRINGS_ZH: Record<string, string> = {
   'workspace.search': '搜索工作区',
   'workspace.noResults': '没有匹配的文件',
   'workspace.delete': '删除',
-  'workspace.deleteConfirm': '确定删除？',
+  'workspace.deleteConfirm': '确定删除「{name}」？',
   'workspace.invalidName': '名称无效',
   'workspace.exists': '同名文件已存在',
   'workspace.created': '已创建',
@@ -761,7 +761,7 @@ export const UI_STRINGS_EN: Record<string, string> = {
   'workspace.search': 'Search workspace',
   'workspace.noResults': 'No matching files',
   'workspace.delete': 'Delete',
-  'workspace.deleteConfirm': 'Delete this item?',
+  'workspace.deleteConfirm': 'Delete "{name}"?',
   'workspace.invalidName': 'Invalid name',
   'workspace.exists': 'A file with that name already exists',
   'workspace.created': 'Created',
@@ -987,7 +987,11 @@ export function createStudioLocaleController(React: typeof ReactNamespace, names
   function registerWithHost(locale: LocaleService): () => void {
     localeService = locale;
     const disposers: Array<() => void> = [];
-    const ids: Record<string, Record<string, string>> = { en: UI_STRINGS_EN, zh: UI_STRINGS_ZH };
+    const ids: Record<string, Record<string, string>> = {
+      en: UI_STRINGS_EN,
+      zh: UI_STRINGS_ZH,
+      'zh-CN': UI_STRINGS_ZH,
+    };
     try {
       locale.getSnapshot().locales.forEach(function (definition: { id: string }) {
         if (!ids[definition.id]) ids[definition.id] = /^zh/i.test(definition.id) ? UI_STRINGS_ZH : UI_STRINGS_EN;

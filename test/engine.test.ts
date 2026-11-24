@@ -857,6 +857,68 @@ check('v0.1.8 CommonMark link-ref, task-list, blockquote lazy continuation and C
 
   const tabList = engine.renderMarkdown('- outer\n\t- inner tab item\n\t  continuation');
   assert.ok(tabList.html.includes('<ul><li>inner tab item'), 'tab-indented nested list parses cleanly');
+
+  // G2/G3 regressions: URL control chars, prototype entity, O(N) DoS, math+code, bare URL emphasis,
+  // nested 10. list, footnote label, and YAML frontmatter zero-indent lists.
+  const ctrlLink = engine.renderMarkdown('[bad](https://example.com/a\x07b)', { linkFootnotes: true });
+  assert.equal(ctrlLink.refs.length, 0, 'URL containing C0 control char is rejected');
+  const protoEntity = engine.renderMarkdown('&toString;');
+  assert.equal(
+    protoEntity.html.includes('function toString'),
+    false,
+    'prototype entity does not leak Object.prototype',
+  );
+
+  const t0 = performance.now();
+  engine.renderMarkdown('*'.repeat(2500) + '['.repeat(2500) + '`'.repeat(2500) + '=='.repeat(1250));
+  assert.ok(performance.now() - t0 < 200, 'pathological 10k unclosed delimiters stay linear and fast');
+
+  const mathCode = engine.renderMarkdown('$a + `b$c` + d$ and ($50) and ($x$) and $$$');
+  assert.ok(mathCode.html.includes('mdstudio-math'), 'inline math renders cleanly when code span contains $');
+  assert.ok(mathCode.html.includes('($50)'), 'currency ($50) does not swallow next formula');
+
+  const bareEq = engine.renderMarkdown('==Visit https://example.com/b64== today==', { linkFootnotes: true });
+  assert.equal(bareEq.refs[0]?.url, 'https://example.com/b64==', 'bare URL with == is not truncated by mark delimiter');
+
+  const diffLink = engine.renderMarkdown('[See https://other.example](https://real.example)', { linkFootnotes: true });
+  assert.ok(diffLink.html.includes('See https://other.example'), 'link label differing from href stays visible');
+
+  const deepList = engine.renderMarkdown('10. item\n  - nested\n    - third');
+  assert.equal((deepList.html.match(/<ul\b/g) || []).length, 2, '2-space nested list under 10. nests cleanly');
+
+  const yamlFm = engine.renderMarkdown('---  \ntitle: Demo\ntags:\n- a\n- b\n---\nBody');
+  assert.equal(yamlFm.meta.title, 'Demo', 'frontmatter supports trailing whitespace and zero-indent YAML lists');
+
+  // Post-review edge regressions: LaTeX quotes/accents, math starting with digits, ==URL==, link-label emphasis,
+  // list lazy continuation with | or nested list, numeric link-ref filenames, and \ + space href split.
+  const latexQuotes = engine.renderMarkdown("$\\text{``a''}$ and $\\text{``b''}$ and $\\text{\\`a}$ and `code`");
+  assert.equal(
+    (latexQuotes.html.match(/mdstudio-math/g) || []).length,
+    3,
+    'LaTeX quotes & grave accents keep 3 math spans',
+  );
+  assert.ok(latexQuotes.html.includes('<code>code</code>'), 'inline code after grave-accent math parses cleanly');
+  assert.ok(engine.renderMarkdown('$1 + sin(x)$ and $0 < max(a, b)$').html.includes('data-mdstudio-tex="1 + sin(x)"'));
+  const markEndUrl = engine.renderMarkdown('==Visit https://example.com/== and ++Read https://example.com/++', {
+    linkFootnotes: true,
+  });
+  assert.ok(
+    markEndUrl.html.includes('<mark>') && markEndUrl.html.includes('<u>'),
+    '==URL== and ++URL++ close emphasis cleanly',
+  );
+  assert.equal(markEndUrl.refs[0]?.url, 'https://example.com/', 'closing == is not appended to bare URL');
+  const inLinkEm = engine.renderMarkdown('[*a <https://example.com/*b*>](https://other.com)');
+  assert.ok(inLinkEm.html.includes('<em>'), 'emphasis across link-like text inside link label is not suppressed');
+  const inLinkEm2 = engine.renderMarkdown('[**a <https://example.com/*b*>](https://other.com)');
+  assert.ok(inLinkEm2.html.includes('<em>b</em>'), 'unclosed ** in link label does not suppress *b* inside <...>');
+  const listPipe = engine.renderMarkdown('- Use `a | b` for OR\ncontinuation line');
+  assert.equal(
+    listPipe.html.includes('</p><p>continuation'),
+    false,
+    'pipe inside list item does not break lazy continuation',
+  );
+  const numRef = engine.renderMarkdown('![Diagram][fig1]\n\n[fig1]: fig1.png');
+  assert.ok(numRef.html.includes('src="fig1.png"'), 'link-ref accepts filenames ending in digits like fig1.png');
 });
 
 console.log(`\n${checks} engine checks passed.`);

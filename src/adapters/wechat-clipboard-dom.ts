@@ -34,9 +34,20 @@ function appendTaskRun(doc: Document, parent: DocumentFragment, className: strin
 }
 
 function appendRegularRun(doc: Document, parent: DocumentFragment, items: Element[]): void {
-  const ul = doc.createElement('ul');
-  for (const child of items) ul.appendChild(child);
-  parent.appendChild(ul);
+  let ul: HTMLUListElement | null = null;
+  for (const child of items) {
+    const tag = child.tagName.toLowerCase();
+    if (tag === 'ul' || tag === 'ol') {
+      ul = null;
+      parent.appendChild(child);
+    } else {
+      if (!ul) {
+        ul = doc.createElement('ul');
+        parent.appendChild(ul);
+      }
+      ul.appendChild(child);
+    }
+  }
 }
 
 function convertTaskListToSection(list: HTMLElement): void {
@@ -60,14 +71,46 @@ function convertTaskListToSection(list: HTMLElement): void {
     bucket = [];
   };
   for (const child of children) {
-    const isTaskLi = child.tagName.toLowerCase() === 'li' && child.classList.contains('mdstudio-task');
-    const kind: 'task' | 'regular' = isTaskLi ? 'task' : 'regular';
+    const tag = child.tagName.toLowerCase();
+    if (tag === 'section' && child.classList.contains('mdstudio-list-continuation')) {
+      flush();
+      runKind = null;
+      frag.appendChild(child);
+      continue;
+    }
+    const isSublist = tag === 'ul' || tag === 'ol';
+    const isTaskLi = tag === 'li' && child.classList.contains('mdstudio-task');
+    const kind: 'task' | 'regular' = isSublist && runKind === 'task' ? 'task' : isTaskLi ? 'task' : 'regular';
     if (runKind && runKind !== kind) flush();
     runKind = kind;
     bucket.push(child);
   }
   flush();
   list.replaceWith(frag);
+}
+
+function splitListAroundTaskSections(root: HTMLElement): void {
+  const selector = 'ul > section.mdstudio-task-list, ol > section.mdstudio-task-list';
+  for (let pass = 0; pass < 200; pass++) {
+    const section = root.querySelector<HTMLElement>(selector);
+    if (!section) break;
+    const parentList = section.parentElement as HTMLElement | null;
+    if (!parentList || !parentList.parentNode) break;
+    const doc = parentList.ownerDocument;
+    const tag = parentList.tagName.toLowerCase();
+    const after = doc.createElement(tag);
+    while (section.nextSibling) after.appendChild(section.nextSibling);
+    if (tag === 'ol' && after.children.length) {
+      const parsedStart = parseInt(parentList.getAttribute('start') || '1', 10);
+      const baseStart = Number.isFinite(parsedStart) ? parsedStart : 1;
+      const beforeItems = Array.from(parentList.children).filter((el) => el.tagName.toLowerCase() === 'li').length;
+      if (baseStart + beforeItems !== 1) after.setAttribute('start', String(baseStart + beforeItems));
+    }
+    if (!section.style.paddingLeft) section.style.paddingLeft = '1.4em';
+    parentList.parentNode.insertBefore(section, parentList.nextSibling);
+    if (after.children.length) parentList.parentNode.insertBefore(after, section.nextSibling);
+    if (!parentList.children.length) parentList.remove();
+  }
 }
 
 function normalizeTaskLists(root: HTMLElement): void {
@@ -77,6 +120,7 @@ function normalizeTaskLists(root: HTMLElement): void {
     if (!isTask) return;
     convertTaskListToSection(list);
   });
+  splitListAroundTaskSections(root);
 }
 
 function markHorizontalScrollExemptions(root: HTMLElement): void {
@@ -89,8 +133,29 @@ function markHorizontalScrollExemptions(root: HTMLElement): void {
   });
 }
 
+function hasMeaningfulContent(node: Element): boolean {
+  return Boolean((node.textContent || '').trim() || node.querySelector('img,svg,br,section'));
+}
+
+function liftSectionOutOfInlineParent(section: HTMLElement): void {
+  while (section.parentElement && section.parentElement.tagName !== 'P') {
+    const inline = section.parentElement;
+    const grand = inline.parentNode;
+    if (!grand) break;
+    const before = inline.cloneNode(false) as HTMLElement;
+    while (inline.firstChild && inline.firstChild !== section) {
+      before.appendChild(inline.firstChild);
+    }
+    if (hasMeaningfulContent(before)) grand.insertBefore(before, inline);
+    grand.insertBefore(section, inline);
+    if (!hasMeaningfulContent(inline)) inline.remove();
+  }
+}
+
 function unwrapParagraphSections(root: HTMLElement): void {
-  Array.from(root.querySelectorAll<HTMLElement>('p > section')).forEach(function (section) {
+  Array.from(root.querySelectorAll<HTMLElement>('p section')).forEach(function (section) {
+    if (!section.closest('p')) return;
+    liftSectionOutOfInlineParent(section);
     const paragraph = section.parentElement;
     if (!paragraph || paragraph.tagName !== 'P' || !paragraph.parentNode) return;
     const before = paragraph.ownerDocument.createElement('p');
@@ -98,14 +163,34 @@ function unwrapParagraphSections(root: HTMLElement): void {
     while (paragraph.firstChild && paragraph.firstChild !== section) {
       before.appendChild(paragraph.firstChild);
     }
-    if ((before.textContent || '').trim() || before.querySelector('img,svg,br')) {
+    if (hasMeaningfulContent(before)) {
       paragraph.parentNode.insertBefore(before, paragraph);
     }
     paragraph.parentNode.insertBefore(section, paragraph);
-    if (!(paragraph.textContent || '').trim() && !paragraph.querySelector('img,svg,br,section')) {
+    if (!hasMeaningfulContent(paragraph)) {
       paragraph.remove();
     }
   });
+}
+
+function moveTrailingListSiblings(item: HTMLElement, list: HTMLElement): HTMLElement {
+  const trailing: ChildNode[] = [];
+  for (let node = list.nextSibling; node; node = node.nextSibling) {
+    if (node.nodeType === 1) {
+      const tag = (node as Element).tagName.toLowerCase();
+      if (tag === 'ul' || tag === 'ol') break;
+    }
+    trailing.push(node);
+  }
+  const meaningful = trailing.some(
+    (node) => node.nodeType === 1 || (node.nodeType === 3 && Boolean((node.nodeValue || '').trim())),
+  );
+  if (!meaningful) return list;
+  const cont = item.ownerDocument.createElement('section');
+  cont.className = 'mdstudio-list-continuation';
+  for (const node of trailing) cont.appendChild(node);
+  list.insertAdjacentElement('afterend', cont);
+  return cont;
 }
 
 function moveNestedLists(root: HTMLElement): void {
@@ -116,8 +201,10 @@ function moveNestedLists(root: HTMLElement): void {
     // Never hoist lists nested inside blockquotes, callouts/sections, or table cells within an `<li>`.
     if (list.parentElement?.closest('li, blockquote, section, td, th') !== item) return;
     const anchor = anchors.get(item) || item;
+    const trailing = list.parentElement === item ? moveTrailingListSiblings(item, list) : list;
     anchor.insertAdjacentElement('afterend', list);
-    anchors.set(item, list);
+    if (trailing !== list) list.insertAdjacentElement('afterend', trailing);
+    anchors.set(item, trailing);
   });
 }
 
@@ -142,12 +229,12 @@ function stripFragmentLinks(root: HTMLElement): void {
   });
 }
 
-function inheritedSvgFill(element: SVGElement, stopAt: Element): string {
+function inheritedSvgPaint(element: SVGElement, stopAt: Element, attr: 'fill' | 'stroke'): string {
   let cursor: Element | null = element;
   while (cursor && cursor !== stopAt) {
-    const fill = (cursor.getAttribute('fill') || '').trim();
-    if (fill && hasCssUrlRef(fill)) return '';
-    if (fill && fill.toLowerCase() !== 'currentcolor' && fill.toLowerCase() !== 'none') return fill;
+    const val = (cursor.getAttribute(attr) || '').trim();
+    if (val && hasCssUrlRef(val)) return '';
+    if (val && val.toLowerCase() !== 'currentcolor' && val.toLowerCase() !== 'none') return val;
     cursor = cursor.parentElement;
   }
   return '';
@@ -155,18 +242,19 @@ function inheritedSvgFill(element: SVGElement, stopAt: Element): string {
 
 function sanitizeSvgPathElement(element: SVGElement, svg: SVGSVGElement): void {
   const ownFill = (element.getAttribute('fill') || '').trim().toLowerCase();
+  const ownStroke = (element.getAttribute('stroke') || '').trim().toLowerCase();
   const inlineStrokeWidth = element.style?.strokeWidth || '';
   if (ownFill === 'none') {
     element.setAttribute('fill', 'none');
-    if (!element.getAttribute('stroke') || hasCssUrlRef(element.getAttribute('stroke') || '')) {
-      element.setAttribute('stroke', 'currentColor');
-    }
+    if (ownStroke === 'none') return;
+    const explicitStroke = inheritedSvgPaint(element, svg, 'stroke');
+    element.setAttribute('stroke', explicitStroke || 'currentColor');
     if (inlineStrokeWidth && !element.getAttribute('stroke-width')) {
       element.setAttribute('stroke-width', inlineStrokeWidth);
     }
     return;
   }
-  const explicitFill = inheritedSvgFill(element, svg);
+  const explicitFill = inheritedSvgPaint(element, svg, 'fill');
   element.setAttribute('fill', explicitFill || 'currentColor');
   element.setAttribute('stroke', 'none');
 }

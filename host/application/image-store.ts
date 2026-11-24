@@ -7,7 +7,8 @@
 const ASSET_URL_PREFIX = '/api/markdown-studio/assets/';
 
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { lstat, mkdir, open, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { SAMPLE_IMAGE_BUFFER, SAMPLE_IMAGE_FILENAME, SAMPLE_IMAGE_MIME } from '../sample-asset';
 
@@ -236,9 +237,9 @@ export class ImageHostService {
       await mkdir(dir, { recursive: true, mode: 0o700 });
       let exists = false;
       try {
-        const info = await stat(file);
-        // A size mismatch means an earlier write was interrupted; rewrite it.
-        exists = info.isFile() && info.size === image.buffer.length;
+        const info = await lstat(file);
+        // Never follow symlinks; a size mismatch means an earlier write was interrupted.
+        exists = !info.isSymbolicLink() && info.isFile() && info.size === image.buffer.length;
       } catch {
         exists = false;
       }
@@ -295,12 +296,23 @@ export class ImageHostService {
       return { buffer: SAMPLE_IMAGE_BUFFER, mime: SAMPLE_IMAGE_MIME, filename: name };
     }
     try {
-      const buffer = await readFile(path.join(this.assetsDir(), name));
-      return {
-        buffer,
-        mime: name.endsWith('.png') ? 'image/png' : 'image/jpeg',
-        filename: name,
-      };
+      const filePath = path.join(this.assetsDir(), name);
+      const linkInfo = await lstat(filePath);
+      if (linkInfo.isSymbolicLink() || !linkInfo.isFile()) return null;
+      const flags = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0);
+      const handle = await open(filePath, flags);
+      try {
+        const info = await handle.stat();
+        if (!info.isFile()) return null;
+        const buffer = await handle.readFile();
+        return {
+          buffer,
+          mime: name.endsWith('.png') ? 'image/png' : 'image/jpeg',
+          filename: name,
+        };
+      } finally {
+        await handle.close().catch(() => undefined);
+      }
     } catch {
       return null;
     }
@@ -320,7 +332,9 @@ export class ImageHostService {
       for (const filename of names.filter((name) => ASSET_NAME_PATTERN.test(name)).sort()) {
         let bytes = 0;
         try {
-          bytes = (await stat(path.join(this.assetsDir(), filename))).size;
+          const info = await lstat(path.join(this.assetsDir(), filename));
+          if (info.isSymbolicLink() || !info.isFile()) continue;
+          bytes = info.size;
         } catch {
           continue;
         }

@@ -137,8 +137,8 @@ const mutations: Mutation[] = [
   {
     name: 'full-screen drawer Escape guard prevents editor focus from trapping Escape',
     file: 'src/domain/studio-overlay.machine.ts',
-    find: "if (flags.drawerOpen && (!flags.inEditor || flags.fullscreenDrawer)) return 'close-drawer';",
-    replace: "if (flags.drawerOpen && !flags.inEditor) return 'close-drawer';",
+    find: "if (flags.fullscreenDrawer || (flags.drawerOpen && flags.inDrawer)) return 'close-drawer';",
+    replace: "if (flags.drawerOpen && flags.inDrawer) return 'close-drawer';",
     test: 'test/formal-models.test.ts',
   },
   {
@@ -171,9 +171,9 @@ const mutations: Mutation[] = [
   },
   {
     name: 'narrow window Escape inEditor guard away from toolbar & CSS workbench',
-    file: 'src/app.ts',
-    find: "inEditor: isEventInside(event, '.mdstudio-editor-pane:not(.mdstudio-css-workbench) .mdstudio-editor-wrap'),",
-    replace: "inEditor: isEventInside(event, '.mdstudio-editor-pane'),",
+    file: 'src/application/use-studio-keyboard.ts',
+    find: "const MARKDOWN_EDITOR_WRAP_SELECTOR = '.mdstudio-editor-pane:not(.mdstudio-css-workbench) .mdstudio-editor-wrap';",
+    replace: "const MARKDOWN_EDITOR_WRAP_SELECTOR = '.mdstudio-editor-pane';",
     test: 'test/architecture.test.ts',
   },
   {
@@ -225,6 +225,48 @@ const mutations: Mutation[] = [
     replace:
       'const i = text.toLowerCase().indexOf(query.toLowerCase(), from);\n  return i >= 0 ? { start: i, end: i + query.length } : null;',
     test: 'test/shortcuts-regression.test.ts',
+  },
+  {
+    name: 'normalize CSS form-feed (\\f) before sanitizer URL checks',
+    file: 'src/domain/custom-css.ts',
+    find: ".replace(/\\r\\n|\\r|\\f/g, '\\n')",
+    replace: ".replace(/\\r\\n|\\r/g, '\\n')",
+    test: 'test/custom-css.test.ts',
+  },
+  {
+    name: 'reject cross-site Sec-Fetch-Site even for file:/https: origins',
+    file: 'host/http/routes.ts',
+    find: "if (site === 'cross-site') return false;",
+    replace: "if (site === 'cross-site' && !origin) return false;",
+    test: 'test/host.test.ts',
+  },
+  {
+    name: 'preserve AssetGC discovery after unbalanced ![ markers',
+    file: 'src/domain/images.ts',
+    find: "if (source.indexOf(']', i + 2) < 0) break;\n      continue;",
+    replace: 'break;',
+    test: 'test/domain.test.ts',
+  },
+  {
+    name: 'strip Mermaid 11 @{ img } directives before render',
+    file: 'src/mermaid-entry.ts',
+    find: '.filter((entry) => entry && !/^img\\s*:/i.test(entry))',
+    replace: '.filter((entry) => Boolean(entry))',
+    test: 'test/copy-spec.test.ts',
+  },
+  {
+    name: 'clamp above-caret SlashMenu height under top obstacle',
+    file: 'src/domain/surface-geometry.ts',
+    find: 'if (clampedAbove >= 72) {\n      return { top: placed.top, left: placed.left, maxHeight: Math.min(maxHeight, clampedAbove) };\n    }',
+    replace: 'if (false && clampedAbove >= 72) { return { top: placed.top, left: placed.left, maxHeight }; }',
+    test: 'test/domain.test.ts',
+  },
+  {
+    name: 'keep restored article live across pre-write disk merge in DocumentStore',
+    file: 'src/application/document-store.ts',
+    find: "this.pendingIntents.set(restored.id, 'live');",
+    replace: "this.pendingIntents.set(restored.id, 'purged');",
+    test: 'test/document-store.test.ts',
   },
 ];
 

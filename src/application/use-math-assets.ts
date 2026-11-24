@@ -55,18 +55,19 @@ function isMathLoaded(): boolean {
 
 function buildMathTaskKey(needsMath: boolean, loadFailed: boolean, markdown: string): string {
   if (!needsMath) return 'none';
-  return loadFailed ? `math-retry:${markdown.length}:${markdown.slice(0, 32)}` : 'math';
+  return loadFailed ? `math-retry:${markdown.length}:${markdown.slice(0, 24)}:${markdown.slice(-24)}` : 'math';
 }
 
 export function useMathAssets(options: MathAssetsOptions): MathAssetsApi {
   const React = options.React;
+  const [mathReady, setMathReady] = React.useState<boolean>(isMathLoaded);
   const [css, setCss] = React.useState<string>(function () {
     return isMathLoaded() ? window.__MDSTUDIO_MATH__!.cssText : '';
   });
   const [version, setVersion] = React.useState(0);
   const [loadFailed, setLoadFailed] = React.useState(false);
   const mountedRef = React.useRef(true);
-  const loaded = isMathLoaded();
+  const loaded = mathReady && isMathLoaded();
   const hasMathInDoc = React.useMemo(
     function () {
       return loaded ? false : hasMath(options.markdown);
@@ -83,16 +84,18 @@ export function useMathAssets(options: MathAssetsOptions): MathAssetsApi {
   });
 
   function syncLoadedCss(cssText: string): void {
-    if (!mountedRef.current || css === cssText) return;
+    if (!mountedRef.current || (mathReady && css === cssText)) return;
+    setMathReady(true);
     setCss(cssText);
     setVersion((value) => value + 1);
   }
 
-  function applyLoadOutcome(loaded: { cssText: string } | undefined): void {
+  function applyLoadOutcome(loadedMod: { cssText: string } | undefined): void {
     if (!mountedRef.current) return;
-    if (loaded) {
+    if (loadedMod) {
       setLoadFailed(false);
-      setCss(loaded.cssText);
+      setMathReady(true);
+      setCss(loadedMod.cssText);
       setVersion((value) => value + 1);
     } else {
       setLoadFailed(true);

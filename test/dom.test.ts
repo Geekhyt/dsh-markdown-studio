@@ -410,10 +410,13 @@ check(
 check('dark-preview alphaOf treats opaque rgb(0, 0, 0) and rgb(255, 255, 0) as alpha 1', () => {
   assert.equal(alphaOf('rgb(0, 0, 0)'), 1);
   assert.equal(alphaOf('rgb(255, 255, 0)'), 1);
+  assert.equal(alphaOf('#123456'), 1);
   assert.equal(alphaOf('rgba(0, 0, 0, 0)'), 0);
   assert.equal(alphaOf('rgba(255, 255, 255, 0.5)'), 0.5);
   assert.equal(alphaOf('rgb(0 0 0 / 0.25)'), 0.25);
   assert.equal(alphaOf('transparent'), 0);
+  // Anchored regexes must never extract nested rgba() from color-mix() expressions.
+  assert.notEqual(alphaOf('color-mix(in srgb, rgba(255, 0, 0, 0.2) 50%, blue)'), 0.2);
 });
 
 check('prepareClipboardDom unwraps section blocks nested inside paragraphs with and without surrounding prose', () => {
@@ -634,7 +637,119 @@ check('prepareClipboardDom unwraps section blocks nested inside paragraphs with 
       );
       assert.equal(q(box4, 'p').style.color, 'rgb(18, 52, 86)');
       assert.equal(q(box4, 'p').style.backgroundColor, 'rgb(255, 255, 255)');
+
+      // G1/G3 regressions: CSS counter prototype, quote-aware fallback, WeChat copy loose prose & p>strong>section,
+      // and CSS Color 4 (oklch / oklab / display-p3 / angle units) dark-preview detection.
+      const box5 = document.createElement('section');
+      box5.id = 'mdstudio';
+      box5.innerHTML = '<p style="margin-top: 24px">Text</p><a href="a;b">Link</a>';
+      engine.inlineCss(
+        box5,
+        '#mdstudio p::before { content: counter(toString); } #mdstudio p { margin: 8px; background-image: linear-gradient(red, blue); background-image: url("https://evil.example/x.png"); } #mdstudio a[href="a;b"] { color: #010203; }',
+      );
+      assert.equal(box5.querySelector('[data-mdstudio-pseudo="before"]')?.textContent, '0');
+      assert.equal(
+        q(box5, 'p').style.marginTop,
+        '24px',
+        'shorthand rule does not clobber pre-existing inline longhand',
+      );
+      assert.ok(
+        q(box5, 'p').style.backgroundImage.includes('linear-gradient'),
+        'blocked URL preserves earlier valid fallback',
+      );
+      assert.equal(q(box5, 'a').style.color, 'rgb(1, 2, 3)', 'semicolon inside attribute value parses cleanly');
+
+      const clipHost = document.createElement('section');
+      clipHost.innerHTML =
+        '<ul><li><p>First</p><ul><li>Child</li></ul><p>After child</p></li></ul>' +
+        '<p><strong>Bold <section class="mdstudio-math-block">M</section> end</strong></p>';
+      prepareClipboardDom(clipHost);
+      const textSeq = clipHost.textContent || '';
+      assert.ok(
+        textSeq.indexOf('Child') < textSeq.indexOf('After child'),
+        'loose list trailing prose remains after hoisted nested list',
+      );
+      assert.equal(clipHost.querySelector('p section'), null, 'descendant p > strong > section is unwrapped cleanly');
     });
+
+    const origGetComputedStyle = window.getComputedStyle.bind(window);
+    window.getComputedStyle = ((el: Element, pseudo?: string | null) => {
+      const base = origGetComputedStyle(el, pseudo);
+      const customBg = (el as HTMLElement).dataset?.testBg;
+      const customColor = (el as HTMLElement).dataset?.testColor;
+      if (!customBg && !customColor) return base;
+      return new Proxy(base, {
+        get(target, prop) {
+          if (prop === 'backgroundColor' && customBg) return customBg;
+          if (prop === 'color' && customColor) return customColor;
+          const v = Reflect.get(target, prop, target);
+          return typeof v === 'function' ? v.bind(target) : v;
+        },
+      });
+    }) as typeof window.getComputedStyle;
+    const oklchHost = document.createElement('div');
+    document.body.appendChild(oklchHost);
+    try {
+      // Already-dark oklch root skips mp-darkmode (no js_darkmode_style__ injected)
+      oklchHost.innerHTML =
+        '<section id="mdstudio" data-test-bg="oklch(18% 0.02 0.72turn)" data-test-color="oklab(0.92 -0.01 0.01 / 95%)"><p>Dark</p></section>';
+      const skippedDark = await applyDarkPreview(oklchHost);
+      assert.equal(skippedDark, true, 'already-dark oklch root returns true without error');
+      assert.equal(
+        document.querySelectorAll('style[id^="js_darkmode_style__"]').length,
+        0,
+        'already-dark oklch root skips mp-darkmode stylesheet injection',
+      );
+      // Light root with CSS Color 4 children (display-p3, oklab, oklch rad/grad) + translucent glass surface
+      oklchHost.innerHTML =
+        '<section id="mdstudio" style="background-color: #ffffff; color: #1f2328">' +
+        '<blockquote data-test-bg="rgba(255, 255, 255, 12%)" data-test-color="color(display-p3 0.9 0.9 0.9)">Glass</blockquote>' +
+        '<p data-test-bg="oklch(0.22 0.02 2rad)" data-test-color="oklch(0.9 0.01 200grad)">Rad</p>' +
+        '<span data-test-bg="oklab(92% 0.01 0.01)" data-test-color="oklab(20% -0.01 0.01)">Lab</span>' +
+        '</section>';
+      const appliedLight = await applyDarkPreview(oklchHost);
+      assert.equal(appliedLight, true, 'light root with CSS Color 4 children darkens cleanly');
+      assert.equal(
+        oklchHost.querySelector<HTMLElement>('blockquote')?.style.backgroundColor.includes('color-mix'),
+        false,
+        'translucent glass surface is not flattened to opaque dark hex',
+      );
+      // CSS Color 4 powerless `none` hue + scientific notation alpha + grad vs rad angle precedence
+      assert.ok(Math.abs(alphaOf('color(srgb 1 1 1 / 1e-5)') - 1e-5) < 1e-8, 'alphaOf parses scientific notation');
+      oklchHost.innerHTML = '<section id="mdstudio" data-test-bg="oklch(0.18 0 none)"><p>Achromatic</p></section>';
+      assert.equal(await applyDarkPreview(oklchHost), true);
+      assert.equal(
+        document.querySelectorAll('style[id^="js_darkmode_style__"]').length,
+        0,
+        'achromatic dark oklch(0.18 0 none) root skips mp-darkmode',
+      );
+      // Stylesheet !important shorthand beats non-important inline longhand + :is(:nth-child) specificity
+      assert.equal(
+        engine.selectorSpecificity(':is(p:nth-child(1), li:nth-child(2))'),
+        11,
+        ':nth-child inside :is() takes max branch specificity, not sum',
+      );
+      const impBox = document.createElement('section');
+      impBox.id = 'mdstudio';
+      impBox.innerHTML = '<p style="margin-top: 10px">Imp</p>';
+      engine.inlineCss(impBox, '#mdstudio p { margin: 0 !important; }');
+      assert.equal(
+        q(impBox, 'p').style.marginTop,
+        '0px',
+        'stylesheet !important shorthand beats non-important inline longhand',
+      );
+      // Ordered list start preserved across nested task list split + explicit stroke="none" preserved
+      const olTask = document.createElement('section');
+      olTask.innerHTML =
+        '<ol><li>First<ul class="mdstudio-task-list"><li class="mdstudio-task">Done</li></ul></li><li>Second</li></ol>' +
+        '<span class="mdstudio-math"><svg><g stroke="red"><path fill="none" stroke="none" d="M0 0"/></g></svg></span>';
+      prepareClipboardDom(olTask);
+      assert.equal(olTask.querySelectorAll('ol')[1]?.getAttribute('start'), '2', 'split <ol> preserves start="2"');
+      assert.equal(olTask.querySelector('path')?.getAttribute('stroke'), 'none', 'explicit stroke="none" is preserved');
+    } finally {
+      window.getComputedStyle = origGetComputedStyle;
+      oklchHost.remove();
+    }
   } finally {
     for (const [key, prev] of saved.entries()) {
       if (prev === undefined) delete (globalThis as Record<string, unknown>)[key];

@@ -91,16 +91,18 @@ function renderInstructionsSurface(
   editorKey: string,
   value: string,
   readOnly: boolean,
+  cmFailed: boolean,
   placeholderText: string,
   ariaLabel: string,
   onChange: (next: string) => void,
   onKeyDown: (event: ReactNamespace.KeyboardEvent<HTMLElement>) => void,
+  onCmError: () => void,
 ): ReactNode {
   const h = React.createElement;
   if (readOnly) {
     return h('pre', { className: 'mdstudio-skill-readonly', tabIndex: 0, 'aria-label': ariaLabel }, value);
   }
-  const useCm = typeof window !== 'undefined' && typeof window.ResizeObserver === 'function';
+  const useCm = !cmFailed && typeof window !== 'undefined' && typeof window.ResizeObserver === 'function';
   if (useCm) {
     return h(
       'div',
@@ -115,6 +117,7 @@ function renderInstructionsSurface(
           ariaLabel,
           enableHistory: true,
         },
+        onError: onCmError,
         onChange,
         onKeyDown,
       }),
@@ -158,6 +161,7 @@ function renderSkillTabItem(
       'aria-controls': 'mdstudio-skill-panel',
       tabIndex: selected ? 0 : -1,
       className: 'mdstudio-skill-item' + (selected ? ' is-active' : ''),
+      title: item.name,
       onClick: function () {
         onSelect(item);
       },
@@ -297,12 +301,15 @@ function SkillManagerDialogContent(props: SkillManagerDialogProps): ReactNode {
     ),
   );
   const [editorEpoch, setEditorEpoch] = React.useState(0);
+  const [cmFailed, setCmFailed] = React.useState(false);
   useDebouncedKeyTask(React, (form.selectedId || '__draft__') + ':' + editorEpoch, 0, props.open, function () {
     if (mainRef.current) mainRef.current.scrollTop = 0;
   });
 
   const currentSkill = form.selectedId ? props.skills.find((s) => s.id === form.selectedId) || null : null;
   const isBuiltin = Boolean(currentSkill?.builtin);
+  const normalizedDraft = isBuiltin ? null : normalizePastedDraft(form, '');
+  const canSaveDraft = Boolean(normalizedDraft && normalizedDraft.name && normalizedDraft.instructions);
   const closeLabel = t('close');
 
   function selectExisting(item: WritingSkill): void {
@@ -510,6 +517,7 @@ function SkillManagerDialogContent(props: SkillManagerDialogProps): ReactNode {
         'skill-ed-' + editorEpoch,
         form.instructions,
         isBuiltin,
+        cmFailed,
         t('ai.skillBodyPlaceholder'),
         t('ai.skillBodyLabel'),
         function (next) {
@@ -518,12 +526,15 @@ function SkillManagerDialogContent(props: SkillManagerDialogProps): ReactNode {
           });
         },
         onEditorKeyDown,
+        function () {
+          setCmFailed(true);
+        },
       ),
     ),
     h(
       'div',
       { className: 'mdstudio-skill-foot' },
-      h('span', { className: 'mdstudio-skill-foot-hint' }, t('ai.localOnlyHint')),
+      h('span', { className: 'mdstudio-skill-foot-hint', title: t('ai.localOnlyHint') }, t('ai.localOnlyHint')),
       h(
         'div',
         { className: 'mdstudio-skill-foot-actions' },
@@ -558,7 +569,7 @@ function SkillManagerDialogContent(props: SkillManagerDialogProps): ReactNode {
               {
                 variant: 'primary',
                 size: 'sm',
-                disabled: !form.name.trim() || !form.instructions.trim(),
+                disabled: !canSaveDraft,
                 onClick: handleSave,
               },
               t('ai.saveSkillBtn'),

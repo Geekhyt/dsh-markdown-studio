@@ -94,11 +94,18 @@ function errorText(error: unknown): string {
 }
 
 function viewBoxSize(viewBox: number[], index: number): number {
-  return viewBox.length === 4 && viewBox[index] > 0 ? viewBox[index] : 0;
+  return viewBox.length === 4 && Number.isFinite(viewBox[index]) && viewBox[index] > 0 ? viewBox[index] : 0;
+}
+
+export function parseAbsoluteSvgLength(raw: string | null): number {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed || /%$/.test(trimmed)) return 0;
+  const parsed = Number.parseFloat(trimmed);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
 function parseSvgDimension(root: Element, viewBox: number[], name: string, index: number, fallback: number): number {
-  return viewBoxSize(viewBox, index) || Number.parseFloat(String(root.getAttribute(name))) || fallback;
+  return viewBoxSize(viewBox, index) || parseAbsoluteSvgLength(root.getAttribute(name)) || fallback;
 }
 
 function svgToPng(svg: string, background: string): Promise<string> {
@@ -106,9 +113,8 @@ function svgToPng(svg: string, background: string): Promise<string> {
     try {
       const documentNode = new DOMParser().parseFromString(svg, 'image/svg+xml');
       const root = documentNode.documentElement;
-      const viewBox = String(root.getAttribute('viewBox') || '')
-        .split(/[\s,]+/)
-        .map(Number);
+      const rawViewBox = String(root.getAttribute('viewBox') || '').trim();
+      const viewBox = rawViewBox ? rawViewBox.split(/[\s,]+/).map(Number) : [];
       const width = parseSvgDimension(root, viewBox, 'width', 2, 800);
       const height = parseSvgDimension(root, viewBox, 'height', 3, 600);
       root.setAttribute('width', String(width));

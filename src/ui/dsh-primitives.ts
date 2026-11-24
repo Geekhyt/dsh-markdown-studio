@@ -94,15 +94,16 @@ function isMenuLabel(entry: DshMenuEntry): entry is { type: 'label'; id: string;
 }
 
 function nextMenuIndex(key: string, current: number, total: number): number {
-  if (key === 'ArrowDown') return (current + 1) % total;
-  if (key === 'ArrowUp') return (current - 1 + total) % total;
+  if (total <= 0) return -1;
+  if (key === 'ArrowDown') return current < 0 ? 0 : (current + 1) % total;
+  if (key === 'ArrowUp') return current < 0 ? total - 1 : (current - 1 + total) % total;
   if (key === 'Home') return 0;
   if (key === 'End') return total - 1;
   return -1;
 }
 
 const FOCUSABLE_SELECTOR =
-  'button:not([disabled]):not([tabindex="-1"]), input:not([type="hidden"]):not([disabled]):not([tabindex="-1"]), select:not([disabled]):not([tabindex="-1"]), textarea:not([disabled]):not([tabindex="-1"]), [tabindex]:not([tabindex="-1"])';
+  'button:not([disabled]):not([tabindex="-1"]), a[href]:not([tabindex="-1"]), input:not([type="hidden"]):not([disabled]):not([tabindex="-1"]), select:not([disabled]):not([tabindex="-1"]), textarea:not([disabled]):not([tabindex="-1"]), [contenteditable]:not([contenteditable="false"]):not([tabindex="-1"]), [tabindex]:not([tabindex="-1"])';
 
 export function getFocusableElements(container: HTMLElement): HTMLElement[] {
   return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter((element) => {
@@ -120,7 +121,11 @@ export function getFocusableElements(container: HTMLElement): HTMLElement[] {
 export function trapModalTab(event: ReactNamespace.KeyboardEvent<HTMLElement>): void {
   if (event.key !== 'Tab') return;
   const focusable = getFocusableElements(event.currentTarget);
-  if (!focusable.length) return;
+  if (!focusable.length) {
+    event.preventDefault();
+    event.currentTarget.focus();
+    return;
+  }
   const first = focusable[0];
   const last = focusable[focusable.length - 1];
   const onContainer = document.activeElement === event.currentTarget;
@@ -151,6 +156,8 @@ function withInputRef(
 type TipAnchor = {
   left: number;
   top: number;
+  anchorLeft: number;
+  anchorRight: number;
   anchorTop: number;
   anchorBottom: number;
   side?: 'right' | 'bottom' | 'top';
@@ -182,9 +189,24 @@ function alignFixedTooltip(el: HTMLSpanElement | null, tip: TipAnchor): void {
   if (!rect.width) return;
   const vw = window.innerWidth || 1024;
   const vh = window.innerHeight || 768;
+  const height = rect.height || 26;
+  if (tip.side === 'right') {
+    let desiredLeft = tip.anchorRight + 8;
+    if (desiredLeft + rect.width > vw - 8 && tip.anchorLeft - rect.width - 8 >= 8) {
+      desiredLeft = tip.anchorLeft - rect.width - 8;
+    }
+    desiredLeft = Math.min(Math.max(desiredLeft, 8), Math.max(8, vw - rect.width - 8));
+    const desiredTop = Math.min(
+      Math.max((tip.anchorTop + tip.anchorBottom - height) / 2, 8),
+      Math.max(8, vh - height - 8),
+    );
+    el.style.left = Math.round(desiredLeft) + 'px';
+    el.style.top = Math.round(desiredTop) + 'px';
+    return;
+  }
   const half = rect.width / 2;
   const clampedCenter = Math.min(Math.max(tip.left, half + 8), Math.max(half + 8, vw - half - 8));
-  const desiredTop = computeTooltipTop(tip.anchorTop, tip.anchorBottom, rect.height || 26, vh, tip.side === 'top');
+  const desiredTop = computeTooltipTop(tip.anchorTop, tip.anchorBottom, height, vh, tip.side === 'top');
   const shiftX = Math.round(clampedCenter - (rect.left + half));
   const shiftY = Math.round(desiredTop - rect.top);
   const baseLeft = Number.parseFloat(el.style.left);
@@ -342,9 +364,22 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
       if (dismissActiveTip && dismissActiveTip !== closeSelf) dismissActiveTip();
       dismissActiveTip = closeSelf;
       const rect = target.getBoundingClientRect();
-      const left = rect.left + rect.width / 2;
-      const top = props.side === 'top' ? Math.max(8, rect.top - 34) : rect.bottom + 8;
-      setTip({ left, top, anchorTop: rect.top, anchorBottom: rect.bottom, side: props.side });
+      const left = props.side === 'right' ? rect.right + 8 : rect.left + rect.width / 2;
+      const top =
+        props.side === 'right'
+          ? Math.max(8, rect.top)
+          : props.side === 'top'
+            ? Math.max(8, rect.top - 34)
+            : rect.bottom + 8;
+      setTip({
+        left,
+        top,
+        anchorLeft: rect.left,
+        anchorRight: rect.right,
+        anchorTop: rect.top,
+        anchorBottom: rect.bottom,
+        side: props.side,
+      });
     };
     const hide = function (): void {
       if (dismissActiveTip === closeSelf) dismissActiveTip = null;
@@ -384,7 +419,7 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
                 ref: function (el: HTMLSpanElement | null): void {
                   alignFixedTooltip(el, tip);
                 },
-                className: 'mdstudio-tooltip',
+                className: tip.side === 'right' ? 'mdstudio-tooltip is-side-right' : 'mdstudio-tooltip',
                 role: 'tooltip',
                 style: { left: tip.left, top: tip.top, ...(props.maxWidth ? { maxWidth: props.maxWidth } : {}) },
               },
@@ -617,10 +652,11 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
     anchorEl: HTMLElement | null,
     align?: 'start' | 'end',
     side?: 'top' | 'bottom' | 'right',
+    getAnchorRect?: () => DOMRect | null,
   ): void {
-    if (!anchorEl || typeof window === 'undefined') return;
-    const rect = anchorEl.getBoundingClientRect();
-    if (!rect.width && !rect.height) return;
+    if (typeof window === 'undefined') return;
+    const rect = getAnchorRect?.() || (anchorEl ? anchorEl.getBoundingClientRect() : null);
+    if (!rect || (!rect.width && !rect.height)) return;
     const vw = window.innerWidth || 1024;
     const vh = window.innerHeight || 768;
     const menuWidth = menuEl.offsetWidth || 244;
@@ -634,19 +670,20 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
     menuEl.style.left = Math.round(left) + 'px';
     menuEl.style.right = 'auto';
     if (side === 'right') {
-      menuEl.style.top = Math.round(Math.min(Math.max(rect.top, pad), Math.max(pad, vh - 180))) + 'px';
+      const clampedTop = Math.min(Math.max(rect.top, pad), Math.max(pad, vh - 120));
+      menuEl.style.top = Math.round(clampedTop) + 'px';
       menuEl.style.bottom = 'auto';
-      menuEl.style.maxHeight = Math.min(640, Math.max(120, Math.round(vh - rect.top - 12))) + 'px';
+      menuEl.style.maxHeight = Math.min(640, Math.max(72, Math.round(vh - clampedTop - 12))) + 'px';
       return;
     }
     if (openAbove) {
       menuEl.style.top = 'auto';
       menuEl.style.bottom = Math.round(vh - rect.top + 4) + 'px';
-      menuEl.style.maxHeight = Math.min(640, Math.max(120, Math.round(spaceAbove - 4))) + 'px';
+      menuEl.style.maxHeight = Math.min(640, Math.max(72, Math.min(vh - 16, Math.round(spaceAbove - 4)))) + 'px';
     } else {
       menuEl.style.top = Math.round(rect.bottom + 4) + 'px';
       menuEl.style.bottom = 'auto';
-      menuEl.style.maxHeight = Math.min(640, Math.max(120, Math.round(spaceBelow - 4))) + 'px';
+      menuEl.style.maxHeight = Math.min(640, Math.max(72, Math.min(vh - 16, Math.round(spaceBelow - 4)))) + 'px';
     }
   }
 
@@ -659,7 +696,13 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
       const el = menuElRef.current;
       if (!el) return;
       if (event && event.type === 'scroll' && event.target === el) return;
-      positionFixedMenu(el, panelProps.wrapRef.current || el.parentElement, panelProps.align, panelProps.side);
+      positionFixedMenu(
+        el,
+        panelProps.wrapRef.current || el.parentElement,
+        panelProps.align,
+        panelProps.side,
+        panelProps.getAnchorRect,
+      );
     };
     const closeAndFocusTrigger = function (): void {
       panelProps.onClose();
@@ -687,14 +730,20 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
       function (el: HTMLDivElement | null): void {
         menuElRef.current = el;
         if (!el) return;
-        positionFixedMenu(el, panelProps.wrapRef.current || el.parentElement, panelProps.align, panelProps.side);
+        positionFixedMenu(
+          el,
+          panelProps.wrapRef.current || el.parentElement,
+          panelProps.align,
+          panelProps.side,
+          panelProps.getAnchorRect,
+        );
         if (panelProps.autoFocus !== false && !focusedOnOpenRef.current) {
           focusedOnOpenRef.current = true;
           const first = el.querySelector<HTMLElement>('[role="menuitem"]:not([disabled])');
           if (first) first.focus();
         }
       },
-      [panelProps.align, panelProps.side, panelProps.autoFocus, panelProps.wrapRef],
+      [panelProps.align, panelProps.side, panelProps.autoFocus, panelProps.wrapRef, panelProps.getAnchorRect],
     );
     const onMenuKeyDown = function (event: ReactNamespace.KeyboardEvent<HTMLDivElement>): void {
       if (event.key === 'Tab') {

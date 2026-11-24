@@ -201,7 +201,7 @@ studioPlugin.apply({
     },
   },
 });
-assert.deepEqual(studioLocaleRegistrations.map((entry) => entry.id).sort(), ['en', 'zh']);
+assert.deepEqual(studioLocaleRegistrations.map((entry) => entry.id).sort(), ['en', 'zh', 'zh-CN']);
 assert.equal(studioLocaleRegistrations.find((entry) => entry.id === 'zh')?.dict.copy, '复制到公众号');
 assert.equal(studioLocaleRegistrations.find((entry) => entry.id === 'en')?.dict.copy, 'Copy for WeChat');
 

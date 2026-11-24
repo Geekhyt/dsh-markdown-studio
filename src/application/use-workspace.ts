@@ -27,7 +27,7 @@ export interface WorkspaceApi {
   state: WorkspaceState;
   openFolder: () => Promise<void>;
   pickFolder: () => Promise<void>;
-  openEntry: (entry: WorkspaceFile) => Promise<void>;
+  openEntry: (entry: WorkspaceFile) => Promise<boolean>;
   refresh: () => Promise<void>;
   createFile: (directoryPath: string, name: string) => Promise<void>;
   createDirectory: (directoryPath: string, name: string) => Promise<void>;
@@ -262,14 +262,21 @@ async function renameFileTwoHop(
 ): Promise<void> {
   const tmpName = makeTempEntryName('file');
   await copyFileSafe(directory, tmpName, data);
+  let safeToCleanTmp = false;
   try {
     await directory.removeEntry(oldName);
     await copyFileSafe(directory, nextName, data);
+    safeToCleanTmp = true;
   } catch (error) {
-    await copyFileSafe(directory, oldName, data).catch(() => undefined);
+    try {
+      await copyFileSafe(directory, oldName, data);
+      safeToCleanTmp = true;
+    } catch {
+      /* keep tmpName on disk as last intact recovery copy */
+    }
     throw error;
   } finally {
-    await directory.removeEntry(tmpName).catch(() => undefined);
+    if (safeToCleanTmp) await directory.removeEntry(tmpName).catch(() => undefined);
   }
 }
 
@@ -280,14 +287,21 @@ async function renameDirectoryTwoHop(
 ): Promise<void> {
   const tmpName = makeTempEntryName('dir');
   const tmpHandle = await copyDirectoryToName(parent, entry.handle, tmpName);
+  let safeToCleanTmp = false;
   try {
     await parent.removeEntry(entry.name, { recursive: true });
     await copyDirectoryToName(parent, tmpHandle, nextName);
+    safeToCleanTmp = true;
   } catch (error) {
-    await copyDirectoryToName(parent, tmpHandle, entry.name).catch(() => undefined);
+    try {
+      await copyDirectoryToName(parent, tmpHandle, entry.name);
+      safeToCleanTmp = true;
+    } catch {
+      /* keep tmpName on disk as last intact recovery copy */
+    }
     throw error;
   } finally {
-    await parent.removeEntry(tmpName, { recursive: true }).catch(() => undefined);
+    if (safeToCleanTmp) await parent.removeEntry(tmpName, { recursive: true }).catch(() => undefined);
   }
 }
 
@@ -397,7 +411,7 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
     }
   }
 
-  async function openEntry(entry: WorkspaceFile): Promise<void> {
+  async function openEntry(entry: WorkspaceFile): Promise<boolean> {
     const req = ++openGenRef.current;
     try {
       const root = rootRef.current;
@@ -405,18 +419,20 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
       const directory = await resolveDirectory(root, parentPath(entry.path));
       const file = await entry.handle.getFile();
       const text = await file.text();
-      if (req !== openGenRef.current) return;
+      if (req !== openGenRef.current) return false;
       const opened = await options.onOpenFile(directory, entry, text, file);
-      if (req !== openGenRef.current || opened === false) return;
+      if (req !== openGenRef.current || opened === false) return false;
       dialogOpenRef.current = false;
       setState(function (prev) {
         return Object.assign({}, prev, { open: false });
       });
       options.notify(options.t('file.opened'));
+      return true;
     } catch (error) {
       if (req === openGenRef.current) {
         options.notify(options.t('file.openFailed') + ' · ' + errorMessage(error), 'error');
       }
+      return false;
     }
   }
 

@@ -19,11 +19,12 @@ import {
   computePaneVisibility,
   effectiveBubbleVisible,
   hasSurfaceModal,
+  initialStudioShellState,
   initialStudioSurfaceState,
   isFullscreenDrawer,
   isParentModalOpen,
-  resolveDocumentEscapeAction,
-  resolveWindowEscapeAction,
+  reduceStudioShellState,
+  resolveStudioEscape,
   shouldApplyAiPreview,
   shouldKeepDrawerOnNavigation,
   stepStudioSurface,
@@ -351,31 +352,22 @@ assert.ok(studioReport.states >= 500, `explored rich studio overlay state space 
     'full-screen drawer suppresses floating SelectionBubble',
   );
   assert.equal(
-    resolveDocumentEscapeAction({
+    resolveStudioEscape({
       hasModal: false,
       menuOpen: false,
       outlineOpen: false,
       slashOpen: false,
       drawerOpen: true,
       inDrawer: false,
+      inEditor: true,
       showMarkdownEditor: true,
       searchOpen: true,
       hasAiSession: false,
       fullscreenDrawer: true,
-    }),
-    'none',
-    'document Esc defers to full-screen drawer before hidden background SearchBar',
-  );
-  assert.equal(
-    resolveWindowEscapeAction({
-      hasModal: false,
-      menuOpen: false,
-      drawerOpen: true,
-      inEditor: true,
-      fullscreenDrawer: true,
+      immersive: null,
     }),
     'close-drawer',
-    'Esc closes full-screen drawer even when focus is inside background editor',
+    'Esc closes full-screen drawer ahead of hidden background SearchBar even when focus is inside editor',
   );
   s = initialStudioSurfaceState(true);
   s = stepStudioSurface(s, { type: 'TOGGLE_DRAWER' });
@@ -392,6 +384,83 @@ assert.ok(studioReport.states >= 500, `explored rich studio overlay state space 
   assert.equal(s.drawerOpen, false, 'first Esc closes full-screen drawer ahead of hidden search bar');
   assert.equal(s.searchOpen, true, 'background search survives full-screen drawer dismissal');
   assert.deepEqual(checkStudioSurfaceInvariants(s), []);
+
+  // 13. Runtime StudioShellState reducer & unified resolveStudioEscape coverage
+  let sh = initialStudioShellState();
+  assert.equal(sh.drawerOpen, false);
+  sh = reduceStudioShellState(sh, { type: 'CLOSE_DRAWER' });
+  assert.equal(sh.drawerOpen, false);
+  sh = reduceStudioShellState(sh, { type: 'TOGGLE_DRAWER' });
+  assert.equal(sh.drawerOpen, true);
+  assert.equal(sh.drawerTab, 'theme');
+  sh = reduceStudioShellState(sh, { type: 'SET_DRAWER_TAB', tab: 'help' });
+  assert.equal(sh.drawerTab, 'help');
+  assert.equal(reduceStudioShellState(sh, { type: 'SET_DRAWER_TAB', tab: 'help' }), sh);
+  sh = reduceStudioShellState(sh, { type: 'OPEN_DRAWER_TAB', tab: 'help' });
+  assert.equal(sh.drawerNavSeq, 1);
+  sh = reduceStudioShellState(sh, { type: 'TOGGLE_OUTLINE' });
+  assert.equal(sh.outlineOpen, true);
+  sh = reduceStudioShellState(sh, { type: 'SET_MENU_OPEN', open: true });
+  assert.equal(sh.menuOpen, true);
+  assert.equal(sh.outlineOpen, false, 'opening header menu clears outline');
+  assert.equal(reduceStudioShellState(sh, { type: 'SET_MENU_OPEN', open: true }), sh);
+  sh = reduceStudioShellState(sh, { type: 'SET_OUTLINE_OPEN', open: false });
+  sh = reduceStudioShellState(sh, { type: 'OPEN_CSS_WORKBENCH', targetId: 'custom:1', draftCss: 'p{color:red}' });
+  assert.equal(sh.cssWorkbench.open, true);
+  assert.equal(sh.drawerOpen, false, 'opening CSS workbench clears drawer');
+  assert.equal(sh.menuOpen, false, 'opening CSS workbench clears menu');
+  sh = reduceStudioShellState(sh, { type: 'SET_LIVE_CSS_DRAFT', css: 'p{color:blue}' });
+  assert.equal(sh.liveCssDraft, 'p{color:blue}');
+  assert.equal(reduceStudioShellState(sh, { type: 'SET_LIVE_CSS_DRAFT', css: 'p{color:blue}' }), sh);
+  sh = reduceStudioShellState(sh, { type: 'ENTER_IMMERSIVE', mode: 'write' });
+  assert.equal(sh.immersive, 'write');
+  assert.equal(sh.cssWorkbench.open, false, 'entering immersive clears CSS workbench');
+  assert.equal(sh.liveCssDraft, '');
+  sh = reduceStudioShellState(sh, { type: 'SWITCH_IMMERSIVE', mode: 'preview' });
+  assert.equal(sh.immersive, 'preview');
+  sh = reduceStudioShellState(sh, { type: 'EXIT_IMMERSIVE' });
+  assert.equal(sh.immersive, null);
+  sh = reduceStudioShellState(sh, { type: 'CLOSE_CSS_WORKBENCH' });
+  sh = reduceStudioShellState(sh, { type: 'DISMISS_TRANSIENT', keepDrawer: true, keepMenu: true });
+  assert.ok(sh.overlayEpoch > 0);
+  assert.equal(
+    resolveStudioEscape({
+      hasModal: false,
+      hasDomMenu: true,
+      menuOpen: false,
+      drawerOpen: true,
+      fullscreenDrawer: false,
+      inDrawer: false,
+      inEditor: false,
+      showMarkdownEditor: true,
+      slashOpen: false,
+      outlineOpen: true,
+      searchOpen: false,
+      hasAiSession: false,
+      immersive: null,
+    }),
+    'none',
+    'portaled DOM menu yields to menu own Escape handler ahead of outline/drawer',
+  );
+  assert.equal(
+    resolveStudioEscape({
+      hasModal: false,
+      hasDomMenu: true,
+      menuOpen: true,
+      drawerOpen: true,
+      fullscreenDrawer: false,
+      inDrawer: false,
+      inEditor: false,
+      showMarkdownEditor: true,
+      slashOpen: false,
+      outlineOpen: false,
+      searchOpen: false,
+      hasAiSession: false,
+      immersive: null,
+    }),
+    'close-menu',
+    'header menu closes directly even when rendered with role=menu',
+  );
 
   // Negative self-tests: prove every invariant predicate fires on broken synthetic states (non-vacuity)
   const base = initialStudioSurfaceState(false);

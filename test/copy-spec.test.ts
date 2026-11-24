@@ -10,6 +10,8 @@ Object.defineProperty(globalThis, 'document', { configurable: true, value: dom.w
 Object.defineProperty(globalThis, 'HTMLElement', { configurable: true, value: dom.window.HTMLElement });
 Object.defineProperty(globalThis, 'NodeFilter', { configurable: true, value: dom.window.NodeFilter });
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+Object.defineProperty(globalThis, 'DOMParser', { configurable: true, value: dom.window.DOMParser });
+Object.defineProperty(globalThis, 'XMLSerializer', { configurable: true, value: dom.window.XMLSerializer });
 
 const forbidden = [
   [/!important/i, '!important'],
@@ -468,13 +470,69 @@ console.log('v2 editorial blocks (meta, tldr, pull, caption, sign) pass WeChat p
   // Real MathJax chunk: the TeX `html` extension (\href, \style, \class, \cssId) must stay
   // disabled so formulas can never smuggle `javascript:` links or page-wide styles into the
   // DSH preview, exported HTML or the WeChat clipboard.
-  const { render } = await import('../src/math-entry');
+  const { render, stripSvgLinks } = await import('../src/math-entry');
   const svg = render('\\href{javascript:alert(1)}{x} + \\style{position:fixed;inset:0}{y} + \\frac{a}{b}', false);
   const body = svg.replace(/aria-label="[^"]*"/, '');
   assert.equal(/<a[\s>]/i.test(body), false, 'formula SVG contains no anchors');
   assert.equal(/javascript:/i.test(body), false, 'formula SVG carries no javascript: URL');
   assert.equal(body.includes('position:fixed'), false, 'formula SVG carries no injected styles');
   assert.ok(body.includes('data-mml-node="mfrac"'), 'ordinary TeX still renders');
+
+  // Direct defense-in-depth check on stripSvgLinks (namespaced xlink:href, <image>, <script>)
+  const svgDoc = new JSDOM(
+    '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"></svg>',
+    {
+      contentType: 'image/svg+xml',
+    },
+  ).window.document;
+  const svgRoot = svgDoc.documentElement;
+  const badUse = svgDoc.createElementNS('http://www.w3.org/2000/svg', 'use');
+  badUse.setAttribute('href', 'https://evil.example/x.svg#a');
+  badUse.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', 'javascript:alert(1)');
+  const goodUse = svgDoc.createElementNS('http://www.w3.org/2000/svg', 'use');
+  goodUse.setAttribute('href', '#local-glyph');
+  const badImg = svgDoc.createElementNS('http://www.w3.org/2000/svg', 'image');
+  const badScript = svgDoc.createElementNS('http://www.w3.org/2000/svg', 'script');
+  svgRoot.append(badUse, goodUse, badImg, badScript);
+  stripSvgLinks(svgRoot);
+  assert.equal(badUse.getAttribute('href'), null, 'stripSvgLinks strips external href on <use>');
+  assert.equal(badUse.getAttributeNS('http://www.w3.org/1999/xlink', 'href'), null, 'strips namespaced xlink:href');
+  assert.equal(goodUse.getAttribute('href'), '#local-glyph', 'preserves local #fragment <use> href');
+  assert.equal(svgRoot.querySelector('image, script'), null, 'drops <image> and <script> elements');
+
+  // Mermaid 11 @{ img } directive stripping & DOM SVG sanitization + SVG absolute length parser
+  const { stripMermaidImageDirectives, sanitizeMermaidSvg } = await import('../src/mermaid-entry');
+  const cleanedSrc = stripMermaidImageDirectives(
+    'flowchart TD\nA@{ img: "https://evil.example/p.png", label: "Step 1, img: safe {a, b}" } --> B\nC@{\n  shape: rect\n  img: "https://evil.example/multiline.png"\n}',
+  );
+  assert.equal(
+    cleanedSrc.includes('evil.example'),
+    false,
+    'stripMermaidImageDirectives removes inline & multiline img SSRF URLs',
+  );
+  assert.ok(
+    cleanedSrc.includes('label: "Step 1, img: safe {a, b}"') && cleanedSrc.includes('shape: rect'),
+    'stripMermaidImageDirectives preserves quoted commas/braces/img text and multiline shape',
+  );
+  const cleanedSvg = sanitizeMermaidSvg(
+    '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><style>.a{background:url(https://evil.example/t.png);color:red}</style><script>alert(1)</script><image href="https://evil.example/x.png"/><a href="javascript:alert(1)"><text onclick="alert(1)" style="background:url(https://evil.example/s.png);color:red" fill="url(https://evil.example/f.svg#x)">Hi</text></a><use href="https://evil.example/u.svg#x" xlink:href="javascript:alert(1)"/><use href="#ok"/></svg>',
+  );
+  assert.equal(cleanedSvg.includes('evil.example'), false, 'sanitizeMermaidSvg strips all external URLs');
+  assert.equal(
+    /<script|<image|<a\b|onclick/i.test(cleanedSvg),
+    false,
+    'sanitizeMermaidSvg strips scripts, images, links, handlers',
+  );
+  assert.ok(
+    cleanedSvg.includes('#ok') && cleanedSvg.includes('Hi'),
+    'sanitizeMermaidSvg preserves local #use and text',
+  );
+
+  const { parseAbsoluteSvgLength } = await import('../src/application/use-mermaid-assets');
+  assert.equal(parseAbsoluteSvgLength('100%'), 0, 'percentage SVG length falls back cleanly');
+  assert.equal(parseAbsoluteSvgLength('420px'), 420, 'pixel SVG length parses cleanly');
+  assert.equal(parseAbsoluteSvgLength('-10'), 0, 'negative SVG length is rejected');
+
   delete dom.window.__MDSTUDIO_MATH__;
-  console.log('MathJax chunk rejects \\href / \\style injection.');
+  console.log('MathJax & Mermaid sanitization checks passed.');
 }

@@ -19,7 +19,9 @@ export interface WechatHtmlIssue {
   message: string;
 }
 
-const PATTERN_RULES: ReadonlyArray<readonly ['html' | 'style', RegExp, WechatHtmlIssueCode, string]> = [
+const PATTERN_RULES: ReadonlyArray<
+  readonly ['html' | 'style', RegExp | ((value: string) => boolean), WechatHtmlIssueCode, string]
+> = [
   ['html', /<style\b/i, 'style-tag', '复制 HTML 仍包含 style 标签'],
   ['style', /var\(\s*--/i, 'css-variable', '复制 HTML 仍包含未解析的 CSS 变量'],
   ['style', /calc\(/i, 'css-calc', '复制 HTML 仍包含 calc()，微信可能丢弃'],
@@ -35,7 +37,7 @@ const PATTERN_RULES: ReadonlyArray<readonly ['html' | 'style', RegExp, WechatHtm
     'katex-html',
     '复制 HTML 仍包含 KaTeX HTML，而不是公式 SVG',
   ],
-  ['html', /<li\b[^>]*>(?:(?!<\/li>)[\s\S])*?<(?:ul|ol)\b/i, 'nested-list', '复制 HTML 可能包含嵌套列表'],
+  ['html', hasDirectNestedList, 'nested-list', '复制 HTML 可能包含嵌套列表'],
   ['html', /href\s*=\s*["']#/i, 'fragment-link', '复制 HTML 包含页内锚点链接'],
   [
     'style',
@@ -89,6 +91,28 @@ function stripCodeElementBodies(html: string): string {
  * the local showcase server is a supported product choice, but the user should
  * know that WeChat's servers cannot fetch 127.0.0.1.
  */
+function hasDirectNestedList(html: string): boolean {
+  const stack: string[] = [];
+  const tagRe = /<(\/?)(li|blockquote|section|table|ul|ol)\b[^>]*>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = tagRe.exec(html))) {
+    const closing = Boolean(match[1]);
+    const tag = match[2].toLowerCase();
+    if (!closing) {
+      if ((tag === 'ul' || tag === 'ol') && stack[stack.length - 1] === 'li') return true;
+      stack.push(tag);
+    } else {
+      for (let i = stack.length - 1; i >= 0; i--) {
+        if (stack[i] === tag) {
+          stack.length = i;
+          break;
+        }
+      }
+    }
+  }
+  return false;
+}
+
 export function inspectWechatHtml(html: string): WechatHtmlIssue[] {
   const issues: WechatHtmlIssue[] = [];
   const text = String(html || '');
@@ -97,9 +121,10 @@ export function inspectWechatHtml(html: string): WechatHtmlIssue[] {
   }
   const markupOutsideCode = stripCodeElementBodies(text);
   const inlineStyles = collectInlineStyles(markupOutsideCode);
-  for (const [scope, pattern, code, message] of PATTERN_RULES) {
+  for (const [scope, matcher, code, message] of PATTERN_RULES) {
     const target = scope === 'style' ? inlineStyles : markupOutsideCode;
-    if (pattern.test(target)) issues.push({ code, message });
+    const matched = typeof matcher === 'function' ? matcher(target) : matcher.test(target);
+    if (matched) issues.push({ code, message });
   }
   return issues;
 }

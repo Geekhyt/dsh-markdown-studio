@@ -272,3 +272,74 @@ assert.equal(
   true,
   'incoming custom themes survive even when docs[0] conflict chooses current',
 );
+
+// G4 regressions: prefer='current' preserves local theme CSS, duplicate IDs never drop trash or hijack activeId
+{
+  const localT = { id: 'custom:brand', name: 'Brand', css: 'p { color: #111111; }' };
+  const incT = { id: 'custom:brand', name: 'Brand', css: 'p { color: #ff0000; }' };
+  const curState = {
+    activeId: 'a',
+    docs: [
+      {
+        id: 'a',
+        title: 'A',
+        markdown: 'A',
+        settings: { ...DEFAULT_SETTINGS, customThemes: [localT] },
+        view: 'split' as const,
+        updatedAt: 100,
+      },
+    ],
+    trash: [],
+  };
+  const incState = {
+    activeId: 'a-2',
+    docs: [
+      {
+        id: 'a',
+        title: 'A1',
+        markdown: 'A1',
+        settings: { ...DEFAULT_SETTINGS, customThemes: [incT] },
+        view: 'split' as const,
+        updatedAt: 200,
+      },
+      {
+        id: 'a',
+        title: 'A2-dup',
+        markdown: 'A2-dup',
+        settings: { ...DEFAULT_SETTINGS, customThemes: [incT] },
+        view: 'split' as const,
+        updatedAt: 200,
+      },
+    ],
+    trash: [
+      {
+        id: 'a-2',
+        title: 'Trashed',
+        markdown: 'T',
+        settings: { ...DEFAULT_SETTINGS },
+        view: 'split' as const,
+        updatedAt: 150,
+        deletedAt: 160,
+      },
+    ],
+  };
+  const m = mergeLibraryBackup(curState, incState, 'current');
+  assert.equal(m.docs[0].settings.customThemes?.[0]?.css, localT.css, 'prefer=current preserves local custom theme');
+  assert.ok(
+    m.trash?.some((t) => t.title === 'Trashed'),
+    'deduped incoming doc never drops colliding trash item',
+  );
+
+  const p = parseLibraryBackup({
+    format: 'markdown-studio-library',
+    version: 1,
+    activeId: 'a-2',
+    docs: [
+      { id: 'a', title: 'A1', markdown: '1', updatedAt: Number.POSITIVE_INFINITY },
+      { id: 'a', title: 'A2-dup', markdown: '2', updatedAt: 2 },
+      { id: 'a-2', title: 'Real-A2', markdown: '3', updatedAt: 3 },
+    ],
+  });
+  assert.equal(p?.docs.find((d) => d.id === p.activeId)?.title, 'Real-A2', 'duplicate ID never hijacks activeId');
+  assert.equal(Number.isFinite(p?.docs[0].updatedAt), true, 'non-finite timestamp is sanitized');
+}

@@ -1256,7 +1256,56 @@ const h = React.createElement;
     root?.unmount();
   });
   container.remove();
-  console.log('ok - FallbackModal drag-out scrim guard and FallbackMenuPanel Tab focus trap');
+
+  // G6 regression: FallbackMenu ArrowUp from container focuses last item & FallbackTooltip supports side="right"
+  const navContainer = document.createElement('div');
+  document.body.appendChild(navContainer);
+  let navRoot: Root | null = null;
+  await act(async () => {
+    navRoot = ReactDOM.createRoot(navContainer);
+    navRoot.render(
+      h(
+        React.Fragment,
+        null,
+        h(bridge.Menu, {
+          open: true,
+          autoFocus: false,
+          ariaLabel: 'Actions',
+          items: [
+            { id: 'one', label: 'One' },
+            { id: 'two', label: 'Two' },
+            { id: 'three', label: 'Three' },
+          ],
+          onSelect: () => {},
+          onClose: () => {},
+          anchor: h('button', { type: 'button' }, 'Open'),
+        }),
+        h(bridge.Tooltip, {
+          label: 'Right tip',
+          side: 'right',
+          children: h('button', { type: 'button', id: 'right-tip-btn' }, 'Hover'),
+        }),
+      ),
+    );
+  });
+  const navMenu = document.querySelector<HTMLElement>('.mdstudio-menu')!;
+  navMenu.tabIndex = -1;
+  navMenu.focus();
+  await act(async () => {
+    navMenu.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }));
+  });
+  const navItems = Array.from(navMenu.querySelectorAll<HTMLElement>('[role="menuitem"]'));
+  assert.equal(document.activeElement, navItems[2], 'ArrowUp from menu container focuses last menuitem');
+  const rightBtn = document.getElementById('right-tip-btn')!;
+  await act(async () => {
+    rightBtn.dispatchEvent(new win.MouseEvent('mouseover', { bubbles: true }));
+    rightBtn.dispatchEvent(new win.MouseEvent('mouseenter', { bubbles: false }));
+  });
+  await act(async () => {
+    navRoot?.unmount();
+  });
+  navContainer.remove();
+  console.log('ok - FallbackModal drag-out scrim guard, FallbackMenu ArrowUp/Tab, and right-side Tooltip');
 }
 
 win.close();

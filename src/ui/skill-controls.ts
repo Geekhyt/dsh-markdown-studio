@@ -4,6 +4,7 @@ import type { AiReviewSession } from '../application/use-writing-skills';
 import type { WritingSkill } from '../domain/writing-skills';
 import type { EditorInlineBlock } from '../domain/editor-types';
 import type { DshMenuEntry } from '../types/dsh-primitives';
+import { PORTALED_MENU_SELECTOR } from './selection-bubble';
 import { toMenuShortcut } from './shortcut-model';
 import type { UiKit } from './ui-kit';
 
@@ -79,7 +80,11 @@ export function SkillSplitTrigger(props: SkillSplitTriggerProps): ReactNode {
       },
     },
     h(icons.Icon, { name: 'sparkles', size: 14 }),
-    h('span', { className: 'mdstudio-tool-text mdstudio-skill-run-label' }, props.activeSkill.name),
+    h(
+      'span',
+      { className: 'mdstudio-tool-text mdstudio-skill-run-label', title: props.activeSkill.name },
+      props.activeSkill.name,
+    ),
   );
 
   const caretBtn = h(
@@ -107,6 +112,8 @@ export function SkillSplitTrigger(props: SkillSplitTriggerProps): ReactNode {
       className: 'mdstudio-skill-split is-floating' + (props.busy ? ' is-busy' : ''),
       style: props.style,
       onMouseDown: function (event: ReactNamespace.MouseEvent<HTMLDivElement>) {
+        const target = event.target as Element | null;
+        if (target && typeof target.closest === 'function' && target.closest(PORTALED_MENU_SELECTOR)) return;
         event.preventDefault();
       },
     },
@@ -193,7 +200,9 @@ function renderFallbackBlocks(
           h(
             'div',
             { className: 'mdstudio-ai-inline-bar' },
-            item.warning ? h('span', { className: 'mdstudio-ai-inline-reason is-warn' }, item.warning) : null,
+            item.warning
+              ? h('span', { className: 'mdstudio-ai-inline-reason is-warn', title: item.warning }, item.warning)
+              : null,
             h(
               'div',
               { className: 'mdstudio-ai-inline-btns' },
@@ -235,12 +244,12 @@ export function AiReviewOverlay(props: AiReviewHeaderProps): ReactNode {
     showErrorBanner
       ? h(
           'div',
-          { className: 'mdstudio-ai-banner', role: 'status' },
+          { className: 'mdstudio-ai-banner', role: 'alert' },
           h(
             'div',
             { className: 'mdstudio-ai-banner-main' },
             h(icons.StateDot, { state: 'error', size: 7 }),
-            h('span', { className: 'mdstudio-ai-banner-title' }, session.error),
+            h('span', { className: 'mdstudio-ai-banner-title', title: session.error }, session.error),
           ),
           h(
             'div',

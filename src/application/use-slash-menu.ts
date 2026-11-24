@@ -407,19 +407,13 @@ export function useSlashMenu(options: SlashMenuOptions): SlashMenuApi {
     return Boolean(fence);
   }
 
-  function findSlashTokenEnd(value: string, slashStart: number, fallbackEnd: number): number {
-    let end = Math.max(slashStart + 1, fallbackEnd);
-    while (end < value.length && !/[\s/]/.test(value.charAt(end))) end++;
-    return end;
-  }
-
   function syncAtCaret(value: string, caret: number): void {
     const previousBreak = caret > 0 ? value.lastIndexOf('\n', caret - 1) : -1;
     const lineStart = previousBreak + 1;
     const line = value.slice(lineStart, caret);
     const match = /^\s*\/([^\s/]{0,18})$/.exec(line);
     if (!match || isInsideFencedCode(value, lineStart)) {
-      if (slash) setSlash(null);
+      setSlash((prev) => (prev ? null : prev));
       return;
     }
     const slashStart = lineStart + line.indexOf('/');
@@ -473,7 +467,7 @@ export function useSlashMenu(options: SlashMenuOptions): SlashMenuApi {
       setSlash(null);
       return;
     }
-    const tokenEnd = findSlashTokenEnd(value, slash.start, range.start);
+    const tokenEnd = Math.max(slash.start + 1, range.end);
     const next = value.slice(0, slash.start) + command.text + value.slice(tokenEnd);
     const selStart = slash.start + (command.selectStart == null ? command.text.length : command.selectStart);
     const selEnd = slash.start + (command.selectEnd == null ? command.text.length : command.selectEnd);
@@ -500,7 +494,13 @@ export function useSlashMenu(options: SlashMenuOptions): SlashMenuApi {
       }
       return true;
     }
-    if ((event.key === 'Enter' || event.key === 'Tab') && !event.metaKey && !event.ctrlKey && !event.shiftKey) {
+    if (
+      (event.key === 'Enter' || event.key === 'Tab') &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.shiftKey &&
+      !event.altKey
+    ) {
       if (!matches.length) {
         if (event.key === 'Enter') setSlash(null);
         return false;

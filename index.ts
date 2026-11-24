@@ -45,45 +45,22 @@ export function apply(ctx: HostContext): void {
     },
   });
   const aiHandler = createAiRoute({ service: aiService });
-  const localServer = startLocalImageServer({ service });
 
   ctx.effect(function () {
-    const disposeApi = ctx.webServer.register({
-      kind: 'exact',
-      path: ROUTE_PATH,
-      handler: apiHandler,
-    });
-    const disposeAssets = ctx.webServer.register({
-      kind: 'prefix',
-      path: ASSET_PREFIX,
-      handler: assetHandler,
-    });
-    const disposeMermaid = ctx.webServer.register({
-      kind: 'exact',
-      path: MERMAID_PATH,
-      handler: mermaidRoute,
-    });
-    const disposeMath = ctx.webServer.register({
-      kind: 'exact',
-      path: MATH_PATH,
-      handler: mathRoute,
-    });
-    const disposeAi = ctx.webServer.register({
-      kind: 'exact',
-      path: AI_ROUTE_PATH,
-      handler: aiHandler,
-    });
-    return function () {
-      disposeAi();
-      disposeMath();
-      disposeMermaid();
-      disposeAssets();
-      disposeApi();
+    const disposers: Array<() => void> = [];
+    const rollback = (): void => {
+      while (disposers.length) {
+        try {
+          disposers.pop()?.();
+        } catch {
+          /* best effort */
+        }
+      }
     };
-  });
-
-  ctx.effect(function () {
-    return function () {
+    const abort = new AbortController();
+    const localServer = startLocalImageServer({ service, signal: abort.signal });
+    disposers.push(function () {
+      abort.abort();
       localServer
         .then(function (result) {
           if (result && typeof result.stop === 'function') result.stop();
@@ -91,6 +68,17 @@ export function apply(ctx: HostContext): void {
         .catch(function () {
           /* best effort */
         });
-    };
+    });
+    try {
+      disposers.push(ctx.webServer.register({ kind: 'exact', path: ROUTE_PATH, handler: apiHandler }));
+      disposers.push(ctx.webServer.register({ kind: 'prefix', path: ASSET_PREFIX, handler: assetHandler }));
+      disposers.push(ctx.webServer.register({ kind: 'exact', path: MERMAID_PATH, handler: mermaidRoute }));
+      disposers.push(ctx.webServer.register({ kind: 'exact', path: MATH_PATH, handler: mathRoute }));
+      disposers.push(ctx.webServer.register({ kind: 'exact', path: AI_ROUTE_PATH, handler: aiHandler }));
+    } catch (error) {
+      rollback();
+      throw error;
+    }
+    return rollback;
   });
 }

@@ -85,6 +85,7 @@ export const CHROME_CSS: string = `:root, body, .mdstudio-root {
   --mdstudio-ui-diff-del-bar: #e5484d;
   --mdstudio-ui-diff-add-bg: color-mix(in srgb, #30a46c 9.5%, var(--mdstudio-ui-bg-base));
   --mdstudio-ui-diff-add-bar: #30a46c;
+  --mdstudio-toolbar-h: 40px;
 }
 .mdstudio-root {
   position: relative; container-type: inline-size; container-name: mdstudio; display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden;
@@ -154,6 +155,7 @@ body[data-ds-dark-theme] .mdstudio-root, body[data-ds-dark-theme] .mdstudio-moda
 .mdstudio-root button:focus-visible, .mdstudio-modal button:focus-visible, .mdstudio-root input[type="checkbox"]:focus-visible, .mdstudio-modal input[type="checkbox"]:focus-visible, .mdstudio-root input[type="color"]:focus-visible {
   outline: 2px solid var(--mdstudio-ui-brand); outline-offset: 2px;
 }
+.mdstudio-drawer-body:focus-visible { outline: 2px solid var(--mdstudio-ui-brand); outline-offset: -2px; }
 .mdstudio-btn { display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 28px; padding: 0 10px; border: 0.5px solid var(--mdstudio-ui-border-3); border-radius: var(--mdstudio-ui-radius-sm); background: transparent; color: var(--mdstudio-ui-fg-1); font-size: 12px; font-weight: 500; line-height: 18px; cursor: pointer; white-space: nowrap; transition: background-color var(--mdstudio-ui-tr), color var(--mdstudio-ui-tr), border-color var(--mdstudio-ui-tr); }
 .mdstudio-btn:hover:not(:disabled) { background: var(--mdstudio-ui-hover); border-color: var(--mdstudio-ui-border-2); color: var(--mdstudio-ui-fg-1); }
 .mdstudio-btn:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -257,7 +259,10 @@ body[data-ds-dark-theme] .mdstudio-root, body[data-ds-dark-theme] .mdstudio-moda
 .mdstudio-immersive-dock::before { content: ""; position: absolute; inset: 0; border-radius: inherit; background: var(--mdstudio-ui-menu); backdrop-filter: var(--mdstudio-ui-blur); -webkit-backdrop-filter: var(--mdstudio-ui-blur); box-shadow: var(--mdstudio-ui-shadow-prominent); pointer-events: none; }
 .mdstudio-immersive-dock > :not(.mdstudio-tooltip) { position: relative; }
 .mdstudio-immersive-dock:hover, .mdstudio-immersive-dock:focus-within { opacity: 1; }
+.mdstudio-root[data-mdstudio-immersive] > .mdstudio-host-error { flex: none; margin: calc(max(12px, var(--dsh-frame-chrome-top, 12px)) + 48px) 12px 0; }
 .mdstudio-root[data-mdstudio-immersive="write"] .mdstudio-searchbar, .mdstudio-root[data-mdstudio-immersive="write"] .mdstudio-file-banner { padding-left: max(10px, var(--dsh-frame-leading-clearance, 0px), var(--mdstudio-host-inset, 0px)); padding-right: calc(var(--mdstudio-immersive-dock-w, 220px) + 16px); }
+.mdstudio-root[data-mdstudio-immersive="write"] .mdstudio-ai-banner, .mdstudio-root[data-mdstudio-immersive="write"] .mdstudio-ai-fallback-stack { margin-top: calc(max(12px, var(--dsh-frame-chrome-top, 12px)) + 44px); }
+.mdstudio-root[data-mdstudio-immersive="write"] .mdstudio-file-banner ~ .mdstudio-ai-banner, .mdstudio-root[data-mdstudio-immersive="write"] .mdstudio-file-banner ~ .mdstudio-ai-fallback-stack, .mdstudio-root[data-mdstudio-immersive="write"] .mdstudio-ai-banner ~ .mdstudio-ai-fallback-stack { margin-top: 0; }
 .mdstudio-immersive-modes { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border-radius: 16px; background: var(--mdstudio-ui-seg-track); }
 .mdstudio-immersive-mode, .mdstudio-immersive-exit { height: 26px; padding: 0 11px; border: 0; border-radius: 13px; background: transparent; color: var(--mdstudio-ui-fg-2); font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; white-space: nowrap; transition: background-color var(--mdstudio-ui-tr), color var(--mdstudio-ui-tr), box-shadow var(--mdstudio-ui-tr); }
 .mdstudio-immersive-mode:hover, .mdstudio-immersive-exit:hover { background: var(--mdstudio-ui-hover); color: var(--mdstudio-ui-fg-1); }
@@ -269,7 +274,7 @@ body[data-ds-dark-theme] .mdstudio-root, body[data-ds-dark-theme] .mdstudio-moda
 .mdstudio-editor-pane { order: 1; flex: 1 1 48%; position: relative; background: var(--mdstudio-ui-bg-base); border-right: 0.5px solid var(--mdstudio-ui-border-3); }
 .mdstudio-preview-pane { order: 2; flex: 1 1 52%; background: var(--mdstudio-ui-doc-preview); }
 .mdstudio-pane.is-hidden { display: none; }
-.mdstudio-toolbar { flex: none; display: flex; align-items: center; gap: 1px; height: 40px; padding: 0 8px; border-bottom: 0.5px solid var(--mdstudio-ui-border-3); overflow-x: auto; scrollbar-width: none; }
+.mdstudio-toolbar { flex: none; display: flex; align-items: center; gap: 1px; height: var(--mdstudio-toolbar-h, 40px); padding: 0 8px; border-bottom: 0.5px solid var(--mdstudio-ui-border-3); overflow-x: auto; scrollbar-width: none; }
 .mdstudio-toolbar::-webkit-scrollbar { display: none; }
 .mdstudio-tool { display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 28px; padding: 0 5px; border: 0; border-radius: 8px; background: transparent; color: var(--mdstudio-ui-fg-2); font-size: 11.5px; font-weight: 600; cursor: pointer; flex: none; transition: background-color var(--mdstudio-ui-tr), color var(--mdstudio-ui-tr); }
 .mdstudio-tool:hover:not(:disabled) { background: var(--mdstudio-ui-hover); color: var(--mdstudio-ui-fg-1); }
@@ -286,6 +291,7 @@ body[data-ds-dark-theme] .mdstudio-root, body[data-ds-dark-theme] .mdstudio-moda
 .mdstudio-heading-caret { display: inline-flex; align-items: center; opacity: 0.72; }
 .mdstudio-menu-text-icon { font-family: var(--mdstudio-ui-font-code); font-size: 10px; font-weight: 600; line-height: 1; letter-spacing: -0.03em; }
 .mdstudio-tooltip { position: fixed; z-index: ${Z_LAYERS.tooltip}; transform: translateX(-50%); padding: 5px 9px; border-radius: var(--mdstudio-ui-radius-sm); background: var(--mdstudio-ui-tooltip-bg); color: var(--mdstudio-ui-tooltip-fg); box-shadow: var(--mdstudio-ui-shadow-panel); font-family: var(--mdstudio-ui-font-ui); font-size: 11.5px; font-weight: 500; line-height: 1.35; white-space: nowrap; pointer-events: none; }
+.mdstudio-tooltip.is-side-right { transform: none; }
 .mdstudio-outline-anchor { display: inline-flex; flex: none; }
 .mdstudio-slash { position: absolute; z-index: ${Z_LAYERS.slash}; top: 6px; left: 10px; width: min(320px, calc(100% - 20px)); max-height: min(348px, calc(100% - 14px)); overflow: auto; padding: 4px; border: 0; border-radius: var(--mdstudio-ui-radius-lg); background: var(--mdstudio-ui-menu); backdrop-filter: var(--mdstudio-ui-blur); -webkit-backdrop-filter: var(--mdstudio-ui-blur); box-shadow: var(--mdstudio-ui-shadow-prominent); }
 .mdstudio-slash-icon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; flex: none; border: 0.5px solid var(--mdstudio-ui-border-3); border-radius: 7px; background: var(--mdstudio-ui-bg-1); color: var(--mdstudio-ui-fg-2); font-family: var(--mdstudio-ui-font-code); font-size: 10px; font-weight: 600; }
@@ -499,8 +505,8 @@ body[data-ds-dark-theme] .mdstudio-switch.is-on .mdstudio-switch-thumb { backgro
 .mdstudio-modal { color: var(--mdstudio-ui-fg-1); font-family: var(--mdstudio-ui-font-ui); }
 .mdstudio-fallback-modal { width: min(520px, calc(100vw - 32px)); max-height: min(640px, 100%); display: flex; flex-direction: column; overflow: hidden; padding: 20px 24px 24px; border: 0; border-radius: var(--mdstudio-ui-radius-panel); background: var(--mdstudio-ui-modal-bg); box-shadow: var(--mdstudio-ui-shadow-prominent); }
 .mdstudio-modal-content { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-.mdstudio-modal-content > div:last-child { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-.mdstudio-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.mdstudio-modal-content > div:last-child:not(.mdstudio-modal-head) { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.mdstudio-modal-head { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; }
 .mdstudio-modal-title { margin: 0; flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 7px; font-size: 16px; font-weight: 500; line-height: 24px; color: var(--mdstudio-ui-fg-1); overflow-wrap: anywhere; }
 .mdstudio-modal-warn-icon { color: var(--mdstudio-ui-warn); flex: none; }
 .mdstudio-modal-desc { margin: 8px 0 0; color: var(--mdstudio-ui-fg-2); font-size: 13.5px; line-height: 1.55; }
@@ -538,14 +544,14 @@ body[data-ds-dark-theme] .mdstudio-switch.is-on .mdstudio-switch-thumb { backgro
 .mdstudio-library-title { display: block; overflow: hidden; font-size: 13px; font-weight: 500; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
 .mdstudio-library-row.is-active .mdstudio-library-title { font-weight: 600; }
 .mdstudio-library-current { flex: none; padding: 1px 6px; border-radius: 999px; background: var(--mdstudio-ui-bg-1); color: var(--mdstudio-ui-fg-2); font-size: 11px; line-height: 16px; }
-.mdstudio-library-tail { flex: none; display: flex; align-items: center; justify-content: flex-end; min-height: 28px; }
-.mdstudio-library-meta { display: block; color: var(--mdstudio-ui-fg-3); font-size: 11.5px; line-height: 16px; white-space: nowrap; }
+.mdstudio-library-tail { position: relative; flex: none; display: flex; align-items: center; justify-content: flex-end; min-width: 28px; min-height: 28px; }
+.mdstudio-library-meta { display: block; color: var(--mdstudio-ui-fg-3); font-size: 11.5px; line-height: 16px; white-space: nowrap; transition: opacity var(--mdstudio-ui-tr); }
 .mdstudio-library-row.is-active .mdstudio-library-meta { color: var(--mdstudio-ui-fg-2); }
-.mdstudio-library-row-actions { display: flex; align-items: center; gap: 4px; flex: none; }
+.mdstudio-library-row-actions { display: flex; align-items: center; gap: 4px; flex: none; transition: opacity var(--mdstudio-ui-tr); }
 @media (hover: hover) {
-  .mdstudio-library-row:not(.is-trash-row) .mdstudio-library-row-actions { display: none; }
-  .mdstudio-library-row:not(.is-trash-row):hover .mdstudio-library-row-actions, .mdstudio-library-row:not(.is-trash-row):focus-within .mdstudio-library-row-actions { display: flex; }
-  .mdstudio-library-row:not(.is-trash-row):hover .mdstudio-library-meta, .mdstudio-library-row:not(.is-trash-row):focus-within .mdstudio-library-meta { display: none; }
+  .mdstudio-library-row:not(.is-trash-row) .mdstudio-library-row-actions { position: absolute; right: 0; top: 50%; transform: translateY(-50%); opacity: 0; pointer-events: none; }
+  .mdstudio-library-row:not(.is-trash-row):hover .mdstudio-library-row-actions, .mdstudio-library-row:not(.is-trash-row):focus-within .mdstudio-library-row-actions { opacity: 1; pointer-events: auto; }
+  .mdstudio-library-row:not(.is-trash-row):hover .mdstudio-library-meta, .mdstudio-library-row:not(.is-trash-row):focus-within .mdstudio-library-meta { opacity: 0; pointer-events: none; }
 }
 .mdstudio-library-icon-action { width: 28px; height: 28px; border-radius: var(--mdstudio-ui-radius-sm); color: var(--mdstudio-ui-fg-3); }
 .mdstudio-library-icon-action.is-danger:hover, .mdstudio-library-icon-action.is-danger:focus-visible { color: var(--mdstudio-ui-error); background: var(--mdstudio-ui-danger-hover); }
@@ -691,9 +697,12 @@ body[data-ds-dark-theme] .mdstudio-switch.is-on .mdstudio-switch-thumb { backgro
 .mdstudio-skill-foot { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 16px 11px; border-top: 0.5px solid var(--mdstudio-ui-border-3); background: var(--mdstudio-ui-bg-1); }
 .mdstudio-skill-foot-hint { min-width: 0; color: var(--mdstudio-ui-fg-3); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mdstudio-skill-foot-actions { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+/* ------------------------------------------------------------------------- */
+/* Responsive container queries (strictly descending width breakpoints)       */
+/* ------------------------------------------------------------------------- */
 @container mdstudio (min-width: 900px) { .mdstudio-stage:not(.is-desktop) { padding: 14px 16px 40px; } }
 @container mdstudio (max-width: 1220px) {
-  .mdstudio-body.is-settings .mdstudio-toolbar { gap: 0; padding: 0 5px; }
+  .mdstudio-body.is-settings .mdstudio-toolbar { gap: 0; padding-inline: 5px; }
   .mdstudio-body.is-settings .mdstudio-tool-sep { margin: 0 2px; }
 }
 @container mdstudio (max-width: 1140px) {
@@ -706,27 +715,16 @@ body[data-ds-dark-theme] .mdstudio-switch.is-on .mdstudio-switch-thumb { backgro
   .mdstudio-header-actions { gap: 3px; }
   .mdstudio-title-input { flex: 1 1 80px; min-width: 0; }
   .mdstudio-btn kbd { display: none; }
-  .mdstudio-toolbar { gap: 0; padding: 0 4px; }
+  .mdstudio-toolbar { gap: 0; padding-inline: 4px; }
   .mdstudio-tool-sep { margin: 0 2px; }
 }
 @container mdstudio (max-width: 920px) {
   .mdstudio-root[data-mdstudio-immersive="write"][data-mdstudio-host-titlebar] .mdstudio-searchbar, .mdstudio-root[data-mdstudio-immersive="write"][data-mdstudio-host-titlebar] .mdstudio-file-banner { padding-top: calc(max(12px, var(--dsh-frame-chrome-top, 12px)) + 42px); padding-left: 10px; padding-right: 10px; }
   .mdstudio-root[data-mdstudio-immersive="write"][data-mdstudio-host-titlebar] .mdstudio-file-banner ~ .mdstudio-searchbar { padding-top: 6px; }
+  .mdstudio-root[data-mdstudio-immersive="write"][data-mdstudio-host-titlebar] .mdstudio-ai-banner ~ .mdstudio-searchbar, .mdstudio-root[data-mdstudio-immersive="write"][data-mdstudio-host-titlebar] .mdstudio-ai-fallback-stack ~ .mdstudio-searchbar { padding-top: 6px; }
 }
 @container mdstudio (max-width: 820px) {
   .mdstudio-body:not([data-mdstudio-view="split"]) .mdstudio-drawer { flex: 0 0 308px; width: 308px; }
-}
-@media (pointer: coarse) {
-  .mdstudio-menu-item, .mdstudio-drop-item { min-height: 44px; padding: 11px 10px; }
-  .mdstudio-header .mdstudio-icon-btn, .mdstudio-toolbar button, .mdstudio-drawer .mdstudio-icon-btn, .mdstudio-modal .mdstudio-icon-btn, .mdstudio-preview-head .mdstudio-device-btn, .mdstudio-preview-head .mdstudio-sync-btn, .mdstudio-drawer-tab, .mdstudio-capsule-seg, .mdstudio-capsule-step, .mdstudio-library-tab, button.mdstudio-skill-item, .mdstudio-css-workbench .mdstudio-css-back-btn, .mdstudio-css-workbench .mdstudio-css-btn, .mdstudio-css-workbench button.mdstudio-custom-chip, .mdstudio-css-workbench .mdstudio-custom-add-btn { min-height: 44px; min-width: 44px; }
-  .mdstudio-immersive-mode, .mdstudio-immersive-exit { min-height: 36px; padding: 0 13px; }
-  .mdstudio-preset { width: 28px; height: 28px; }
-  .mdstudio-theme-card-edit { width: 32px; height: 32px; }
-  .mdstudio-workspace-caret { min-width: 24px; min-height: 24px; justify-content: center; }
-  .mdstudio-preview-head { height: auto; min-height: 52px; padding-top: 4px; padding-bottom: 4px; }
-  .mdstudio-capsule-track { height: auto; min-height: 50px; grid-template-columns: repeat(4, minmax(44px, 1fr)); border-radius: 14px; }
-  .mdstudio-capsule-track.is-stepper { grid-template-columns: 44px repeat(4, minmax(40px, 1fr)) 44px; }
-  .mdstudio-capsule-track.is-stepper .mdstudio-capsule-seg { min-width: 40px; }
 }
 @container mdstudio (max-width: 720px) {
   .mdstudio-focus-btn, .mdstudio-segmented, .mdstudio-brand-badge, .mdstudio-header-divider, .mdstudio-copy-label { display: none; }
@@ -744,19 +742,34 @@ body[data-ds-dark-theme] .mdstudio-switch.is-on .mdstudio-switch-thumb { backgro
   .mdstudio-body[data-mdstudio-view] .mdstudio-drawer { position: absolute; inset: 0; z-index: ${Z_LAYERS.drawerOverlay}; flex: none; width: 100%; max-width: none; border-left: 0; box-shadow: none; }
   .mdstudio-root[data-mdstudio-immersive="write"] .mdstudio-searchbar, .mdstudio-root[data-mdstudio-immersive="write"] .mdstudio-file-banner { padding-top: calc(max(12px, var(--dsh-frame-chrome-top, 12px)) + 42px); padding-left: 10px; padding-right: 10px; }
   .mdstudio-root[data-mdstudio-immersive="write"] .mdstudio-file-banner ~ .mdstudio-searchbar { padding-top: 6px; }
-  .mdstudio-toolbar { padding-right: 26px; }
-  .mdstudio-editor-pane:not(.mdstudio-css-workbench)::after { content: ""; position: absolute; top: 0; right: 0; z-index: ${Z_LAYERS.toolbarFade}; width: 28px; height: 39px; pointer-events: none; background: linear-gradient(to right, transparent, var(--mdstudio-ui-bg-base)); }
+  .mdstudio-root[data-mdstudio-immersive="write"] .mdstudio-ai-banner ~ .mdstudio-searchbar, .mdstudio-root[data-mdstudio-immersive="write"] .mdstudio-ai-fallback-stack ~ .mdstudio-searchbar { padding-top: 6px; }
+  .mdstudio-toolbar, .mdstudio-body.is-settings .mdstudio-toolbar { padding-right: 26px; }
+  .mdstudio-editor-pane:not(.mdstudio-css-workbench)::after { content: ""; position: absolute; top: 0; right: 0; z-index: ${Z_LAYERS.toolbarFade}; width: 28px; height: calc(var(--mdstudio-toolbar-h, 40px) - 1px); pointer-events: none; background: linear-gradient(to right, transparent, var(--mdstudio-ui-bg-base)); }
   .mdstudio-root[data-mdstudio-immersive="write"] .mdstudio-editor-pane::after { display: none; }
   .mdstudio-device.is-desktop .mdstudio-device-screen { padding: 20px 16px 40px; }
   .mdstudio-stage { padding: 12px 10px 40px; }
   .mdstudio-device-screen { padding: 20px 16px 32px; }
 }
+@container mdstudio (max-width: 520px) {
+  html[data-platform] .mdstudio-root[data-mdstudio-host-titlebar] .mdstudio-header { gap: 4px; padding-right: 8px; }
+  html[data-platform] .mdstudio-root[data-mdstudio-host-titlebar] .mdstudio-header-actions { gap: 2px; }
+  html[data-platform] .mdstudio-root[data-mdstudio-host-titlebar] .mdstudio-library-btn { display: none; }
+  html[data-platform] .mdstudio-root[data-mdstudio-host-titlebar] .mdstudio-title-input { flex: 1 1 56px; min-width: 48px; padding: 0 4px; }
+  @media (pointer: fine) {
+    html[data-platform] .mdstudio-root[data-mdstudio-host-titlebar] .mdstudio-header .mdstudio-icon-btn { width: 28px; height: 28px; }
+    html[data-platform] .mdstudio-root[data-mdstudio-host-titlebar] .mdstudio-header .mdstudio-copy-btn { width: 28px; min-width: 28px; height: 28px; margin-left: 0; }
+  }
+}
+/* ------------------------------------------------------------------------- */
+/* Narrow viewport modals & standalone mobile chrome                          */
+/* ------------------------------------------------------------------------- */
 @media (max-width: 720px) {
+  html:not([data-platform]) .mdstudio-root { --mdstudio-toolbar-h: 50px; }
   html:not([data-platform]) .mdstudio-header { height: 56px; }
   html:not([data-platform]) .mdstudio-header .mdstudio-copy-btn { width: 44px; min-width: 44px; height: 44px; padding: 0; border-radius: 12px; justify-content: center; }
   html:not([data-platform]) .mdstudio-header .mdstudio-icon-btn { width: 44px; height: 44px; }
   html:not([data-platform]) .mdstudio-header .mdstudio-btn, html:not([data-platform]) .mdstudio-header .mdstudio-dsh-btn { min-height: 44px; }
-  html:not([data-platform]) .mdstudio-toolbar { height: 50px; }
+  html:not([data-platform]) .mdstudio-toolbar { height: auto; min-height: 50px; }
   html:not([data-platform]) .mdstudio-editor-pane:not(.mdstudio-css-workbench)::after { height: 49px; }
   html:not([data-platform]) .mdstudio-toolbar button { min-width: 44px; min-height: 44px; }
   html:not([data-platform]) .mdstudio-css-workbench .mdstudio-css-back-btn, html:not([data-platform]) .mdstudio-css-workbench .mdstudio-css-btn, html:not([data-platform]) .mdstudio-css-workbench button.mdstudio-custom-chip, html:not([data-platform]) .mdstudio-css-workbench .mdstudio-custom-add-btn { min-height: 44px; }
@@ -764,10 +777,12 @@ body[data-ds-dark-theme] .mdstudio-switch.is-on .mdstudio-switch-thumb { backgro
   .mdstudio-conflict-copy { width: 100%; }
   .mdstudio-conflict-seg { align-self: flex-start; }
   .mdstudio-library-head { flex-wrap: wrap; padding: 10px 12px; gap: 8px; }
-  .mdstudio-library-seg, .mdstudio-workspace-loc { margin-right: auto; }
+  .mdstudio-workspace-toolbar { gap: 6px; padding: 10px 10px; }
+  .mdstudio-library-seg { margin-right: auto; }
+  .mdstudio-workspace-loc { flex: 1 1 80px; min-width: 0; max-width: none; margin-right: 0; }
   .mdstudio-library-search, .mdstudio-library-search-wrap, .mdstudio-workspace-search, .mdstudio-workspace-search-wrap { flex: 1 1 100%; width: 100%; order: 2; }
   .mdstudio-library-row:not(.is-trash-row) .mdstudio-library-meta { display: none; }
-  .mdstudio-library-row:not(.is-trash-row) .mdstudio-library-row-actions { display: flex; }
+  .mdstudio-library-row:not(.is-trash-row) .mdstudio-library-row-actions { position: static; transform: none; opacity: 1; pointer-events: auto; }
   .mdstudio-fallback-modal:not(.is-headless) { padding: 18px 16px 20px; }
   .mdstudio-modal-scrim { padding: max(16px, var(--dsh-frame-overlay-top, 16px)) 16px 16px; }
   .mdstudio-workspace-actions { opacity: 1; }
@@ -779,6 +794,25 @@ body[data-ds-dark-theme] .mdstudio-switch.is-on .mdstudio-switch-thumb { backgro
   .mdstudio-skill-builtin-title-row { flex-wrap: wrap; }
   .mdstudio-skill-builtin-desc { white-space: normal; }
   .mdstudio-skill-meta-grid { grid-template-columns: 1fr; }
+}
+/* ------------------------------------------------------------------------- */
+/* Touch accessibility & reduced motion (always AFTER width breakpoints)      */
+/* ------------------------------------------------------------------------- */
+@media (pointer: coarse) {
+  .mdstudio-root { --mdstudio-toolbar-h: 50px; }
+  .mdstudio-toolbar { height: auto; min-height: 50px; padding-top: 2px; padding-bottom: 2px; }
+  .mdstudio-menu-item, .mdstudio-drop-item { min-height: 44px; padding: 11px 10px; }
+  .mdstudio-header .mdstudio-icon-btn, .mdstudio-header .mdstudio-copy-btn, .mdstudio-toolbar button, .mdstudio-drawer .mdstudio-icon-btn, .mdstudio-modal .mdstudio-icon-btn, .mdstudio-preview-head .mdstudio-device-btn, .mdstudio-preview-head .mdstudio-sync-btn, .mdstudio-drawer-tab, .mdstudio-capsule-seg, .mdstudio-capsule-step, .mdstudio-library-tab, button.mdstudio-skill-item, .mdstudio-css-workbench .mdstudio-css-back-btn, .mdstudio-css-workbench .mdstudio-css-btn, .mdstudio-css-workbench button.mdstudio-custom-chip, .mdstudio-css-workbench .mdstudio-custom-add-btn { min-height: 44px; min-width: 44px; }
+  .mdstudio-header .mdstudio-copy-btn { width: auto; height: auto; }
+  .mdstudio-library-tail { min-width: 44px; }
+  .mdstudio-immersive-mode, .mdstudio-immersive-exit { min-height: 36px; padding: 0 13px; }
+  .mdstudio-preset { width: 28px; height: 28px; }
+  .mdstudio-theme-card-edit { width: 32px; height: 32px; }
+  .mdstudio-workspace-caret { min-width: 24px; min-height: 24px; justify-content: center; }
+  .mdstudio-preview-head { height: auto; min-height: 52px; padding-top: 4px; padding-bottom: 4px; }
+  .mdstudio-capsule-track { height: auto; min-height: 50px; grid-template-columns: repeat(4, minmax(44px, 1fr)); border-radius: 14px; }
+  .mdstudio-capsule-track.is-stepper { grid-template-columns: 44px repeat(4, minmax(40px, 1fr)) 44px; }
+  .mdstudio-capsule-track.is-stepper .mdstudio-capsule-seg { min-width: 40px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .mdstudio-root *, .mdstudio-root *::before, .mdstudio-root *::after, .mdstudio-modal *, .mdstudio-modal *::before, .mdstudio-modal *::after, .mdstudio-menu *, .mdstudio-menu *::before, .mdstudio-menu *::after { transition-duration: 0ms !important; animation-duration: 0ms !important; }

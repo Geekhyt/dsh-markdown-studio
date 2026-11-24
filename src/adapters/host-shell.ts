@@ -7,7 +7,10 @@
 function parseClearance(raw: string): number | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
-  const parsed = parseFloat(trimmed);
+  const match = /^(\d+(?:\.\d+)?)(px)?$/i.exec(trimmed);
+  if (!match) return null;
+  const parsed = Number(match[1]);
+  if (!match[2] && parsed !== 0) return null;
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
@@ -38,7 +41,7 @@ function observeDocAttributes(onMutate: () => void): { disconnect(): void } | nu
   const mo = new MutationObserver(onMutate);
   mo.observe(document.documentElement, {
     attributes: true,
-    attributeFilter: ['data-fullscreen', 'data-platform', 'style'],
+    attributeFilter: ['data-fullscreen', 'data-platform', 'style', 'class'],
   });
   return mo;
 }

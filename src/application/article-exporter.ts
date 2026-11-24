@@ -4,10 +4,11 @@ import { assertZipBudget, type ZipEntry, zipStore } from '../adapters/zip';
 import type { Article } from '../domain/article';
 import { slugify } from '../domain/article';
 import { findCustomTheme, isCustomThemeId, mergeCustomThemes } from '../domain/custom-themes';
-import { assetFilesInMarkdown } from '../domain/images';
+import { assetFilesInMarkdown, portableizeAssetUrls } from '../domain/images';
 import type { MermaidCacheEntry } from '../domain/mermaid';
+import { extractMermaidBlocks } from './use-mermaid-assets';
 import { parseThemePatch } from '../domain/settings';
-import { mermaidThemeFor, type MermaidTheme, type ThemeSettings } from '../themes';
+import { mermaidCacheKey, mermaidThemeFor, type MermaidTheme, type ThemeSettings } from '../themes';
 import type { MathAssetsApi } from './use-math-assets';
 
 type Notify = (text: string, tone?: 'success' | 'error' | 'info') => void;
@@ -28,6 +29,7 @@ export interface ArticleExportOptions {
   download: (name: string, content: Blob | string, mime: string) => boolean;
   closeMenu: () => void;
   updateSettings: (patch: Partial<ThemeSettings>) => void;
+  getSettings?: () => ThemeSettings;
 }
 
 export interface ArticleExportApi {
@@ -82,10 +84,11 @@ export function createArticleExporter(options: ArticleExportOptions): ArticleExp
     try {
       const patch = parseThemePatch(JSON.parse(await file.text()) as unknown);
       if (!patch) throw new Error('no known fields');
+      const liveSettings = options.getSettings ? options.getSettings() : settings;
       if (patch.customThemes) {
-        patch.customThemes = mergeCustomThemes(settings.customThemes, patch.customThemes);
+        patch.customThemes = mergeCustomThemes(liveSettings.customThemes, patch.customThemes);
       }
-      const nextCustomThemes = patch.customThemes || settings.customThemes || [];
+      const nextCustomThemes = patch.customThemes || liveSettings.customThemes || [];
       if (patch.theme && isCustomThemeId(patch.theme) && !findCustomTheme(nextCustomThemes, patch.theme)) {
         delete patch.theme;
       }
@@ -129,7 +132,8 @@ export function createArticleExporter(options: ArticleExportOptions): ArticleExp
       options.notify(t('toast.bundleFailed') + ' · ' + errorMessage(error), 'error');
       return;
     }
-    entries.unshift({ name: 'article.md', data: new TextEncoder().encode(doc.markdown) });
+    const portableMarkdown = portableizeAssetUrls(doc.markdown);
+    entries.unshift({ name: 'article.md', data: new TextEncoder().encode(portableMarkdown) });
     entries.push({
       name: 'README.txt',
       data: new TextEncoder().encode(
@@ -144,11 +148,17 @@ export function createArticleExporter(options: ArticleExportOptions): ArticleExp
 
   async function exportHtml(): Promise<void> {
     try {
+      const mermaidTheme = mermaidThemeFor(settings);
       const [mermaidSnapshot] = await Promise.all([
-        options.mermaidAssets.ensure(doc.markdown, mermaidThemeFor(settings)),
+        options.mermaidAssets.ensure(doc.markdown, mermaidTheme),
         options.mathAssets.ensure(doc.markdown),
       ]);
       const mermaidMap = mermaidSnapshot && mermaidSnapshot.size ? mermaidSnapshot : options.mermaidAssets.cache;
+      const mermaidBlocks = extractMermaidBlocks(doc.markdown);
+      const mermaidFailed = mermaidBlocks.filter((source) => {
+        const entry = mermaidMap.get(mermaidCacheKey(source, mermaidTheme));
+        return !entry || entry.status !== 'ready';
+      }).length;
       const article = renderArticle(doc.markdown, settings, {
         locale: options.locale,
         imageBaseUrl: base || 'http://127.0.0.1:4010',
@@ -176,8 +186,14 @@ export function createArticleExporter(options: ArticleExportOptions): ArticleExp
         '">' +
         article.html +
         '</div></body>\n</html>';
-      if (options.download(slugify(title) + '.html', page, 'text/html;charset=utf-8'))
-        options.notify(t('toast.exported'));
+      if (options.download(slugify(title) + '.html', page, 'text/html;charset=utf-8')) {
+        options.notify(
+          mermaidFailed
+            ? t('toast.exported') + ' · ' + mermaidFailed + ' ' + t('wechat.uploadFailed')
+            : t('toast.exported'),
+          mermaidFailed ? 'info' : 'success',
+        );
+      }
       options.closeMenu();
     } catch (error) {
       options.notify(t('toast.bundleFailed') + ' · ' + errorMessage(error), 'error');

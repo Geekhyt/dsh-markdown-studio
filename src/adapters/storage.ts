@@ -78,6 +78,7 @@ function parseArticleRecord(entry: unknown): Article | null {
   const record = entry as Record<string, unknown>;
   if (typeof record.id !== 'string' || typeof record.markdown !== 'string') return null;
   const rawUpdated = Number(record.updatedAt);
+  const rawRev = Number(record.rev);
   return {
     id: record.id,
     title: typeof record.title === 'string' && record.title ? record.title : SAMPLE_TITLE,
@@ -85,6 +86,7 @@ function parseArticleRecord(entry: unknown): Article | null {
     settings: sanitizeSettings(record.settings),
     view: parseView(record.view),
     updatedAt: Number.isFinite(rawUpdated) && rawUpdated > 0 ? rawUpdated : Date.now(),
+    ...(Number.isInteger(rawRev) && rawRev > 0 ? { rev: rawRev } : {}),
   };
 }
 
@@ -143,7 +145,10 @@ function isRawFutureLibrary(raw: string | null): boolean {
 }
 
 export function hasFuturePersistedLibrary(): boolean {
-  return isRawFutureLibrary(safeStorageGet(LIBRARY_KEY_V2));
+  const primary = safeStorageGet(LIBRARY_KEY_V2);
+  if (isRawFutureLibrary(primary)) return true;
+  if (!parsePersistedLibrary(primary)) return isRawFutureLibrary(safeStorageGet(LIBRARY_BACKUP_KEY));
+  return false;
 }
 
 export function loadPersistedLibrary(): LibraryState | null {
@@ -257,11 +262,43 @@ export function loadInitialLibrary(locale?: string): LibraryState {
   };
 }
 
-let documentRefWrites: Promise<void> = Promise.resolve();
+let fileHandleQueue: Promise<void> = Promise.resolve();
+
+function enqueueFileHandleOp<T>(task: () => Promise<T>): Promise<T> {
+  const run = fileHandleQueue.then(task, task);
+  fileHandleQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+function isFileHandleLike(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const h = value as Partial<FileSystemFileHandle>;
+  return typeof h.getFile === 'function' || (h.kind === 'file' && typeof h.name === 'string');
+}
+
+function isDirHandleLike(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const d = value as Partial<FileSystemDirectoryHandle>;
+  return typeof d.getFileHandle === 'function' || (d.kind === 'directory' && typeof d.name === 'string');
+}
+
+function isValidDocumentRef(ref: unknown): ref is DocumentRef {
+  if (!ref || typeof ref !== 'object') return false;
+  const candidate = ref as Partial<DocumentRef>;
+  if (candidate.kind === 'library') return true;
+  if (candidate.kind === 'file') return isFileHandleLike((candidate as { handle?: unknown }).handle);
+  if (candidate.kind === 'folder') {
+    const folder = candidate as { directory?: unknown; file?: unknown };
+    return isDirHandleLike(folder.directory) && isFileHandleLike(folder.file);
+  }
+  return false;
+}
 
 export function storeDocumentRef(ref: DocumentRef): Promise<void> {
-  documentRefWrites = documentRefWrites.then(() => writeDocumentRef(ref));
-  return documentRefWrites;
+  return enqueueFileHandleOp(() => writeDocumentRef(ref));
 }
 
 async function writeDocumentRef(ref: DocumentRef): Promise<void> {
@@ -283,75 +320,75 @@ async function writeDocumentRef(ref: DocumentRef): Promise<void> {
   }
 }
 
-export async function loadDocumentRef(): Promise<DocumentRef | null> {
-  try {
-    const db = await openFileHandleDb();
-    let value: unknown;
+export function loadDocumentRef(): Promise<DocumentRef | null> {
+  return enqueueFileHandleOp(async function () {
     try {
-      value = await new Promise<unknown>((resolve, reject) => {
-        const tx = db.transaction('handles', 'readonly');
-        const request = tx.objectStore('handles').get('document-ref');
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-        tx.onabort = () => reject(tx.error || new Error('transaction aborted'));
-      });
-    } finally {
-      db.close();
+      const db = await openFileHandleDb();
+      let value: unknown;
+      try {
+        value = await new Promise<unknown>((resolve, reject) => {
+          const tx = db.transaction('handles', 'readonly');
+          const request = tx.objectStore('handles').get('document-ref');
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+          tx.onabort = () => reject(tx.error || new Error('transaction aborted'));
+        });
+      } finally {
+        db.close();
+      }
+      const record = value && typeof value === 'object' ? (value as { ref?: unknown }) : null;
+      return record && isValidDocumentRef(record.ref) ? record.ref : null;
+    } catch {
+      return null;
     }
-    const record = value && typeof value === 'object' ? (value as { ref?: DocumentRef }) : null;
-    if (
-      record &&
-      record.ref &&
-      (record.ref.kind === 'file' || record.ref.kind === 'folder' || record.ref.kind === 'library')
-    )
-      return record.ref;
-    return null;
-  } catch {
-    return null;
-  }
+  });
 }
 
-export async function storeWorkspaceHandle(handle: FileSystemDirectoryHandle): Promise<void> {
-  try {
-    const db = await openFileHandleDb();
+export function storeWorkspaceHandle(handle: FileSystemDirectoryHandle): Promise<void> {
+  return enqueueFileHandleOp(async function () {
     try {
-      await new Promise<void>((resolve, reject) => {
-        const tx = db.transaction('handles', 'readwrite');
-        tx.objectStore('handles').put({ handle }, 'workspace');
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-        tx.onabort = () => reject(tx.error || new Error('transaction aborted'));
-      });
-    } finally {
-      db.close();
+      const db = await openFileHandleDb();
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const tx = db.transaction('handles', 'readwrite');
+          tx.objectStore('handles').put({ handle }, 'workspace');
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+          tx.onabort = () => reject(tx.error || new Error('transaction aborted'));
+        });
+      } finally {
+        db.close();
+      }
+    } catch {
+      /* IDB may be unavailable */
     }
-  } catch {
-    /* IDB may be unavailable */
-  }
+  });
 }
 
-export async function loadWorkspaceHandle(): Promise<FileSystemDirectoryHandle | null> {
-  try {
-    const db = await openFileHandleDb();
-    let value: unknown;
+export function loadWorkspaceHandle(): Promise<FileSystemDirectoryHandle | null> {
+  return enqueueFileHandleOp(async function () {
     try {
-      value = await new Promise<unknown>((resolve, reject) => {
-        const tx = db.transaction('handles', 'readonly');
-        const request = tx.objectStore('handles').get('workspace');
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-        tx.onabort = () => reject(tx.error || new Error('transaction aborted'));
-      });
-    } finally {
-      db.close();
+      const db = await openFileHandleDb();
+      let value: unknown;
+      try {
+        value = await new Promise<unknown>((resolve, reject) => {
+          const tx = db.transaction('handles', 'readonly');
+          const request = tx.objectStore('handles').get('workspace');
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+          tx.onabort = () => reject(tx.error || new Error('transaction aborted'));
+        });
+      } finally {
+        db.close();
+      }
+      const record = value && typeof value === 'object' ? (value as { handle?: unknown }) : null;
+      return record && record.handle && typeof record.handle === 'object'
+        ? (record.handle as FileSystemDirectoryHandle)
+        : null;
+    } catch {
+      return null;
     }
-    const record = value && typeof value === 'object' ? (value as { handle?: unknown }) : null;
-    return record && record.handle && typeof record.handle === 'object'
-      ? (record.handle as FileSystemDirectoryHandle)
-      : null;
-  } catch {
-    return null;
-  }
+  });
 }
 
 function openFileHandleDb(): Promise<IDBDatabase> {

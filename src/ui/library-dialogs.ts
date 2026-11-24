@@ -103,7 +103,11 @@ function renderDocsRow(props: LibraryDialogProps, result: LibrarySearchResult, n
         h(
           'span',
           { className: 'mdstudio-library-title-line' },
-          h('span', { className: 'mdstudio-library-title' }, highlightHit(h, entry.title || t('untitled'), needle)),
+          h(
+            'span',
+            { className: 'mdstudio-library-title', title: entry.title || t('untitled') },
+            highlightHit(h, entry.title || t('untitled'), needle),
+          ),
           active ? h('span', { className: 'mdstudio-library-current' }, t('library.current')) : null,
         ),
         needle && result.snippet
@@ -156,7 +160,11 @@ function renderTrashRow(props: LibraryDialogProps, result: LibrarySearchResult, 
       h(
         'span',
         { className: 'mdstudio-library-row-body' },
-        h('span', { className: 'mdstudio-library-title' }, highlightHit(h, entry.title || t('untitled'), needle)),
+        h(
+          'span',
+          { className: 'mdstudio-library-title', title: entry.title || t('untitled') },
+          highlightHit(h, entry.title || t('untitled'), needle),
+        ),
         h('span', { className: 'mdstudio-library-meta' }, formatLibraryMeta(entry, 'trash', t, props.ui.locale?.())),
       ),
     ),
@@ -519,14 +527,30 @@ export interface ImportModeDialogProps extends DialogCommon {
   onCancel: () => void;
 }
 
+function pluralizeEn(count: number, pluralLabel: string): string {
+  const lower = pluralLabel.toLowerCase();
+  return count === 1 ? lower.replace(/s$/, '') : lower;
+}
+
 function buildImportModeDescription(summary: ImportBackupSummary, t: (key: string) => string): string {
-  const docPart = summary.docCount + ' ' + t('library.articles');
-  const assetPart = summary.assetCount > 0 ? ' · ' + summary.assetCount + ' ' + t('localImages') : '';
+  const prefix = t('library.importModeDescPrefix');
+  const isZh = /[\u4e00-\u9fff]/.test(prefix);
+  const docPart = isZh
+    ? summary.docCount + ' 篇' + t('library.articles')
+    : summary.docCount + ' ' + pluralizeEn(summary.docCount, t('library.articles'));
+  const assetPart =
+    summary.assetCount > 0
+      ? isZh
+        ? ' · ' + summary.assetCount + ' 张' + t('localImages')
+        : ' · ' + summary.assetCount + ' ' + pluralizeEn(summary.assetCount, t('localImages'))
+      : '';
   const missingPart =
-    summary.missingCount > 0 ? ' (' + summary.missingCount + ' ' + t('library.archiveMissing') + ')' : '';
-  return (
-    t('library.importModeDescPrefix') + ' ' + docPart + assetPart + missingPart + t('library.importModeDescSuffix')
-  );
+    summary.missingCount > 0
+      ? isZh
+        ? '（' + summary.missingCount + ' ' + t('library.archiveMissing') + '）'
+        : ' (' + summary.missingCount + ' ' + t('library.archiveMissing') + ')'
+      : '';
+  return prefix + ' ' + docPart + assetPart + missingPart + t('library.importModeDescSuffix');
 }
 
 export function ImportModeDialog(props: ImportModeDialogProps): ReactNode {
@@ -745,8 +769,10 @@ async function promptMoveEntry(props: WorkspaceDialogProps, entry: WorkspaceEntr
 }
 
 async function confirmDeleteEntry(props: WorkspaceDialogProps, entry: WorkspaceEntry): Promise<void> {
+  const tpl = props.t('workspace.deleteConfirm');
+  const title = tpl.includes('{name}') ? tpl.replace('{name}', () => entry.name) : tpl + ' ' + entry.name;
   const ok = await props.actions.onConfirm({
-    title: props.t('workspace.deleteConfirm') + ' ' + entry.name,
+    title,
     danger: true,
   });
   if (ok) props.actions.onDelete(entry);
@@ -1114,7 +1140,7 @@ export function WorkspaceDialog(props: WorkspaceDialogProps): ReactNode {
     h(
       'div',
       { className: 'mdstudio-library-body mdstudio-workspace-body' },
-      props.error ? h('div', { className: 'mdstudio-host-error' }, props.error) : null,
+      props.error ? h('div', { className: 'mdstudio-host-error', role: 'alert' }, props.error) : null,
       props.loading
         ? h('p', { className: 'mdstudio-help mdstudio-library-empty', role: 'status' }, t('workspace.loading'))
         : h(

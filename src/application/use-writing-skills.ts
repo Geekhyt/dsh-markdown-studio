@@ -82,7 +82,7 @@ export interface WritingSkillsApi {
   importSkillText: (
     file: File | null | undefined,
   ) => Promise<{ name: string; description: string; instructions: string } | null>;
-  runSkill: (overrideSkill?: WritingSkill) => Promise<void>;
+  runSkill: (overrideSkill?: WritingSkill, explicitRange?: SelectionRange) => Promise<void>;
   acceptPatch: (id: string) => void;
   dismissPatch: (id: string) => void;
   cancelSession: () => void;
@@ -218,11 +218,12 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
     optionsRef.current.focusEditor?.();
   };
 
-  const commitSkillState = (next: WritingSkillState): void => {
+  const commitSkillState = (next: WritingSkillState): { state: WritingSkillState; persisted: boolean } => {
     const clean = sanitizeWritingSkillState(next);
     skillStateRef.current = clean;
     setSkillState(clean);
-    saveWritingSkills(clean);
+    const persisted = saveWritingSkills(clean);
+    return { state: clean, persisted };
   };
 
   const resetSession = (): void => {
@@ -286,6 +287,18 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
     return Boolean(id && id !== BUILTIN_HUMANIZER_ID && current.customSkills.some((item) => item.id === id));
   };
 
+  const resolveNextActiveSkillId = (currentActiveId: string, savedId: string, setAsDefault: boolean): string => {
+    if (setAsDefault) return savedId;
+    return currentActiveId === savedId ? BUILTIN_HUMANIZER_ID : currentActiveId;
+  };
+
+  const resolveSkillSaveId = (id?: string | null): string =>
+    id && id !== BUILTIN_HUMANIZER_ID ? id : createCustomSkillId();
+
+  const notifySkillPersistence = (persisted: boolean, okKey: string): void => {
+    optionsRef.current.notify(t(persisted ? okKey : 'storage.saveFailed'), persisted ? 'success' : 'error');
+  };
+
   const saveCustom = (input: SaveSkillInput): WritingSkill | null => {
     const name = input.name.trim();
     const instructions = input.instructions.trim();
@@ -295,17 +308,13 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
       optionsRef.current.notify(t('ai.skillLimitReached'), 'error');
       return null;
     }
-    const id = input.id && input.id !== BUILTIN_HUMANIZER_ID ? input.id : createCustomSkillId();
+    const id = resolveSkillSaveId(input.id);
     const saved: WritingSkill = { id, name, description: input.description.trim(), instructions };
     const nextList = upsertCustomSkill(current.customSkills, saved);
-    const activeSkillId = input.setAsDefault
-      ? id
-      : current.activeSkillId === id
-        ? BUILTIN_HUMANIZER_ID
-        : current.activeSkillId;
-    commitSkillState({ activeSkillId, customSkills: nextList });
-    optionsRef.current.notify(t('ai.skillSaved'));
-    return saved;
+    const activeSkillId = resolveNextActiveSkillId(current.activeSkillId, id, input.setAsDefault);
+    const { state: committed, persisted } = commitSkillState({ activeSkillId, customSkills: nextList });
+    notifySkillPersistence(persisted, 'ai.skillSaved');
+    return findWritingSkill(committed, id) || saved;
   };
 
   const deleteCustom = (id: string): void => {
@@ -313,8 +322,8 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
     const current = skillStateRef.current;
     const nextList = removeCustomSkill(current.customSkills, id);
     const activeSkillId = current.activeSkillId === id ? BUILTIN_HUMANIZER_ID : current.activeSkillId;
-    commitSkillState({ activeSkillId, customSkills: nextList });
-    options.notify(t('ai.skillDeleted'));
+    const { persisted } = commitSkillState({ activeSkillId, customSkills: nextList });
+    notifySkillPersistence(persisted, 'ai.skillDeleted');
   };
 
   const exportSkill = (skill: WritingSkill): void => {
@@ -329,9 +338,13 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
   ): Promise<{ name: string; description: string; instructions: string } | null> => {
     if (!file) return null;
     try {
+      if (file.size > 1_000_000) throw new Error('skill file too large');
       const raw = await file.text();
+      if (!raw.trim()) throw new Error('empty skill file');
       const baseName = file.name.replace(/(?:\.skill)?\.md$/i, '').trim() || t('ai.defaultCustomName');
-      return parseSkillMarkdown(raw, baseName);
+      const parsed = parseSkillMarkdown(raw, baseName);
+      if (!parsed.instructions.trim()) throw new Error('empty skill instructions');
+      return parsed;
     } catch {
       options.notify(t('ai.skillImportFailed'), 'error');
       return null;
@@ -373,32 +386,38 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
       },
     });
     if (abortRef.current !== controller || controller.signal.aborted) return;
-    const unwrapped = unwrapMarkdownFenceIfProse((raw || res.text).trimEnd(), selectedText).replace(/\r\n?/g, '\n');
-    const cleanText = unwrapped.trim();
+    const unwrappedRaw = unwrapMarkdownFenceIfProse((raw || res.text).trimEnd(), selectedText).replace(/\r\n?/g, '\n');
+    const cleanText = unwrappedRaw.trim();
     if (!cleanText || cleanText === selectedText.trim()) {
       setSession(null);
       options.notify(t('ai.noChangesNeeded'), 'info');
       return;
     }
+    const isInlineSpan = !selectedText.includes('\n');
+    const leadSpace = isInlineSpan ? /^[ \t]+/.exec(selectedText)?.[0] || '' : '';
+    const trailSpace = isInlineSpan ? /[ \t]+$/.exec(selectedText)?.[0] || '' : '';
+    const replacement = isInlineSpan ? leadSpace + cleanText + trailSpace : unwrappedRaw;
     const patch: SkillPatch = {
       id: 'S1',
       start: range.start,
       end: range.end,
       original: selectedText,
-      replacement: unwrapped,
+      replacement,
     };
     setSession((prev) => (prev ? { ...prev, status: 'ready', patches: [patch] } : null));
   };
 
-  const runSkill = async (overrideSkill?: WritingSkill): Promise<void> => {
+  const runSkill = async (overrideSkill?: WritingSkill, explicitRange?: SelectionRange): Promise<void> => {
     const markdown = options.editorValue();
     const liveSelection = options.selection();
     const rawRange =
-      liveSelection.end > liveSelection.start
-        ? liveSelection
-        : sessionRef.current?.status === 'error'
-          ? sessionRef.current.selectionRange
-          : liveSelection;
+      explicitRange && explicitRange.end > explicitRange.start
+        ? explicitRange
+        : liveSelection.end > liveSelection.start
+          ? liveSelection
+          : sessionRef.current?.status === 'error'
+            ? sessionRef.current.selectionRange
+            : liveSelection;
     const range = trimSelectionNewlines(markdown, rawRange);
     const hasSelection = range.end > range.start && markdown.slice(range.start, range.end).trim().length > 0;
     if (!hasSelection) return;
@@ -466,7 +485,7 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
     if (session.patches.length === 0) {
       return [
         buildSelectionStreamingBlock(session, t, cancelSession, () => {
-          void runSkill(session.skill);
+          void runSkill(session.skill, session.selectionRange);
         }),
       ];
     }

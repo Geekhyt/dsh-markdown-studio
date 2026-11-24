@@ -35,9 +35,25 @@ export function useScrollSync(options: ScrollSyncOptions): ScrollSyncApi {
   const pendingEditorSyncRef = React.useRef(false);
   const pendingRelayoutRatioRef = React.useRef<number | null>(null);
   const relayoutSeqRef = React.useRef(0);
+  const mountedRef = React.useRef(true);
+  const rafIdRef = React.useRef<number | null>(null);
+
+  function cancelPendingRaf(): void {
+    if (
+      rafIdRef.current !== null &&
+      typeof window !== 'undefined' &&
+      typeof window.cancelAnimationFrame === 'function'
+    ) {
+      window.cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
+  }
 
   useMountDisposable(React, function () {
+    mountedRef.current = true;
     return function () {
+      mountedRef.current = false;
+      cancelPendingRaf();
       if (unlockTimerRef.current !== null) {
         clearTimeout(unlockTimerRef.current);
         unlockTimerRef.current = null;
@@ -98,7 +114,7 @@ export function useScrollSync(options: ScrollSyncOptions): ScrollSyncApi {
     if (lockSourceRef.current !== 'preview' && lockSourceRef.current !== 'restore') {
       pendingRelayoutRatioRef.current = null;
       relayoutSeqRef.current++;
-      if (!enabledRef.current) pendingEditorSyncRef.current = false;
+      if (!enabledRef.current || ratio !== null) pendingEditorSyncRef.current = false;
     }
     if (ratio !== null && !pendingEditorSyncRef.current) lastRatioRef.current = ratio;
     if (
@@ -119,12 +135,12 @@ export function useScrollSync(options: ScrollSyncOptions): ScrollSyncApi {
     if (!preview) return;
     const max = scrollMax(preview);
     if (max <= 0) return;
-    const ratio = preview.scrollTop / max;
-    lastRatioRef.current = ratio;
     if (lockSourceRef.current === 'editor' || lockSourceRef.current === 'restore') return;
+    const ratio = preview.scrollTop / max;
     pendingRelayoutRatioRef.current = null;
     relayoutSeqRef.current++;
     if (!enabledRef.current) return;
+    lastRatioRef.current = ratio;
     acquireLock('preview');
     pendingEditorSyncRef.current = !applyRatioToEditor(ratio);
   }
@@ -153,12 +169,14 @@ export function useScrollSync(options: ScrollSyncOptions): ScrollSyncApi {
 
   function restoreEditorScroll(): void {
     if (!enabledRef.current || !pendingEditorSyncRef.current) return;
+    cancelPendingRaf();
     const ratio = lastRatioRef.current;
     const seq = relayoutSeqRef.current;
     let remainingFrames = 8;
     let lastAppliedMax = -1;
     const apply = (): void => {
-      if (relayoutSeqRef.current !== seq) return;
+      rafIdRef.current = null;
+      if (!mountedRef.current || relayoutSeqRef.current !== seq) return;
       const curMax = readEditorMax();
       if (curMax > 0 && curMax !== lastAppliedMax) {
         acquireLock('restore');
@@ -167,19 +185,25 @@ export function useScrollSync(options: ScrollSyncOptions): ScrollSyncApi {
         pendingEditorSyncRef.current = false;
       }
       if (--remainingFrames > 0 && typeof window !== 'undefined') {
-        window.requestAnimationFrame(apply);
+        rafIdRef.current = window.requestAnimationFrame(apply);
       }
     };
     apply();
   }
 
   function resetPreviewScroll(): void {
+    cancelPendingRaf();
     relayoutSeqRef.current++;
     lastRatioRef.current = 0;
     pendingEditorSyncRef.current = false;
     pendingRelayoutRatioRef.current = null;
+    acquireLock('restore');
     const preview = previewRef.current;
     if (preview) preview.scrollTop = 0;
+    const cm = options.codeMirrorApiRef.current;
+    if (cm) cm.scrollToRatio(0);
+    const ta = options.textareaRef.current;
+    if (ta) ta.scrollTop = 0;
   }
 
   function capturePreviewRatio(): void {
@@ -200,15 +224,19 @@ export function useScrollSync(options: ScrollSyncOptions): ScrollSyncApi {
     if (ratio === null) return;
     const preview = previewRef.current;
     if (!preview) return;
+    cancelPendingRaf();
     const seq = relayoutSeqRef.current;
     const appliedMax = scrollMax(preview);
     acquireLock('restore');
     scrollToRatio(preview, ratio);
     lastRatioRef.current = ratio;
     if (typeof window !== 'undefined') {
-      window.requestAnimationFrame(function () {
+      rafIdRef.current = window.requestAnimationFrame(function () {
+        rafIdRef.current = null;
         const current = previewRef.current;
-        if (!current || relayoutSeqRef.current !== seq || scrollMax(current) === appliedMax) return;
+        if (!mountedRef.current || !current || relayoutSeqRef.current !== seq || scrollMax(current) === appliedMax) {
+          return;
+        }
         acquireLock('restore');
         scrollToRatio(current, ratio);
       });

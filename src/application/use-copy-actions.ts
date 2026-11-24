@@ -3,8 +3,9 @@ import { renderArticle } from '../adapters/render-article';
 import type { Article } from '../domain/article';
 import { markdownToPlain } from '../domain/article';
 import type { MermaidCacheEntry } from '../domain/mermaid';
+import { extractMermaidBlocks } from './use-mermaid-assets';
 import { inspectWechatHtml } from '../domain/wechat-html-lint';
-import { mermaidThemeFor, type MermaidTheme, type ThemeSettings } from '../themes';
+import { mermaidCacheKey, mermaidThemeFor, type MermaidTheme, type ThemeSettings } from '../themes';
 import type { MathAssetsApi } from './use-math-assets';
 
 type Notify = (text: string, tone?: 'success' | 'error' | 'info') => void;
@@ -105,11 +106,17 @@ export function useCopyActions(options: CopyActionsOptions): CopyActionsApi {
     copyingRef.current = true;
     setCopying(true);
     try {
+      const mermaidTheme = mermaidThemeFor(settings);
       const [mermaidSnapshot] = await Promise.all([
-        options.mermaidAssets.ensure(doc.markdown, mermaidThemeFor(settings)),
+        options.mermaidAssets.ensure(doc.markdown, mermaidTheme),
         options.mathAssets.ensure(doc.markdown),
       ]);
       const mermaidMap = mermaidSnapshot && mermaidSnapshot.size ? mermaidSnapshot : options.mermaidAssets.cache;
+      const mermaidBlocks = extractMermaidBlocks(doc.markdown);
+      const mermaidFailed = mermaidBlocks.filter((source) => {
+        const entry = mermaidMap.get(mermaidCacheKey(source, mermaidTheme));
+        return !entry || entry.status !== 'ready';
+      }).length;
       const article = renderArticle(doc.markdown, settings, {
         locale: options.locale,
         imageBaseUrl: options.localImageServerUrl || 'http://127.0.0.1:4010',
@@ -131,7 +138,13 @@ export function useCopyActions(options: CopyActionsOptions): CopyActionsApi {
       } catch {
         ok = false;
       }
-      options.notify(ok ? t('toast.copied') : t('toast.copyFailed'), ok ? 'success' : 'error');
+      if (!ok) {
+        options.notify(t('toast.copyFailed'), 'error');
+      } else if (mermaidFailed) {
+        options.notify(t('toast.copied') + ' · ' + mermaidFailed + ' ' + t('wechat.uploadFailed'), 'info');
+      } else {
+        options.notify(t('toast.copied'), 'success');
+      }
     } catch (error) {
       options.notify(options.describeHostError(error), 'error');
     } finally {

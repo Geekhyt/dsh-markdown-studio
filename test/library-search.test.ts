@@ -75,3 +75,10 @@ assert.ok(
     snakeHits[0].snippet.includes('强调') &&
     !snakeHits[0].snippet.includes('_强调_'),
 );
+const turkishHits = searchArticles(
+  [article('tr', 'A'.repeat(1200) + ' needle', 'İ'.repeat(45) + ' needle end')],
+  'needle',
+);
+assert.equal(turkishHits.length, 1);
+assert.ok(turkishHits[0].snippet.includes('needle'), 'Turkish İ does not shift snippet offset past match');
+assert.ok(turkishHits[0].score >= 100, 'title score stays positive even on very long titles');

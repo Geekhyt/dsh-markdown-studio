@@ -103,6 +103,7 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
       const result = await handle.requestPermission({ mode: 'readwrite' });
       if (!isGenerationCurrent(generation, generationRef.current)) return false;
       setPermission(normalizePermissionState(result));
+      if (result === 'granted') checkExternalOnFocus();
       return result === 'granted';
     } catch {
       if (isGenerationCurrent(generation, generationRef.current)) setPermission('prompt');
@@ -143,16 +144,32 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
     setConflict(false);
   }
 
+  function enqueueFileOp<T>(task: () => Promise<T>): Promise<T> {
+    const pending = writesRef.current.then(task, task);
+    writesRef.current = pending.catch(function () {
+      /* subsequent ops keep flowing */
+    });
+    return pending;
+  }
+
   async function isExternallyChanged(): Promise<boolean> {
     const handle = linkedFile();
     if (!handle) return false;
     const generation = generationRef.current;
-    const stamp = stampRef.current;
     try {
       const file = await handle.getFile();
       const fingerprint = await fileFingerprint(await file.text());
       if (generation !== generationRef.current) return true;
+      const stamp = stampRef.current;
       if (stamp && stamp.handle === handle && fingerprint === stamp.fingerprint) return false;
+      if (!stamp) {
+        const expected = await fileFingerprint(optionsRef.current.getDocument().markdown);
+        if (generation !== generationRef.current) return true;
+        if (fingerprint === expected) {
+          rememberFile(handle, file, fingerprint);
+          return false;
+        }
+      }
       markConflict();
     } catch {
       if (generation === generationRef.current) markConflict('file.missing');
@@ -160,7 +177,7 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
     return true;
   }
 
-  // All file writes share one queue; a switched document invalidates queued work.
+  // All file writes, reloads, and conflict checks share one queue; a switched document invalidates queued work.
   function writeFile(
     handle: FileSystemFileHandle,
     content: string,
@@ -168,21 +185,24 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
     requestWritePermission = false,
   ): Promise<'saved' | 'conflict' | 'denied' | 'stale'> {
     const generation = generationRef.current;
-    const run = async (): Promise<'saved' | 'conflict' | 'denied' | 'stale'> => {
+    return enqueueFileOp(async (): Promise<'saved' | 'conflict' | 'denied' | 'stale'> => {
       await restoringRef.current;
+      if (generation !== generationRef.current) return 'stale';
+      const current = linkedFile();
+      const sameFile = Boolean(
+        current && (current === handle || (handle.isSameEntry && (await handle.isSameEntry(current)))),
+      );
       if (generation !== generationRef.current) return 'stale';
       if (handle.queryPermission) {
         let allowed = await handle.queryPermission({ mode: 'readwrite' });
         if (allowed !== 'granted' && requestWritePermission) {
           allowed = await handle.requestPermission({ mode: 'readwrite' });
         }
-        if (generation === generationRef.current) {
+        if (sameFile && generation === generationRef.current) {
           setPermission(allowed === 'granted' ? 'granted' : allowed === 'denied' ? 'denied' : 'prompt');
         }
         if (allowed !== 'granted') return 'denied';
       }
-      const current = linkedFile();
-      const sameFile = current && (current === handle || (handle.isSameEntry && (await handle.isSameEntry(current))));
       if (generation !== generationRef.current) return 'stale';
       if (sameFile && !overwrite && (conflictRef.current || (await isExternallyChanged()))) return 'conflict';
       if (generation !== generationRef.current) return 'stale';
@@ -201,16 +221,11 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
         throw error;
       }
       if (generation !== generationRef.current) return 'stale';
-      await stampFile(handle, await handle.getFile(), content);
+      await stampFile(sameFile && current ? current : handle, await handle.getFile(), content);
       if (generation !== generationRef.current) return 'stale';
       dismissConflict();
       return 'saved';
-    };
-    const pending = writesRef.current.then(run, run);
-    writesRef.current = pending.catch(function () {
-      /* the next save may retry */
     });
-    return pending;
   }
 
   function persist(ref: DocumentRef): void {
@@ -222,6 +237,7 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
 
   function linkFile(handle: FileSystemFileHandle): void {
     workspacePickRef.current = null;
+    dismissConflict();
     const version = stampRef.current?.handle === handle ? stampRef.current : undefined;
     persist({
       kind: 'file',
@@ -234,6 +250,7 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
 
   function linkFolder(directory: FileSystemDirectoryHandle, file: FileSystemFileHandle): void {
     workspacePickRef.current = directory;
+    dismissConflict();
     const version = stampRef.current?.handle === file ? stampRef.current : undefined;
     persist({
       kind: 'folder',
@@ -274,20 +291,32 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
         originalText,
         currentText: optionsRef.current.getDocument().markdown,
       });
-    try {
-      await writesRef.current;
-      if (!valid()) return;
-      const file = await handle.getFile();
-      const text = await file.text();
-      const fingerprint = await fileFingerprint(text);
-      if (!valid()) return;
-      rememberFile(handle, file, fingerprint);
-      dismissConflict();
-      optionsRef.current.onReload(text, file);
-      optionsRef.current.notify(optionsRef.current.t('file.reloaded'));
-    } catch {
-      if (valid()) optionsRef.current.notify(optionsRef.current.t('file.openFailed'), 'error');
-    }
+    await enqueueFileOp(async () => {
+      try {
+        if (!valid()) return;
+        if (handle.queryPermission) {
+          const perm = await handle.queryPermission({ mode: 'read' });
+          if (perm !== 'granted' && typeof handle.requestPermission === 'function') {
+            const granted = await handle.requestPermission({ mode: 'read' });
+            if (granted !== 'granted') {
+              if (valid()) optionsRef.current.notify(optionsRef.current.t('file.permission'), 'error');
+              return;
+            }
+          }
+        }
+        if (!valid()) return;
+        const file = await handle.getFile();
+        const text = await file.text();
+        const fingerprint = await fileFingerprint(text);
+        if (!valid()) return;
+        rememberFile(handle, file, fingerprint);
+        dismissConflict();
+        optionsRef.current.onReload(text, file);
+        optionsRef.current.notify(optionsRef.current.t('file.reloaded'));
+      } catch {
+        if (valid()) optionsRef.current.notify(optionsRef.current.t('file.openFailed'), 'error');
+      }
+    });
   }
 
   async function restoreAssociation(generation: number): Promise<void> {
@@ -325,16 +354,15 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
   function checkExternalOnFocus(): void {
     if (!linkedFile() || conflictRef.current) return;
     const generation = generationRef.current;
-    void restoringRef.current
-      .then(() => writesRef.current)
-      .then(async function () {
-        if (generation !== generationRef.current || !linkedFile() || conflictRef.current) return false;
-        const perm = await refreshPermission();
-        if (generation !== generationRef.current || perm !== 'granted' || !linkedFile() || conflictRef.current) {
-          return false;
-        }
-        return isExternallyChanged();
-      });
+    void enqueueFileOp(async function () {
+      await restoringRef.current;
+      if (generation !== generationRef.current || !linkedFile() || conflictRef.current) return false;
+      const perm = await refreshPermission();
+      if (generation !== generationRef.current || perm !== 'granted' || !linkedFile() || conflictRef.current) {
+        return false;
+      }
+      return isExternallyChanged();
+    });
   }
 
   useWindowEvent(React, 'focus', checkExternalOnFocus);

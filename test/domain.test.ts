@@ -329,4 +329,32 @@ const nearDockBelow = computeCaretPopoverPos({
 });
 assert.ok((nearDockBelow.top ?? 0) >= 58, 'below-caret SlashMenu shifts beneath overlapping top-right dock');
 
-console.log('44 settings, asset & surface-geometry edge checks passed.');
+// G3 regression: unbalanced ![ before a valid image must NOT blind assetFilesInMarkdown / collectLocalImages
+{
+  const brokenThenReal = 'Draft note ![unclosed alt text\n\n![cover](assets/0123456789abcdef01234567.png)';
+  assert.deepEqual(
+    assetFilesInMarkdown(brokenThenReal),
+    ['0123456789abcdef01234567.png'],
+    'unbalanced ![ does not hide later assets/ images from AssetGC',
+  );
+  assert.equal(collectLocalImages(brokenThenReal).size, 1, 'collectLocalImages keeps later images after unbalanced ![');
+}
+
+// G6 regression: above-caret popover pushed down by a top obstacle must clamp maxHeight so it never covers the caret line
+{
+  const aboveWithTopDock = computeCaretPopoverPos({
+    surface: { left: 0, top: 0, right: 800, bottom: 500, width: 800, height: 500 },
+    caretTop: 320,
+    caretBottom: 340,
+    caretLeft: 620,
+    width: 240,
+    maxMenuHeight: 320,
+    obstacles: [{ left: 600, top: 10, right: 790, bottom: 50, width: 190, height: 40 }],
+  });
+  assert.ok(
+    (aboveWithTopDock.top ?? 0) + aboveWithTopDock.maxHeight <= 320,
+    'above-caret popover pushed down by top dock clamps height to stay strictly above caretTop',
+  );
+}
+
+console.log('47 settings, asset & surface-geometry edge checks passed.');

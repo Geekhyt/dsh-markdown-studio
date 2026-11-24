@@ -60,18 +60,55 @@ export function ensureUniqueArticleIds(state: LibraryState): LibraryState {
   return changed ? { ...state, docs, trash } : state;
 }
 
-export interface MergeTombstones {
-  deletedDocIds?: ReadonlySet<string>;
-  purgedTrashIds?: ReadonlySet<string>;
-  emptyTrash?: boolean;
+export type DocIntent = 'live' | 'trashed' | 'purged';
+
+export interface MergeIntents {
+  docIntents: ReadonlyMap<string, DocIntent>;
   localCustomThemes?: CustomTheme[] | null;
+}
+
+function readRev(doc?: { rev?: number }): number {
+  const value = doc?.rev;
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : 0;
+}
+
+function bumpRev(doc?: { rev?: number }): number {
+  return readRev(doc) + 1;
+}
+
+function sameCustomTheme(a: CustomTheme, b: CustomTheme): boolean {
+  return a.id === b.id && a.name === b.name && a.css === b.css;
+}
+
+function sameCustomThemes(a?: readonly CustomTheme[], b?: readonly CustomTheme[]): boolean {
+  const left = a || [];
+  const right = b || [];
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  return left.every((item, index) => sameCustomTheme(item, right[index]));
+}
+
+function buildRestoredArticle(
+  item: Article,
+  docs: readonly Article[],
+  activeCustom: CustomTheme[],
+  nextId: () => string,
+): { restored: Article; sharedCustom: CustomTheme[]; customChanged: boolean } {
+  const { deletedAt: _deletedAt, ...trashed } = item;
+  const id = docs.some((doc) => doc.id === trashed.id) ? nextId() : trashed.id;
+  // Live custom themes take precedence over stale trashed snapshots while still reviving deleted themes.
+  const sharedCustom = mergeCustomThemes(trashed.settings.customThemes, activeCustom);
+  return {
+    restored: applySharedCustomThemes({ ...trashed, id, rev: bumpRev(trashed) }, sharedCustom),
+    sharedCustom,
+    customChanged: !sameCustomThemes(activeCustom, sharedCustom),
+  };
 }
 
 function mergeDocLists(
   localDocs: readonly Article[],
   externalDocs: readonly Article[],
-  dirtyIds: ReadonlySet<string>,
-  deletedDocIds?: ReadonlySet<string>,
+  intents: ReadonlyMap<string, DocIntent>,
 ): Article[] {
   const localById = new Map<string, Article>();
   for (const doc of localDocs) localById.set(doc.id, doc);
@@ -79,16 +116,21 @@ function mergeDocLists(
   const merged: Article[] = [];
   for (const ext of externalDocs) {
     seen.add(ext.id);
-    if (deletedDocIds?.has(ext.id)) continue;
+    const intent = intents.get(ext.id);
+    if (intent === 'trashed' || intent === 'purged') continue;
     const local = localById.get(ext.id);
-    if (local && dirtyIds.has(ext.id)) {
-      merged.push(local);
+    if (local && intent === 'live') {
+      const localRev = readRev(local);
+      const extRev = readRev(ext);
+      merged.push(extRev >= localRev && extRev > 0 ? { ...local, rev: extRev + 1 } : local);
     } else {
       merged.push(ext);
     }
   }
   for (const local of localDocs) {
-    if (!seen.has(local.id) && dirtyIds.has(local.id) && !deletedDocIds?.has(local.id)) merged.unshift(local);
+    if (!seen.has(local.id) && intents.get(local.id) === 'live') {
+      merged.unshift(local);
+    }
   }
   return merged.length ? merged : [...localDocs];
 }
@@ -97,18 +139,17 @@ function mergeTrashLists(
   externalTrash: readonly Article[],
   localTrash: readonly Article[],
   liveIds: ReadonlySet<string>,
-  tombstones?: MergeTombstones,
+  intents: ReadonlyMap<string, DocIntent>,
 ): Article[] {
-  if (tombstones?.emptyTrash) return [];
   const seen = new Set<string>();
   const merged: Article[] = [];
   const append = (item: Article): void => {
-    if (liveIds.has(item.id) || seen.has(item.id) || tombstones?.purgedTrashIds?.has(item.id)) return;
+    if (liveIds.has(item.id) || seen.has(item.id) || intents.get(item.id) === 'purged') return;
     seen.add(item.id);
     merged.push(item);
   };
   for (const item of localTrash) {
-    if (tombstones?.deletedDocIds?.has(item.id)) append(item);
+    if (intents.get(item.id) === 'trashed') append(item);
   }
   for (const item of externalTrash) append(item);
   return merged;
@@ -120,33 +161,21 @@ function collectSharedCustomThemes(docs: readonly Article[]): CustomTheme[] {
   return shared;
 }
 
-export function mergeExternalLibrary(
-  local: LibraryState,
-  external: LibraryState,
-  dirtyIds: ReadonlySet<string>,
-  tombstones?: MergeTombstones,
-): LibraryState {
-  const docs = mergeDocLists(local.docs, external.docs, dirtyIds, tombstones?.deletedDocIds);
+export function mergeExternalLibrary(local: LibraryState, external: LibraryState, merge: MergeIntents): LibraryState {
+  const docs = mergeDocLists(local.docs, external.docs, merge.docIntents);
   const liveIds = new Set(docs.map((entry) => entry.id));
   const activeId = liveIds.has(local.activeId)
     ? local.activeId
     : liveIds.has(external.activeId)
       ? external.activeId
       : docs[0].id;
-  const trash = mergeTrashLists(external.trash || [], local.trash || [], liveIds, tombstones);
+  const trash = mergeTrashLists(external.trash || [], local.trash || [], liveIds, merge.docIntents);
   const base = ensureUniqueArticleIds({ activeId, docs, trash });
-  if (tombstones?.localCustomThemes != null) {
-    return {
-      ...base,
-      docs: base.docs.map((doc) => applySharedCustomThemes(doc, tombstones.localCustomThemes!)),
-    };
-  }
-  const externalShared = collectSharedCustomThemes(external.docs);
-  const mergedShared = mergeCustomThemes(externalShared, collectSharedCustomThemes(base.docs));
-  if (!mergedShared.length) return base;
+  const sharedThemes =
+    merge.localCustomThemes != null ? merge.localCustomThemes : collectSharedCustomThemes(external.docs);
   return {
     ...base,
-    docs: base.docs.map((doc) => applySharedCustomThemes(doc, mergedShared)),
+    docs: base.docs.map((doc) => applySharedCustomThemes(doc, sharedThemes)),
   };
 }
 
@@ -159,9 +188,12 @@ export interface NewArticleSeed {
   view: ViewMode;
 }
 
+export type ExternalMergeListener = (prevActive: Article, nextActive: Article, activeWasDirty: boolean) => void;
+
 export interface DocumentStoreOptions {
   now?: () => number;
   nextId?: () => string;
+  onExternalMerge?: ExternalMergeListener;
 }
 
 /**
@@ -177,13 +209,13 @@ export class DocumentStore {
   private status: 'saved' | 'pending' | 'error' = 'saved';
   private dirty = false;
   private pendingReplace = false;
-  private pendingEmptyTrash = false;
+  private pendingActiveSwitch = false;
   private pendingCustomThemes = false;
-  private readonly dirtyDocIds = new Set<string>();
-  private readonly pendingDeletedIds = new Set<string>();
-  private readonly pendingPurgedIds = new Set<string>();
+  /** Single authoritative per-article local intent: an id can never be both live and purged. */
+  private readonly pendingIntents = new Map<string, DocIntent>();
   private readonly statusListeners = new Set<() => void>();
   private readonly listeners = new Set<() => void>();
+  private readonly externalMergeListeners = new Set<ExternalMergeListener>();
   private timer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
@@ -195,10 +227,18 @@ export class DocumentStore {
     if (!initial.docs.length) throw new Error('DocumentStore needs at least one article');
     this.now = options?.now || Date.now;
     this.nextId = options?.nextId || newArticleId;
+    if (options?.onExternalMerge) this.externalMergeListeners.add(options.onExternalMerge);
     this.state = unifyLibraryCustomThemes(ensureUniqueArticleIds(initial));
     this.persist = persist;
     this.loadLatest = loadLatest;
   }
+
+  subscribeExternalMerge = (listener: ExternalMergeListener): (() => void) => {
+    this.externalMergeListeners.add(listener);
+    return () => {
+      this.externalMergeListeners.delete(listener);
+    };
+  };
 
   getSnapshot = (): LibraryState => this.state;
 
@@ -229,14 +269,16 @@ export class DocumentStore {
       ...patch,
       settings: patch.settings ? { ...patch.settings } : active.settings,
       updatedAt: this.now(),
+      rev: bumpRev(active),
     };
-    const syncCustom = patch.settings !== undefined && next.settings.customThemes !== active.settings.customThemes;
+    const syncCustom =
+      patch.settings !== undefined && !sameCustomThemes(active.settings.customThemes, next.settings.customThemes);
     const sharedCustom = next.settings.customThemes || [];
     const docs = this.state.docs.map((entry) => {
       if (entry.id === active.id) return next;
       return syncCustom ? applySharedCustomThemes(entry, sharedCustom) : entry;
     });
-    this.dirtyDocIds.add(active.id);
+    this.pendingIntents.set(active.id, 'live');
     if (syncCustom) this.pendingCustomThemes = true;
     this.commit({ activeId: active.id, docs });
     return next;
@@ -245,13 +287,20 @@ export class DocumentStore {
   switchTo(id: string): Article | null {
     const target = this.state.docs.find((entry) => entry.id === id);
     if (!target) return null;
-    if (id !== this.state.activeId) this.commit({ activeId: id, docs: this.state.docs });
+    if (id !== this.state.activeId) {
+      this.pendingActiveSwitch = true;
+      this.commit({ activeId: id, docs: this.state.docs });
+    }
     return target;
   }
 
   create(seed: NewArticleSeed): Article {
     const id = this.nextId();
-    const sharedCustom = seed.settings.customThemes || this.getActive().settings.customThemes || [];
+    const activeCustom = this.getActive().settings.customThemes || [];
+    const sharedCustom = seed.settings.customThemes || activeCustom;
+    if (seed.settings.customThemes && !sameCustomThemes(activeCustom, seed.settings.customThemes)) {
+      this.pendingCustomThemes = true;
+    }
     const entry: Article = {
       id,
       title: seed.title,
@@ -259,8 +308,9 @@ export class DocumentStore {
       settings: { ...seed.settings, customThemes: sharedCustom },
       view: seed.view,
       updatedAt: this.now(),
+      rev: 1,
     };
-    this.dirtyDocIds.add(id);
+    this.pendingIntents.set(id, 'live');
     this.commit({ activeId: id, docs: [entry, ...this.state.docs] });
     return entry;
   }
@@ -268,9 +318,8 @@ export class DocumentStore {
   delete(id: string, fallbackTitle: string): Article {
     const target = this.state.docs.find((entry) => entry.id === id);
     if (!target) return this.getActive();
-    this.pendingDeletedIds.add(id);
-    this.dirtyDocIds.delete(id);
-    const trash = [{ ...target, deletedAt: this.now() }, ...(this.state.trash || [])];
+    this.pendingIntents.set(id, 'trashed');
+    const trash = [{ ...target, rev: bumpRev(target), deletedAt: this.now() }, ...(this.state.trash || [])];
     const remaining = this.state.docs.filter((entry) => entry.id !== id);
     if (!remaining.length) {
       const newId = this.nextId();
@@ -281,8 +330,9 @@ export class DocumentStore {
         settings: { ...DEFAULT_SETTINGS, customThemes: target.settings.customThemes || [] },
         view: 'split',
         updatedAt: this.now(),
+        rev: 1,
       };
-      this.dirtyDocIds.add(newId);
+      this.pendingIntents.set(newId, 'live');
       this.commit({ activeId: newId, docs: [blank], trash });
       return blank;
     }
@@ -296,65 +346,57 @@ export class DocumentStore {
   }
 
   restore(id: string): Article | null {
-    const item = (this.state.trash || []).find((entry) => entry.id === id);
+    const currentTrash = this.state.trash || [];
+    const item = currentTrash.find((entry) => entry.id === id);
     if (!item) return null;
-    this.pendingDeletedIds.delete(id);
-    this.pendingPurgedIds.add(id);
-    const { deletedAt: _deletedAt, ...trashed } = item;
-    const idTaken = this.state.docs.some((doc) => doc.id === trashed.id);
-    const restoredRaw: Article = idTaken ? { ...trashed, id: this.nextId() } : trashed;
-    const sharedCustom = mergeCustomThemes(this.getActive().settings.customThemes, restoredRaw.settings.customThemes);
-    const restored = applySharedCustomThemes(restoredRaw, sharedCustom);
-    this.dirtyDocIds.add(restored.id);
-    const trash = (this.state.trash || []).filter((entry) => entry !== item);
+    const { restored, sharedCustom, customChanged } = buildRestoredArticle(
+      item,
+      this.state.docs,
+      this.getActive().settings.customThemes || [],
+      this.nextId,
+    );
+    if (customChanged) this.pendingCustomThemes = true;
+    this.pendingIntents.set(restored.id, 'live');
+    const trash = currentTrash.filter((entry) => entry !== item);
     const docs = [restored, ...this.state.docs.map((doc) => applySharedCustomThemes(doc, sharedCustom))];
     this.commit({ activeId: this.state.activeId, docs, trash });
     return restored;
   }
 
   purge(id: string): void {
-    this.pendingPurgedIds.add(id);
+    this.pendingIntents.set(id, 'purged');
     const trash = (this.state.trash || []).filter((entry) => entry.id !== id);
     this.commit({ activeId: this.state.activeId, docs: this.state.docs, trash });
   }
 
   emptyTrash(): void {
-    this.pendingEmptyTrash = true;
+    for (const item of this.state.trash || []) {
+      this.pendingIntents.set(item.id, 'purged');
+    }
     this.commit({ activeId: this.state.activeId, docs: this.state.docs, trash: [] });
   }
 
   private clearPendingChanges(): void {
     this.dirty = false;
     this.pendingReplace = false;
-    this.pendingEmptyTrash = false;
+    this.pendingActiveSwitch = false;
     this.pendingCustomThemes = false;
-    this.dirtyDocIds.clear();
-    this.pendingDeletedIds.clear();
-    this.pendingPurgedIds.clear();
+    this.pendingIntents.clear();
   }
 
   private hasPendingMutations(): boolean {
-    return (
-      this.dirtyDocIds.size > 0 ||
-      this.pendingDeletedIds.size > 0 ||
-      this.pendingPurgedIds.size > 0 ||
-      this.pendingEmptyTrash ||
-      this.pendingCustomThemes ||
-      this.pendingReplace
-    );
+    return this.pendingIntents.size > 0 || this.pendingActiveSwitch || this.pendingCustomThemes || this.pendingReplace;
   }
 
-  private buildTombstones(): MergeTombstones {
+  private buildMergeIntents(): MergeIntents {
     return {
-      deletedDocIds: this.pendingDeletedIds,
-      purgedTrashIds: this.pendingPurgedIds,
-      emptyTrash: this.pendingEmptyTrash,
+      docIntents: this.pendingIntents,
       localCustomThemes: this.pendingCustomThemes ? this.getActive().settings.customThemes || [] : null,
     };
   }
 
   isDocDirty(id: string): boolean {
-    return this.dirtyDocIds.has(id);
+    return this.pendingIntents.get(id) === 'live';
   }
 
   replaceAll(next: LibraryState, persistFirst = false): Article {
@@ -385,10 +427,23 @@ export class DocumentStore {
     return this.getActive();
   }
 
+  private notifyExternalMerge(prevActive: Article, nextActive: Article, activeWasDirty: boolean): void {
+    if (prevActive.id === nextActive.id && prevActive.markdown === nextActive.markdown) return;
+    this.externalMergeListeners.forEach((listener) => {
+      listener(prevActive, nextActive, activeWasDirty);
+    });
+  }
+
   /** Merge a newer library snapshot persisted by another browser tab while preserving unsaved local dirty articles. */
   syncExternal(next: LibraryState): void {
     if (!next.docs.length || this.pendingReplace) return;
-    this.state = mergeExternalLibrary(this.state, next, this.dirtyDocIds, this.buildTombstones());
+    const prevActive = this.getActive();
+    const activeWasDirty = this.isDocDirty(prevActive.id);
+    this.state = mergeExternalLibrary(this.state, next, this.buildMergeIntents());
+    const nextActive = this.getActive();
+    if (this.pendingActiveSwitch && (nextActive.id === next.activeId || nextActive.id !== prevActive.id)) {
+      this.pendingActiveSwitch = false;
+    }
     if (!this.hasPendingMutations()) {
       if (this.timer !== null) {
         clearTimeout(this.timer);
@@ -397,6 +452,7 @@ export class DocumentStore {
       this.dirty = false;
       this.setStatus('saved');
     }
+    this.notifyExternalMerge(prevActive, nextActive, activeWasDirty);
     this.listeners.forEach((listener) => {
       listener();
     });
@@ -413,10 +469,14 @@ export class DocumentStore {
 
   private write(): boolean {
     let mergedFromDisk = false;
+    let prevActive: Article | null = null;
+    let activeWasDirty = false;
     if (this.loadLatest && !this.pendingReplace) {
       const disk = this.loadLatest();
       if (disk && disk.docs.length > 0) {
-        this.state = mergeExternalLibrary(this.state, disk, this.dirtyDocIds, this.buildTombstones());
+        prevActive = this.getActive();
+        activeWasDirty = this.isDocDirty(prevActive.id);
+        this.state = mergeExternalLibrary(this.state, disk, this.buildMergeIntents());
         mergedFromDisk = true;
       }
     }
@@ -426,6 +486,7 @@ export class DocumentStore {
     }
     this.setStatus(ok ? 'saved' : 'error');
     if (mergedFromDisk) {
+      if (prevActive) this.notifyExternalMerge(prevActive, this.getActive(), activeWasDirty);
       this.listeners.forEach((listener) => {
         listener();
       });

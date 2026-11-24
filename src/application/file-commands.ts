@@ -139,16 +139,31 @@ export function createFileCommands(options: FileActionsOptions): FileActionsApi 
   async function saveLocalFile(forceDialog?: boolean): Promise<void> {
     const articleId = options.store.getActive().id;
     const linkedBefore = options.fileContext.linkedFile();
-    const content = String(options.markdownRef.current || '');
+    const initialContent = String(options.markdownRef.current || '');
     const title = doc.title || t('untitled');
     try {
-      const handle = await chooseSaveHandle(forceDialog, title, content);
-      if (!handle || options.store.getActive().id !== articleId) return;
+      const handle = await chooseSaveHandle(forceDialog, title, initialContent);
+      if (!handle || options.store.getActive().id !== articleId || options.fileContext.linkedFile() !== linkedBefore) {
+        return;
+      }
+      const content = String(options.markdownRef.current || '');
       const { result, writtenContent } = await writeWithConflict(handle, content, articleId, linkedBefore);
       if (result === 'denied') options.notify(t('file.permission'), 'error');
-      if (result !== 'saved' || options.store.getActive().id !== articleId) return;
+      if (
+        result !== 'saved' ||
+        options.store.getActive().id !== articleId ||
+        options.fileContext.linkedFile() !== linkedBefore
+      ) {
+        return;
+      }
       options.onSaved?.(writtenContent);
-      if (options.fileContext.linkedFile() !== handle) {
+      const currentLinked = options.fileContext.linkedFile();
+      const isSameLinked = Boolean(
+        currentLinked &&
+          (currentLinked === handle ||
+            (typeof handle.isSameEntry === 'function' && (await handle.isSameEntry(currentLinked).catch(() => false)))),
+      );
+      if (!isSameLinked) {
         options.setDocumentRef({ kind: 'file', handle });
       }
       options.setFileName(handle.name || options.fileName);

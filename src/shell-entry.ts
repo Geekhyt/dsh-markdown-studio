@@ -202,24 +202,8 @@ export function create(
     let translate: ((key: string) => string) | null = null;
 
     ctx.effect(() => {
-      mountPluginStyles();
       const disposers: Array<() => void> = [];
-      activeDisposers = disposers;
-      if (locale) {
-        disposers.push(registerShellLocale(locale));
-        try {
-          translate = locale.bind(SHELL_LOCALE_NS);
-          activeTranslate = translate;
-        } catch (_err) {
-          translate = null;
-          activeTranslate = null;
-        }
-      }
-      if (cachedPlugin) {
-        const rebound = bindStudioPluginToContext(cachedPlugin, ctx, disposers);
-        if (rebound) cachedMain = rebound;
-      }
-      return () => {
+      const cleanup = (): void => {
         activeDisposers = [];
         activeCtx = null;
         activeTranslate = null;
@@ -236,6 +220,28 @@ export function create(
         }
         unmountPluginStyles();
       };
+      try {
+        mountPluginStyles();
+        activeDisposers = disposers;
+        if (locale) {
+          disposers.push(registerShellLocale(locale));
+          try {
+            translate = locale.bind(SHELL_LOCALE_NS);
+            activeTranslate = translate;
+          } catch (_err) {
+            translate = null;
+            activeTranslate = null;
+          }
+        }
+        if (cachedPlugin) {
+          const rebound = bindStudioPluginToContext(cachedPlugin, ctx, disposers);
+          if (rebound) cachedMain = rebound;
+        }
+      } catch (err) {
+        cleanup();
+        throw err;
+      }
+      return cleanup;
     });
 
     ctx.slots.inject('sidebar.panellist', () =>

@@ -31,6 +31,7 @@ export interface DocumentActionsOptions {
   getActiveArticleId?: () => string;
   isPageAlive?: () => boolean;
   flushBeforeSwitch?: () => Promise<boolean>;
+  claimOpenTransition?: () => () => boolean;
   onResetSurface?: () => void;
 }
 
@@ -68,14 +69,19 @@ export function createDocumentCommands(options: DocumentActionsOptions): Documen
     return !targetArticleId || !options.getActiveArticleId || options.getActiveArticleId() === targetArticleId;
   }
 
+  function claimTransition(): () => boolean {
+    return options.claimOpenTransition ? options.claimOpenTransition() : () => true;
+  }
+
   async function loadSample(force?: boolean): Promise<void> {
     const targetArticleId = options.getActiveArticleId?.();
     if (!force && options.doc.markdown.trim()) {
       const ok = await options.confirm({ title: t('confirm.sample') });
       if (!ok || !isStillActive(targetArticleId)) return;
     }
+    const isCurrentOpen = claimTransition();
     if (options.flushBeforeSwitch && !(await options.flushBeforeSwitch())) return;
-    if (!isStillActive(targetArticleId)) return;
+    if (!isCurrentOpen() || !isStillActive(targetArticleId)) return;
     const sample = sampleArticleFor(options.locale?.());
     options.detachFileContext();
     options.onResetSurface?.();
@@ -91,6 +97,9 @@ export function createDocumentCommands(options: DocumentActionsOptions): Documen
       const ok = await options.confirm({ title: t('confirm.clear'), danger: true });
       if (!ok || !isStillActive(targetArticleId)) return;
     }
+    const isCurrentOpen = claimTransition();
+    if (options.flushBeforeSwitch && !(await options.flushBeforeSwitch())) return;
+    if (!isCurrentOpen() || !isStillActive(targetArticleId)) return;
     blankArticle();
     options.onPruneAssets?.();
     options.notify(t('toast.cleared'));
@@ -103,6 +112,7 @@ export function createDocumentCommands(options: DocumentActionsOptions): Documen
 
   async function importBundleBuffer(buffer: ArrayBuffer): Promise<void> {
     const targetArticleId = options.getActiveArticleId?.();
+    const isCurrentOpen = claimTransition();
     const tracked: string[] = [];
     try {
       const entries = await unzipEntries(buffer);
@@ -136,9 +146,9 @@ export function createDocumentCommands(options: DocumentActionsOptions): Documen
           }
         }),
       );
-      if (!isStillActive(targetArticleId)) return;
+      if (!isCurrentOpen() || !isStillActive(targetArticleId)) return;
       if (options.flushBeforeSwitch && !(await options.flushBeforeSwitch())) return;
-      if (!isStillActive(targetArticleId)) return;
+      if (!isCurrentOpen() || !isStillActive(targetArticleId)) return;
       const next = text.replace(/assets\/[a-f0-9]{24}\.(?:png|jpg)/gi, function (path: string) {
         return mapping.get(path.toLowerCase()) || path;
       });
@@ -155,9 +165,13 @@ export function createDocumentCommands(options: DocumentActionsOptions): Documen
   }
 
   async function importBundle(file: File): Promise<void> {
+    const targetArticleId = options.getActiveArticleId?.();
+    const isCurrentOpen = claimTransition();
     try {
       if (file.size > ZIP_LIMITS.archiveBytes) throw new Error('ZIP_LIMIT_EXCEEDED');
-      await importBundleBuffer(await readFileBytes(file));
+      const buffer = await readFileBytes(file);
+      if (!isCurrentOpen() || !isStillActive(targetArticleId)) return;
+      await importBundleBuffer(buffer);
     } catch (error) {
       options.notify(t('toast.bundleImportFailed') + ' · ' + options.errorMessage(error), 'error');
     }
@@ -165,17 +179,18 @@ export function createDocumentCommands(options: DocumentActionsOptions): Documen
 
   async function importSelectedFile(file: File): Promise<void> {
     const targetArticleId = options.getActiveArticleId?.();
+    const isCurrentOpen = claimTransition();
     try {
       if (file.size > ZIP_LIMITS.archiveBytes) throw new Error('ZIP_LIMIT_EXCEEDED');
       const buffer = await readFileBytes(file);
+      if (!isCurrentOpen() || !isStillActive(targetArticleId)) return;
       const bytes = new Uint8Array(buffer);
       if (isZipCandidate(file, bytes)) {
         await importBundleBuffer(buffer);
         return;
       }
-      if (!isStillActive(targetArticleId)) return;
       if (options.flushBeforeSwitch && !(await options.flushBeforeSwitch())) return;
-      if (!isStillActive(targetArticleId)) return;
+      if (!isCurrentOpen() || !isStillActive(targetArticleId)) return;
       const text = new TextDecoder().decode(bytes);
       options.detachFileContext();
       options.onResetSurface?.();

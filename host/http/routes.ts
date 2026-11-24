@@ -105,6 +105,7 @@ function isJsonContentType(value: string): boolean {
   return value.split(';')[0].trim().toLowerCase() === 'application/json';
 }
 
+const TRUSTED_ELECTRON_PROTOCOLS = new Set(['dsh-app:', 'dsh:', 'app:']);
 const ALLOWED_DESKTOP_PROTOCOLS = new Set(['dsh-app:', 'dsh:', 'app:', 'file:']);
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
 
@@ -136,14 +137,17 @@ export function isAllowedOrigin(origin: string, host: string, site: string): boo
   } catch {
     return false;
   }
+  if (TRUSTED_ELECTRON_PROTOCOLS.has(parsed.protocol)) return true;
+  if (site === 'cross-site') return false;
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     return ALLOWED_DESKTOP_PROTOCOLS.has(parsed.protocol);
   }
-  return (
-    Boolean(host) &&
-    parsed.host.toLowerCase() === host.toLowerCase() &&
-    LOOPBACK_HOSTS.has(parsed.hostname.toLowerCase())
-  );
+  try {
+    const canonicalHost = new URL(parsed.protocol + '//' + host.trim()).host.toLowerCase();
+    return parsed.host.toLowerCase() === canonicalHost && LOOPBACK_HOSTS.has(parsed.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
 }
 
 function validateImageRequest(req: IncomingMessage, res: ServerResponse): boolean {

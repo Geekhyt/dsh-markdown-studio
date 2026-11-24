@@ -12,6 +12,7 @@ export interface Article extends DocState {
   settings: ThemeSettings;
   view: ViewMode;
   updatedAt: number;
+  rev?: number;
   deletedAt?: number;
 }
 
@@ -42,7 +43,7 @@ export function parseView(value: unknown): ViewMode {
   return value === 'edit' || value === 'preview' ? value : 'split';
 }
 
-const FRONTMATTER_BLOCK_RE = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
+const FRONTMATTER_BLOCK_RE = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
 
 /** Parse validated leading YAML frontmatter (`key: value` / list items / comments only, never leading `---` HR). */
 export function parseFrontmatterBlock(
@@ -51,14 +52,14 @@ export function parseFrontmatterBlock(
   const match = FRONTMATTER_BLOCK_RE.exec(text);
   if (!match) return null;
   const lines = match[1].split(/\r?\n/);
-  const meta: Record<string, string> = {};
+  const meta: Record<string, string> = Object.create(null) as Record<string, string>;
   let lastKey = '';
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
     const line = raw.trim();
     if (!line || line.charAt(0) === '#') continue;
-    if (lastKey && /^[ \t]+-[ \t]+(.*)$/.test(raw)) {
-      const item = raw.replace(/^[ \t]+-[ \t]+/, '').trim();
+    if (lastKey && /^[ \t]*-[ \t]+(.*)$/.test(raw)) {
+      const item = raw.replace(/^[ \t]*-[ \t]+/, '').trim();
       meta[lastKey] = meta[lastKey] ? meta[lastKey] + ', ' + item : item;
       continue;
     }
@@ -148,18 +149,29 @@ function advanceHeadingFence(active: string, line: string): string {
   return close.test(line) ? '' : active;
 }
 
+function isSetextHeadingCandidate(clean: string): boolean {
+  if (!clean.trim()) return false;
+  if (/^ {0,3}(?:#{1,6}(?:\s|$)|>|[-+*]\s|\d{1,9}[.)]\s|:::|```|~~~|\$\$)/.test(clean)) return false;
+  return !/^ {0,3}(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/.test(clean);
+}
+
 export function markdownHeadings(text: string): Heading[] {
   const { body, offset: startOffset } = stripLeadingFrontmatter(String(text || ''));
   const lines = body.split('\n');
   const headings: Heading[] = [];
   let offset = startOffset;
   let fence = '';
+  let prevLine = '';
+  let prevOffset = startOffset;
+  let prevWasPlain = false;
   for (const line of lines) {
     const clean = line.endsWith('\r') ? line.slice(0, -1) : line;
     const prevFence = fence;
     fence = advanceHeadingFence(fence, clean);
+    let handledHeading = false;
     if (!prevFence && !fence) {
       const match = /^ {0,3}(#{1,6})\s+(.+)$/.exec(clean);
+      const setext = !match && prevWasPlain ? /^ {0,3}(=+|-+)[ \t]*$/.exec(clean) : null;
       if (match) {
         headings.push({
           level: match[1].length,
@@ -167,8 +179,20 @@ export function markdownHeadings(text: string): Heading[] {
           start: offset,
           length: clean.length,
         });
+        handledHeading = true;
+      } else if (setext) {
+        headings.push({
+          level: setext[1].charAt(0) === '=' ? 1 : 2,
+          text: prevLine.trim(),
+          start: prevOffset,
+          length: prevLine.length,
+        });
+        handledHeading = true;
       }
     }
+    prevWasPlain = !prevFence && !fence && !handledHeading && isSetextHeadingCandidate(clean);
+    prevLine = clean;
+    prevOffset = offset;
     offset += line.length + 1;
   }
   return headings;

@@ -316,25 +316,39 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
           writable as unknown as { write(data: Uint8Array): Promise<unknown>; close(): Promise<unknown> },
         );
         const missing: string[] = [];
+        const fetchAbort = new AbortController();
+        let writeFailed: unknown = null;
         try {
-          let writeChain = Promise.resolve();
+          let writeChain: Promise<void> = Promise.resolve();
           await runWithConcurrency(files, 4, async (filename) => {
+            if (writeFailed) return;
             let data: Uint8Array | null = null;
             try {
-              const response = await fetch(assetFetchUrl(base, filename));
+              const response = await fetch(assetFetchUrl(base, filename), { signal: fetchAbort.signal });
               if (response.ok) data = new Uint8Array(await response.arrayBuffer());
             } catch {
               data = null;
             }
+            if (writeFailed) return;
             const nextWrite = writeChain.then(async () => {
+              if (writeFailed) return;
               if (!data) missing.push(filename);
-              else await writer.add('assets/' + filename, data);
+              else {
+                try {
+                  await writer.add('assets/' + filename, data);
+                } catch (err) {
+                  writeFailed = err;
+                  fetchAbort.abort();
+                  throw err;
+                }
+              }
               data = null;
             });
-            writeChain = nextWrite;
+            writeChain = nextWrite.catch(() => undefined);
             await nextWrite;
           });
           await writeChain;
+          if (writeFailed) throw writeFailed;
           await writer.add(
             LIBRARY_ARCHIVE_BACKUP,
             encoder.encode(
@@ -618,7 +632,11 @@ export function useLibraryArchive(options: LibraryArchiveOptions): LibraryArchiv
       const nextActive = store.replaceAll(parsed, true);
       applyImportedSkills(rawPayload, false, 'incoming');
       replace(nextActive);
-      window.localStorage.removeItem(IMPORT_RECOVERY_KEY);
+      try {
+        window.localStorage.removeItem(IMPORT_RECOVERY_KEY);
+      } catch {
+        /* ignore cleanup error after successful recovery */
+      }
       setRecoveryAvailable(false);
       options.notify(t('library.recovered'));
     } catch (error) {

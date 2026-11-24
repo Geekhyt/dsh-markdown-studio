@@ -71,7 +71,58 @@ function resolveBlockSelection(
   return [start + leadLen, start + leadLen + blockLen];
 }
 
-const LINE_PREFIX_STRIP_RE = /^([ \t]*)(?:#{1,6}\s+|>\s?|[-+*]\s+(?:\[[ xX]\](?:\s+|$))?|\d{1,9}[.)]\s+)?/;
+const LINE_PREFIX_STRIP_RE = /^([ \t]*)(?:#{1,6}\s+|>[ \t]*|[-+*]\s+(?:\[[ xX]\](?:\s+|$))?|\d{1,9}[.)]\s+)?/;
+
+function hasMatchingLinePrefix(line: string, prefix: string, isOrdered: boolean): boolean {
+  const trimmed = line.replace(/^[ \t]*/, '');
+  if (!trimmed) return true;
+  if (isOrdered) return /^\d{1,9}[.)]\s+/.test(trimmed);
+  if (prefix === '- [ ] ') return /^[-+*]\s+\[[ xX]\](?:\s+|$)/.test(trimmed);
+  if (prefix === '- ' && /^[-+*]\s+\[[ xX]\](?:\s+|$)/.test(trimmed)) return false;
+  if (prefix === '> ') return /^>(?:[ \t]+|$)/.test(trimmed);
+  return trimmed.startsWith(prefix);
+}
+
+function countMarkerRun(text: string, start: number, step: 1 | -1, ch: string): number {
+  let count = 0;
+  for (let i = start; i >= 0 && i < text.length && text.charAt(i) === ch; i += step) count++;
+  return count;
+}
+
+function hasCleanInnerWrap(text: string, marker: string): boolean {
+  const len = marker.length;
+  if (text.length <= len * 2 || !text.startsWith(marker) || !text.endsWith(marker)) return false;
+  if (len === 1) {
+    const lead = countMarkerRun(text, 0, 1, marker);
+    const trail = countMarkerRun(text, text.length - 1, -1, marker);
+    if (lead % 2 === 0 || trail % 2 === 0) return false;
+  }
+  const inner = text.slice(len, text.length - len);
+  if (len === 1) return !inner.includes(marker);
+  return !inner.includes(marker);
+}
+
+function hasCleanOuterWrap(value: string, start: number, end: number, marker: string): boolean {
+  const len = marker.length;
+  if (start < len) return false;
+  if (value.slice(start - len, start) !== marker || value.slice(end, end + len) !== marker) return false;
+  if (len === 1) {
+    const left = countMarkerRun(value, start - 1, -1, marker);
+    const right = countMarkerRun(value, end, 1, marker);
+    if (left % 2 === 0 || right % 2 === 0) return false;
+  }
+  return true;
+}
+
+function toggleMultiParagraph(selected: string, before: string, after: string): string {
+  const segments = selected.split('\n').filter((line) => line.trim().length > 0);
+  const allWrapped =
+    before === after && segments.length > 0 && segments.every((segment) => hasCleanInnerWrap(segment, before));
+  return selected.replace(/([^\n]+)/g, function (segment) {
+    if (!segment.trim()) return segment;
+    return allWrapped ? segment.slice(before.length, segment.length - after.length) : before + segment + after;
+  });
+}
 
 function transformPrefixLine(line: string, prefix: string, index: number, isOrdered: boolean): string {
   const m = LINE_PREFIX_STRIP_RE.exec(line);
@@ -85,7 +136,32 @@ export function createFormattingCommands(options: FormattingOptions): Formatting
   function wrapSelection(before: string, after: string, placeholder?: string): void {
     const value = options.editorValue();
     const range = options.selection();
-    const selected = value.slice(range.start, range.end) || placeholder || '';
+    const selectedRaw = value.slice(range.start, range.end);
+    if (selectedRaw && before === after) {
+      const len = before.length;
+      if (hasCleanOuterWrap(value, range.start, range.end, before)) {
+        options.replaceRange(
+          value,
+          range.start - len,
+          range.end + len,
+          selectedRaw,
+          range.start - len,
+          range.end - len,
+        );
+        return;
+      }
+      if (/\n\s*\n/.test(selectedRaw)) {
+        const toggled = toggleMultiParagraph(selectedRaw, before, after);
+        options.replaceRange(value, range.start, range.end, toggled, range.start, range.start + toggled.length);
+        return;
+      }
+      if (hasCleanInnerWrap(selectedRaw, before)) {
+        const inner = selectedRaw.slice(len, selectedRaw.length - len);
+        options.replaceRange(value, range.start, range.end, inner, range.start, range.start + inner.length);
+        return;
+      }
+    }
+    const selected = selectedRaw || placeholder || '';
     const inserted = before + selected + after;
     options.replaceRange(
       value,
@@ -106,10 +182,14 @@ export function createFormattingCommands(options: FormattingOptions): Formatting
     const blockEnd = rawEnd === -1 ? value.length : rawEnd;
     const lines = value.slice(blockStart, blockEnd).split('\n');
     const isOrdered = /^\d+[.)]\s+$/.test(prefix);
+    const hasContent = lines.some((line) => line.trim().length > 0);
+    const toggleOff =
+      Boolean(prefix) && hasContent && lines.every((line) => hasMatchingLinePrefix(line, prefix, isOrdered));
+    const appliedPrefix = toggleOff ? '' : prefix;
     let orderIdx = 0;
     const updatedLines = lines.map((line) => {
       if (lines.length > 1 && !line.trim()) return line;
-      return transformPrefixLine(line, prefix, orderIdx++, isOrdered);
+      return transformPrefixLine(line, appliedPrefix, orderIdx++, !toggleOff && isOrdered);
     });
     const replaced = updatedLines.join('\n');
     const next = value.slice(0, blockStart) + replaced + value.slice(blockEnd);
@@ -118,7 +198,7 @@ export function createFormattingCommands(options: FormattingOptions): Formatting
     if (lines.length === 1) {
       const delta = replaced.length - lines[0].length;
       const indentLen = (lines[0].match(/^[ \t]*/) || [''])[0].length;
-      const start = Math.max(blockStart + indentLen + prefix.length, range.start + delta);
+      const start = Math.max(blockStart + indentLen + appliedPrefix.length, range.start + delta);
       const end = Math.max(start, range.end + delta);
       options.focusRange(start, end);
     } else {

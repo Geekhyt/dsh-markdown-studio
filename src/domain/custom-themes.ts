@@ -28,7 +28,14 @@ export function createCustomThemeId(): string {
   return CUSTOM_THEME_PREFIX + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
 }
 
-function normalizeCustomId(raw: unknown, index: number): string {
+function nextFallbackCustomId(index: number, used: Set<string>): string {
+  for (let n = index + 1; ; n++) {
+    const candidate = CUSTOM_THEME_PREFIX + 'theme-' + n;
+    if (!used.has(candidate)) return candidate;
+  }
+}
+
+function normalizeCustomId(raw: unknown, index: number, reserved: Set<string>, seen: Set<string>): string {
   if (typeof raw === 'string' && isCustomThemeId(raw)) return raw;
   const slug =
     typeof raw === 'string'
@@ -37,17 +44,22 @@ function normalizeCustomId(raw: unknown, index: number): string {
           .replace(/[^a-z0-9_-]+/gi, '')
           .slice(0, 32)
       : '';
-  return CUSTOM_THEME_PREFIX + (slug || 'theme-' + (index + 1));
+  if (slug) {
+    const candidate = CUSTOM_THEME_PREFIX + slug;
+    if (!reserved.has(candidate) && !seen.has(candidate)) return candidate;
+  }
+  const used = new Set<string>([...reserved, ...seen]);
+  return nextFallbackCustomId(index, used);
 }
 
-function parseEntry(raw: unknown, index: number): CustomTheme | null {
+function parseEntry(raw: unknown, index: number, reserved: Set<string>, seen: Set<string>): CustomTheme | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const record = raw as Record<string, unknown>;
   const css = typeof record.css === 'string' ? record.css.slice(0, MAX_CUSTOM_CSS_CHARS) : '';
   if (!css.trim()) return null;
   const rawName = typeof record.name === 'string' ? record.name.trim().slice(0, MAX_CUSTOM_NAME_CHARS) : '';
   return {
-    id: normalizeCustomId(record.id, index),
+    id: normalizeCustomId(record.id, index, reserved, seen),
     name: rawName || '自定义主题 ' + (index + 1),
     css,
   };
@@ -55,10 +67,16 @@ function parseEntry(raw: unknown, index: number): CustomTheme | null {
 
 export function sanitizeCustomThemes(input: unknown): CustomTheme[] {
   if (!Array.isArray(input)) return [];
+  const reserved = new Set<string>();
+  for (const raw of input) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    const id = (raw as Record<string, unknown>).id;
+    if (typeof id === 'string' && isCustomThemeId(id)) reserved.add(id);
+  }
   const list: CustomTheme[] = [];
   const seen = new Set<string>();
   for (let i = 0; i < input.length && list.length < MAX_CUSTOM_THEMES; i++) {
-    const parsed = parseEntry(input[i], i);
+    const parsed = parseEntry(input[i], i, reserved, seen);
     if (parsed && !seen.has(parsed.id)) {
       seen.add(parsed.id);
       list.push(parsed);

@@ -69,81 +69,95 @@ export function createZipStreamWriter(sink: WritableLike): ZipStreamWriter {
   let offset = 0;
   let closed = false;
   let totalBytes = 0;
+  let queue: Promise<void> = Promise.resolve();
+
+  function enqueue<T>(task: () => Promise<T>): Promise<T> {
+    const run = queue.then(task, task);
+    queue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
 
   return {
-    async add(name, data) {
-      if (closed) throw new Error('zip stream is closed');
-      const encoded = encoder.encode(name);
-      assertZipBudget(centrals.length + 1, totalBytes + data.length, data.length, encoded.length);
-      const crc = crc32(data);
-      const local = new Uint8Array([
-        ...u32(0x04034b50),
-        ...u16(20),
-        ...u16(0x0800),
-        ...u16(0),
-        ...u16(dosTime),
-        ...u16(dosDate),
-        ...u32(crc),
-        ...u32(data.length),
-        ...u32(data.length),
-        ...u16(encoded.length),
-        ...u16(0),
-      ]);
-      const entryOffset = offset;
-      try {
-        await sink.write(local);
-        await sink.write(encoded);
-        await sink.write(data);
-      } catch (error) {
-        closed = true;
-        throw error;
-      }
-      totalBytes += data.length;
-      centrals.push({ name: encoded, crc, size: data.length, offset: entryOffset });
-      offset += local.length + encoded.length + data.length;
-    },
-    async close() {
-      if (closed) return;
-      closed = true;
-      const centralOffset = offset;
-      let centralSize = 0;
-      for (const entry of centrals) {
-        const header = new Uint8Array([
-          ...u32(0x02014b50),
-          ...u16(20),
+    add(name, data) {
+      return enqueue(async () => {
+        if (closed) throw new Error('zip stream is closed');
+        const encoded = encoder.encode(name);
+        assertZipBudget(centrals.length + 1, totalBytes + data.length, data.length, encoded.length);
+        const crc = crc32(data);
+        const local = new Uint8Array([
+          ...u32(0x04034b50),
           ...u16(20),
           ...u16(0x0800),
           ...u16(0),
           ...u16(dosTime),
           ...u16(dosDate),
-          ...u32(entry.crc),
-          ...u32(entry.size),
-          ...u32(entry.size),
-          ...u16(entry.name.length),
+          ...u32(crc),
+          ...u32(data.length),
+          ...u32(data.length),
+          ...u16(encoded.length),
           ...u16(0),
-          ...u16(0),
-          ...u16(0),
-          ...u16(0),
-          ...u32(0),
-          ...u32(entry.offset),
         ]);
-        await sink.write(header);
-        await sink.write(entry.name);
-        centralSize += header.length + entry.name.length;
-      }
-      await sink.write(
-        new Uint8Array([
-          ...u32(0x06054b50),
-          ...u16(0),
-          ...u16(0),
-          ...u16(centrals.length),
-          ...u16(centrals.length),
-          ...u32(centralSize),
-          ...u32(centralOffset),
-          ...u16(0),
-        ]),
-      );
-      await sink.close();
+        const entryOffset = offset;
+        try {
+          await sink.write(local);
+          await sink.write(encoded);
+          await sink.write(data);
+        } catch (error) {
+          closed = true;
+          throw error;
+        }
+        totalBytes += data.length;
+        centrals.push({ name: encoded, crc, size: data.length, offset: entryOffset });
+        offset += local.length + encoded.length + data.length;
+      });
+    },
+    close() {
+      return enqueue(async () => {
+        if (closed) return;
+        closed = true;
+        const centralOffset = offset;
+        let centralSize = 0;
+        for (const entry of centrals) {
+          const header = new Uint8Array([
+            ...u32(0x02014b50),
+            ...u16(20),
+            ...u16(20),
+            ...u16(0x0800),
+            ...u16(0),
+            ...u16(dosTime),
+            ...u16(dosDate),
+            ...u32(entry.crc),
+            ...u32(entry.size),
+            ...u32(entry.size),
+            ...u16(entry.name.length),
+            ...u16(0),
+            ...u16(0),
+            ...u16(0),
+            ...u16(0),
+            ...u32(0),
+            ...u32(entry.offset),
+          ]);
+          await sink.write(header);
+          await sink.write(entry.name);
+          centralSize += header.length + entry.name.length;
+        }
+        await sink.write(
+          new Uint8Array([
+            ...u32(0x06054b50),
+            ...u16(0),
+            ...u16(0),
+            ...u16(centrals.length),
+            ...u16(centrals.length),
+            ...u32(centralSize),
+            ...u32(centralOffset),
+            ...u16(0),
+          ]),
+        );
+        await sink.close();
+      });
     },
   };
 }
@@ -294,15 +308,17 @@ interface ZipRecord {
   compressed: Uint8Array;
   method: number;
   crc: number;
+  isSymlink: boolean;
   rangeStart: number;
   rangeEnd: number;
 }
 
-function decodeZipName(bytes: Uint8Array): string {
+function decodeZipName(bytes: Uint8Array, utf8Flag: boolean): string {
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch {
-    throw new Error('corrupt zip filename');
+    if (utf8Flag) throw new Error('corrupt zip filename');
+    return new TextDecoder('iso-8859-1').decode(bytes);
   }
 }
 
@@ -314,11 +330,13 @@ function zipRecord(
   const view = new DataView(buffer);
   if (offset + 46 > directory.end || view.getUint32(offset, true) !== 0x02014b50)
     throw new Error('corrupt zip directory');
+  const versionMadeBy = view.getUint16(offset + 4, true);
   const flags = view.getUint16(offset + 8, true);
   const method = view.getUint16(offset + 10, true);
   const compressedSize = view.getUint32(offset + 20, true);
   const size = view.getUint32(offset + 24, true);
   const nameLength = view.getUint16(offset + 28, true);
+  const externalAttr = view.getUint32(offset + 38, true);
   const next = offset + 46 + nameLength + view.getUint16(offset + 30, true) + view.getUint16(offset + 32, true);
   const local = view.getUint32(offset + 42, true);
   assertZipBudget(0, 0, size, nameLength);
@@ -333,10 +351,13 @@ function zipRecord(
   if (size > RATIO_GUARD_MIN_BYTES && compressedSize > 0 && size / compressedSize > MAX_ZIP_COMPRESSION_RATIO) {
     throw new Error('ZIP_LIMIT_EXCEEDED');
   }
-  const name = decodeZipName(new Uint8Array(buffer, offset + 46, nameLength));
-  const localName = decodeZipName(new Uint8Array(buffer, local + 30, localNameLength));
-  if (localName !== name) throw new Error('corrupt zip entry');
-  if (isUnsafeZipPath(name)) throw new Error('unsafe zip path');
+  const rawName = decodeZipName(new Uint8Array(buffer, offset + 46, nameLength), Boolean(flags & 0x0800));
+  const rawLocalName = decodeZipName(new Uint8Array(buffer, local + 30, localNameLength), Boolean(localFlags & 0x0800));
+  if (rawLocalName !== rawName) throw new Error('corrupt zip entry');
+  if (isUnsafeZipPath(rawName)) throw new Error('unsafe zip path');
+  const name = rawName.replace(/\\/g, '/');
+  const unixMode = (externalAttr >>> 16) & 0o170000;
+  const isSymlink = versionMadeBy >>> 8 === 3 && unixMode === 0o120000;
   return {
     next,
     entry: {
@@ -345,6 +366,7 @@ function zipRecord(
       method,
       compressed: new Uint8Array(buffer, start, compressedSize),
       crc: view.getUint32(offset + 16, true),
+      isSymlink,
       rangeStart: local,
       rangeEnd: start + compressedSize,
     },
@@ -387,9 +409,10 @@ export async function unzipEntries(buffer: ArrayBuffer): Promise<ZipEntry[]> {
     } else if (record.method === 8) data = await inflateRawBytes(record.compressed, record.size);
     else throw new Error('unsupported zip compression');
     if (data.length !== record.size || crc32(data) !== record.crc) throw new Error('corrupt zip content');
-    if (names.has(record.name)) throw new Error('duplicate zip entry');
-    names.add(record.name);
-    if (record.name && !record.name.endsWith('/')) entries.push({ name: record.name, data });
+    const normKey = record.name.toLowerCase();
+    if (names.has(normKey)) throw new Error('duplicate zip entry');
+    names.add(normKey);
+    if (!record.isSymlink && record.name && !record.name.endsWith('/')) entries.push({ name: record.name, data });
   }
   return entries;
 }

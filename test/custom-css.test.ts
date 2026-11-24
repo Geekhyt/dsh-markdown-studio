@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { inlineCss } from '../src/css-inliner';
-import { hasExternalCssUrl, stripExternalCssUrls } from '../src/domain/custom-css';
+import {
+  hasCssUrlRef,
+  hasExternalCssUrl,
+  isRootThemeSelector,
+  preprocessCssInput,
+  stripExternalCssUrls,
+} from '../src/domain/custom-css';
 import {
   createCustomThemeId,
   extractCustomThemePreview,
@@ -14,7 +20,7 @@ import {
   sanitizeCustomThemes,
   upsertCustomTheme,
 } from '../src/domain/custom-themes';
-import { exampleCss } from '../src/themes';
+import { exampleCss, formatCssSource } from '../src/themes';
 
 assert.equal(
   stripExternalCssUrls('#mdstudio { background: url(https://example.com/a.png); }'),
@@ -268,4 +274,47 @@ assert.equal(
   );
 }
 
-console.log('52 custom-css and custom-themes checks passed.');
+// G1 regressions: CSS Syntax Level 3 §3.3 form-feed (\f) bypass, quote-aware formatCssSource,
+// :is(:root) detection, and sanitizeCustomThemes explicit ID preservation.
+{
+  assert.equal(preprocessCssInput('a\r\nb\rc\fd\u0000e'), 'a\nb\nc\nd\ufffde', 'CSS §3.3 normalizes CR/FF/NUL');
+  const ffSmuggle = 'p { content: "x\f; background: url(https://evil.example/a.png); }';
+  assert.equal(hasExternalCssUrl(ffSmuggle), true, 'form-feed bad-string URL smuggling is detected');
+  assert.equal(
+    stripExternalCssUrls(ffSmuggle).includes('evil.example'),
+    false,
+    'stripExternalCssUrls strips \\f bad-string smuggled url()',
+  );
+  const ffCss = 'p { background: url("https://evil.example/a\f.png"); }';
+  assert.equal(hasExternalCssUrl(ffCss), true, 'form-feed inside url() is detected as external URL');
+  assert.equal(hasCssUrlRef('url("https://evil.example/a\f.png")'), true, 'hasCssUrlRef detects \\f inside url()');
+  assert.equal(
+    stripExternalCssUrls(ffCss).includes('evil.example'),
+    false,
+    'stripExternalCssUrls strips \\f-smuggled url()',
+  );
+  assert.equal(isRootThemeSelector(':is(:root)'), true, ':is(:root) is recognized as a root theme selector');
+  assert.equal(isRootThemeSelector(':where(#mdstudio)'), true, ':where(#mdstudio) is recognized as a root selector');
+  assert.equal(
+    isRootThemeSelector(':is(#mdstudio, .mdstudio-content) :is(pre, code)'),
+    false,
+    'compound descendant :is() selector is NOT treated as a root theme selector',
+  );
+
+  const formatted = formatCssSource('p::after { content: "}"; color: #111; }');
+  assert.ok(formatted.includes('content: "}"'), 'formatCssSource preserves quoted closing braces');
+  const formattedAt = formatCssSource('@charset "utf-8";\n.mdstudio-content p { color: #111; }');
+  assert.ok(
+    formattedAt.includes('@charset "utf-8";') && formattedAt.includes('  color: #111;'),
+    'formatCssSource preserves statement @-rules and still formats following rules',
+  );
+
+  const sanitized = sanitizeCustomThemes([
+    { id: '!!!', name: 'Bad Id', css: 'p { color: #111; }' },
+    { id: 'custom:theme-1', name: 'Explicit One', css: 'p { color: #222; }' },
+  ]);
+  assert.equal(sanitized.length, 2, 'earlier invalid ID does not shadow explicit custom:theme-1');
+  assert.ok(sanitized.some((item) => item.id === 'custom:theme-1' && item.name === 'Explicit One'));
+}
+
+console.log('59 custom-css and custom-themes checks passed.');

@@ -317,7 +317,227 @@ assert.equal(customStore.getActive().settings.theme, 'classic', 'deleting custom
     'no active doc shares an ID with a trashed doc',
   );
 
+  // 5) Re-delete after restore, emptyTrash followed by delete, custom theme deletion & subscribeExternalMerge
+  {
+    const t1 = { id: 'custom:t1', name: 'T1', css: 'p { color: #123456; }' };
+    let disk: LibraryState = {
+      activeId: 'a',
+      docs: [
+        { ...article('a', '# A'), settings: { ...DEFAULT_SETTINGS, customThemes: [t1] } },
+        { ...article('b', '# B'), settings: { ...DEFAULT_SETTINGS, customThemes: [t1] } },
+      ],
+      trash: [{ ...article('old-t', '# Old'), deletedAt: 100 }],
+    };
+    const s = new DocumentStore(
+      structuredClone(disk),
+      (next) => {
+        disk = structuredClone(next);
+        return true;
+      },
+      () => structuredClone(disk),
+    );
+    let externalMerges = 0;
+    const unsub = s.subscribeExternalMerge(() => {
+      externalMerges++;
+    });
+    s.delete('a', 'Untitled');
+    s.restore('a');
+    s.delete('a', 'Untitled');
+    assert.equal(s.flush(), true);
+    assert.equal(
+      s.getSnapshot().trash?.some((x) => x.id === 'a'),
+      true,
+      'delete -> restore -> re-delete keeps doc in trash',
+    );
+    s.create({ title: 'C', markdown: '# C', settings: { ...DEFAULT_SETTINGS }, view: 'split' });
+    s.flush();
+    s.emptyTrash();
+    s.delete('b', 'Untitled');
+    s.flush();
+    assert.equal(
+      s.getSnapshot().trash?.some((x) => x.id === 'b'),
+      true,
+      'emptyTrash tombstone only purges previously trashed ids',
+    );
+    // Sibling tab deletes custom theme t1 while this tab has dirty markdown
+    disk = {
+      ...disk,
+      docs: disk.docs.map((d) => ({ ...d, settings: { ...d.settings, customThemes: [] } })),
+    };
+    s.updateActive({ markdown: '# edited locally' });
+    s.syncExternal(structuredClone(disk));
+    assert.equal(
+      (s.getActive().settings.customThemes || []).length,
+      0,
+      'dirty doc without local theme mutation does not resurrect deleted custom themes',
+    );
+    // Clean active doc receiving external markdown update notifies subscribeExternalMerge
+    s.flush();
+    const extUpdated = {
+      ...disk,
+      docs: disk.docs.map((d) =>
+        d.id === s.getActive().id ? { ...d, markdown: '# edited remotely', updatedAt: d.updatedAt + 1000 } : d,
+      ),
+    };
+    s.syncExternal(extUpdated);
+    assert.ok(
+      externalMerges >= 1,
+      'subscribeExternalMerge notifies listeners when external merge updates active markdown',
+    );
+    // Restore with custom theme propagates pendingCustomThemes AND keeps restored doc alive on flush!
+    const restoredWithTheme = {
+      ...article('tr1', '# Tr1'),
+      settings: { ...DEFAULT_SETTINGS, customThemes: [t1] },
+      deletedAt: 50,
+    };
+    s.replaceAll({ activeId: 'd0', docs: [article('d0', '# D0')], trash: [restoredWithTheme] });
+    s.flush();
+    const restoredTr1 = s.restore('tr1');
+    assert.equal(restoredTr1?.id, 'tr1');
+    assert.ok((restoredTr1?.rev ?? 0) >= 1, 'restore bumps monotonic rev');
+    assert.equal(s.flush(), true);
+    assert.equal(
+      s.getSnapshot().docs.some((d) => d.id === 'tr1' && d.markdown === '# Tr1'),
+      true,
+      'restored article survives pre-write disk merge on flush (never dropped by purged tombstone)',
+    );
+    assert.equal(
+      s.getSnapshot().trash?.some((d) => d.id === 'tr1'),
+      false,
+      'restored article does not remain duplicated in trash after flush',
+    );
+    assert.equal(s.getActive().settings.customThemes?.[0]?.id, 'custom:t1');
+
+    // Monotonic rev round-trips through storage and advances above remote rev on concurrent same-doc merge
+    const revBefore = s.getActive().rev ?? 0;
+    s.updateActive({ markdown: '# D0 local rev' });
+    assert.equal(s.getActive().rev, revBefore + 1, 'updateActive increments rev monotonically');
+    disk = {
+      ...disk,
+      docs: disk.docs.map((d) => (d.id === 'd0' ? { ...d, markdown: '# D0 remote higher', rev: revBefore + 5 } : d)),
+    };
+    s.syncExternal(structuredClone(disk));
+    assert.equal(s.getActive().markdown, '# D0 local rev', 'dirty local doc wins concurrent merge');
+    assert.equal(s.getActive().rev, revBefore + 6, 'merged dirty doc advances rev strictly above remote rev');
+    s.flush();
+    savePersistedLibrary(s.getSnapshot());
+    const reloaded = loadPersistedLibrary()!;
+    assert.equal(
+      reloaded.docs.find((d) => d.id === 'd0')?.rev,
+      revBefore + 6,
+      'monotonic rev persists cleanly across v2 storage round-trip',
+    );
+
+    // Immediate delete -> purge / emptyTrash before debounce write must NOT resurrect doc from disk
+    s.replaceAll({ activeId: 'keep', docs: [article('keep', '# Keep'), article('goner', '# Goner')], trash: [] });
+    s.flush();
+    s.delete('goner', 'Untitled');
+    s.purge('goner');
+    s.flush();
+    assert.equal(
+      s.getSnapshot().docs.some((d) => d.id === 'goner'),
+      false,
+      'delete followed immediately by purge does not resurrect doc into live docs',
+    );
+    s.replaceAll({ activeId: 'keep', docs: [article('keep', '# Keep'), article('goner2', '# Goner2')], trash: [] });
+    s.flush();
+    s.delete('goner2', 'Untitled');
+    s.emptyTrash();
+    s.flush();
+    assert.equal(
+      s.getSnapshot().docs.some((d) => d.id === 'goner2'),
+      false,
+      'delete followed immediately by emptyTrash does not resurrect doc into live docs',
+    );
+
+    // 6) Functional review regressions:
+    // (a) restore(id) when id collides with an existing live doc must NEVER purge the live doc on flush!
+    const t2 = { id: 'custom:t2', name: 'T2', css: 'p { color: #654321; }' };
+    const t1Updated = { id: 'custom:t1', name: 'T1', css: 'p { color: #abcdef; }' };
+    disk = {
+      activeId: 'base',
+      docs: [{ ...article('base', '# Base'), settings: { ...DEFAULT_SETTINGS, customThemes: [t1Updated] } }],
+      trash: [
+        { ...article('dup', '# Trashed Dup'), settings: { ...DEFAULT_SETTINGS, customThemes: [t1] }, deletedAt: 5 },
+      ],
+    };
+    const collisionIds = ['dup', 'dup-restored'];
+    const collisionStore = new DocumentStore(
+      structuredClone(disk),
+      (next) => {
+        disk = structuredClone(next);
+        return true;
+      },
+      () => structuredClone(disk),
+      { nextId: () => collisionIds.shift() || 'fallback-id' },
+    );
+    collisionStore.create({
+      title: 'Live Dup',
+      markdown: '# Live Dup',
+      settings: { ...DEFAULT_SETTINGS, customThemes: [t1Updated] },
+      view: 'split',
+    });
+    const restoredDup = collisionStore.restore('dup');
+    assert.equal(restoredDup?.id, 'dup-restored', 'colliding trash restore gets fresh id');
+    assert.equal(collisionStore.flush(), true);
+    assert.equal(
+      collisionStore.getSnapshot().docs.some((d) => d.id === 'dup' && d.markdown === '# Live Dup'),
+      true,
+      'restore on ID collision preserves existing live doc across pre-write disk merge',
+    );
+    assert.equal(
+      collisionStore.getSnapshot().docs.some((d) => d.id === 'dup-restored' && d.markdown === '# Trashed Dup'),
+      true,
+      'restored copy also persists cleanly alongside existing live doc',
+    );
+    assert.equal(
+      collisionStore.getActive().settings.customThemes?.find((c) => c.id === 'custom:t1')?.css,
+      t1Updated.css,
+      'restoring stale trashed doc does not overwrite newer live edits to the same custom theme',
+    );
+
+    // (b) Cloned identical customThemes array (as produced by sanitizeSettings / resetEditorTo) must NOT wipe sibling tab themes
+    disk = {
+      ...disk,
+      docs: disk.docs.map((d) => ({ ...d, settings: { ...d.settings, customThemes: [t1Updated, t2] } })),
+    };
+    collisionStore.updateActive({
+      markdown: '# Local file opened',
+      settings: { ...collisionStore.getActive().settings, customThemes: [{ ...t1Updated }] },
+    });
+    assert.equal(collisionStore.flush(), true);
+    assert.equal(
+      collisionStore.getActive().settings.customThemes?.some((c) => c.id === 'custom:t2'),
+      true,
+      'updateActive with structurally identical cloned customThemes does not overwrite sibling tab new custom theme',
+    );
+
+    // (c) syncExternal when remote tab deletes switched-to doc clears pendingActiveSwitch (no redundant writeback)
+    const switchWritesBefore = { count: 0 };
+    let switchDisk: LibraryState = { activeId: 'x', docs: [article('x', '# X'), article('y', '# Y')], trash: [] };
+    const switchStore = new DocumentStore(
+      structuredClone(switchDisk),
+      (next) => {
+        switchWritesBefore.count++;
+        switchDisk = structuredClone(next);
+        return true;
+      },
+      () => structuredClone(switchDisk),
+    );
+    switchStore.switchTo('y');
+    assert.equal(switchStore.getStatus(), 'pending');
+    switchStore.syncExternal({ activeId: 'x', docs: [article('x', '# X')], trash: [] });
+    assert.equal(
+      switchStore.getStatus(),
+      'saved',
+      'syncExternal clears pendingActiveSwitch when remote deletes target',
+    );
+    assert.equal(switchStore.flush(), true);
+    assert.equal(switchWritesBefore.count, 0, 'no redundant writeback after remote deleted switched-to doc');
+    unsub();
+  }
+
   dom.window.close();
 }
 
-console.log('49 document-store checks passed.');
+console.log('56 document-store checks passed.');

@@ -30,7 +30,15 @@ function skipCssEscape(text: string, index: number): number {
     }
     return j - 1;
   }
+  if (text[j] === '\r' && text[j + 1] === '\n') return j + 1;
   return j;
+}
+
+/** Normalize input per CSS Syntax Level 3 §3.3 (CR/CRLF/FF -> LF, NUL -> U+FFFD). */
+export function preprocessCssInput(css: string): string {
+  return String(css || '')
+    .replace(/\r\n|\r|\f/g, '\n')
+    .replace(/\u0000/g, '\ufffd');
 }
 
 function hasClosingQuote(text: string, from: number, quote: string): boolean {
@@ -40,7 +48,7 @@ function hasClosingQuote(text: string, from: number, quote: string): boolean {
       i = skipCssEscape(text, i);
       continue;
     }
-    if (ch === '\n' || ch === '\r') return false;
+    if (ch === '\n' || ch === '\r' || ch === '\f') return false;
     if (ch === quote) return true;
   }
   return false;
@@ -72,11 +80,13 @@ function findBalancedParenEnd(text: string, openIndex: number): number {
 function readQuotedStringEnd(text: string, openIndex: number): number {
   const quote = text[openIndex];
   for (let i = openIndex + 1; i < text.length; i++) {
-    if (text[i] === '\\') {
+    const ch = text[i];
+    if (ch === '\\') {
       i = skipCssEscape(text, i);
       continue;
     }
-    if (text[i] === quote) return i;
+    if (ch === '\n' || ch === '\r' || ch === '\f') return i;
+    if (ch === quote) return i;
   }
   return text.length;
 }
@@ -246,7 +256,9 @@ function precleanCss(value: string): string {
 
 export function hasExternalCssUrl(value: string): boolean {
   const raw = precleanCss(value);
-  const importProbe = decodeCssEscapes(raw.replace(/(["'])(?:\\.|(?!\1)[\s\S])*\1/g, '""').replace(/<!--|-->/g, ' '));
+  const importProbe = decodeCssEscapes(
+    raw.replace(/(["'])(?:\\[\s\S]|(?!\1)[^\\\n])*\1/g, '""').replace(/<!--|-->/g, ' '),
+  );
   if (isAtImportSegment(raw) || /(?:^|[;{}])\s*@import\b/i.test(importProbe)) return true;
   let cursor = 0;
   while (cursor < raw.length) {
@@ -324,14 +336,91 @@ export interface CssRule {
   declarations: CssDeclaration[];
 }
 
-/** Strip CSS comments outside quoted strings. */
+/** Strip CSS comments outside quoted strings after CSS Syntax Level 3 preprocessing. */
 export function stripCssComments(css: string): string {
-  return String(css || '').replace(
-    /("(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*')|\/\*[\s\S]*?\*\//g,
+  return preprocessCssInput(css).replace(
+    /("(?:\\[\s\S]|[^"\\\n])*"|'(?:\\[\s\S]|[^'\\\n])*')|\/\*[\s\S]*?\*\//g,
     function (_match, quoted?: string) {
       return quoted ?? '';
     },
   );
+}
+
+/** Split CSS text on `separator` at top level (outside quotes, escapes, parens, and brackets). */
+export function splitCssTopLevel(text: string, separator: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let quote = '';
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '\\') {
+      i = skipCssEscape(text, i);
+      continue;
+    }
+    if (quote) {
+      if (ch === quote || ch === '\n') quote = '';
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      if (hasClosingQuote(text, i + 1, ch)) quote = ch;
+      continue;
+    }
+    if (ch === '(' || ch === '[') depth++;
+    else if (ch === ')' || ch === ']') depth = Math.max(0, depth - 1);
+    else if (ch === separator && depth === 0) {
+      parts.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(text.slice(start));
+  return parts;
+}
+
+/** Find the next `{` outside CSS strings and escapes, or `-1`. */
+export function findCssBlockOpen(css: string, from = 0): number {
+  let quote = '';
+  for (let i = from; i < css.length; i++) {
+    const ch = css[i];
+    if (ch === '\\') {
+      i = skipCssEscape(css, i);
+      continue;
+    }
+    if (quote) {
+      if (ch === quote || ch === '\n') quote = '';
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      if (hasClosingQuote(css, i + 1, ch)) quote = ch;
+      continue;
+    }
+    if (ch === '{') return i;
+  }
+  return -1;
+}
+
+/** Find the matching `}` for an opening `{` at `openIndex` outside CSS strings and escapes. */
+export function findCssBlockEnd(css: string, openIndex: number): number {
+  let depth = 1;
+  let quote = '';
+  for (let i = openIndex + 1; i < css.length; i++) {
+    const ch = css[i];
+    if (ch === '\\') {
+      i = skipCssEscape(css, i);
+      continue;
+    }
+    if (quote) {
+      if (ch === quote || ch === '\n') quote = '';
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      if (hasClosingQuote(css, i + 1, ch)) quote = ch;
+      continue;
+    }
+    if (ch === '{') depth++;
+    else if (ch === '}' && --depth === 0) return i;
+  }
+  return css.length;
 }
 
 /** True when a CSS value or SVG paint attribute invokes any URL-loading CSS function (escape- and comment-aware). */
@@ -372,8 +461,7 @@ export function parseCssRules(css: string): CssRule[] {
       if (depth === 0) {
         const trimmed = selector.trim();
         if (trimmed && !trimmed.startsWith('@')) {
-          const selectors = trimmed
-            .split(',')
+          const selectors = splitCssTopLevel(trimmed, ',')
             .map((item) => item.trim())
             .filter(Boolean);
           rules.push({ selectors, declarations: parseCssDeclarations(body.join('')) });
@@ -396,7 +484,14 @@ const ROOT_THEME_SELECTOR =
 
 /** True when a single selector targets the article root canvas (`#mdstudio`, `.mdstudio-content`, `:root`, `html`, `body`). */
 export function isRootThemeSelector(selector: string): boolean {
-  return ROOT_THEME_SELECTOR.test(selector.trim());
+  const trimmed = selector.trim();
+  if (ROOT_THEME_SELECTOR.test(trimmed)) return true;
+  const openMatch = /^:(?:is|where)\(/i.exec(trimmed);
+  if (!openMatch) return false;
+  const openParen = openMatch[0].length - 1;
+  if (findBalancedParenEnd(trimmed, openParen) !== trimmed.length - 1) return false;
+  const inner = trimmed.slice(openParen + 1, -1);
+  return splitCssTopLevel(inner, ',').some((branch) => ROOT_THEME_SELECTOR.test(branch.trim()));
 }
 
 /**

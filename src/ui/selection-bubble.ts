@@ -155,7 +155,8 @@ export function useSelectionBubble(options: SelectionBubbleOptions): SelectionBu
   }
 
   function clearPointer(): void {
-    cancelPendingRaf();
+    if (pointerCleanupRef.current) pointerCleanupRef.current();
+    else cancelPendingRaf();
     pointerSelectingRef.current = false;
     pointerPointRef.current = null;
   }

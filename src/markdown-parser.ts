@@ -68,6 +68,7 @@ interface ListItem {
   lines: string[];
   checked: boolean | null;
   indent: number;
+  childStripIndent?: number;
 }
 
 const ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
@@ -112,10 +113,25 @@ function isOddBackslashEscaped(text: string, index: number): boolean {
 function findMathClose(text: string, from: number, delimiter: string): number {
   let pos = from;
   while (pos < text.length) {
-    const next = text.indexOf(delimiter, pos);
-    if (next === -1) return -1;
-    if (!isOddBackslashEscaped(text, next)) return next;
-    pos = next + 1;
+    if (
+      text.charAt(pos) === '`' &&
+      !isOddBackslashEscaped(text, pos) &&
+      (pos === from || /[\s([\u2014\u2013-]/.test(text.charAt(pos - 1)))
+    ) {
+      let ticks = 1;
+      while (text.charAt(pos + ticks) === '`') ticks++;
+      const codeClose = findCodeSpanClose(text, pos + ticks, ticks);
+      if (codeClose !== -1 && !(ticks === 2 && text.slice(pos + ticks, codeClose).includes("''"))) {
+        pos = codeClose + ticks;
+        continue;
+      }
+      pos += ticks;
+      continue;
+    }
+    if (text.startsWith(delimiter, pos) && !isOddBackslashEscaped(text, pos)) {
+      return pos;
+    }
+    pos++;
   }
   return -1;
 }
@@ -132,8 +148,12 @@ function isInlineCurrencyMath(text: string, openEnd: number, close: number): boo
   if (/[0-9]/.test(text.charAt(close + 1))) return true;
   const source = text.slice(openEnd, close);
   if (!source.trim().length || /^\s/.test(source) || /\s$/.test(source)) return true;
-  if (/^[0-9]/.test(source) && !source.includes('\\') && /[\u3000-\u303f\uff00-\uffef\u4e00-\u9fff]/.test(source)) {
-    return true;
+  if (/^[0-9]/.test(source) && !source.includes('\\')) {
+    if (/[\u3000-\u303f\uff00-\uffef\u4e00-\u9fff]/.test(source)) return true;
+    if (/[(\-–—/]$/.test(source)) return true;
+    if (/^\d[\d,.]*[)\s]/.test(source) && /[a-zA-Z]{2,}/.test(source) && !/[+=<>^_*/\\([{]/.test(source)) {
+      return true;
+    }
   }
   return false;
 }
@@ -303,6 +323,7 @@ export function highlightCode(code: string, language?: string): string {
 
 function normalizeLabel(label: string): string {
   return String(label || '')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/`([^`]*)`/g, '$1')
     .replace(/(\*\*\*|___|\*\*|__|~~|==|\+\+)([\s\S]*?)\1/g, '$2')
     .replace(/(^|[\s(])([*_])([^\s*_][\s\S]*?)\2(?=$|[\s).,;:!?])/g, '$1$3')
@@ -341,31 +362,55 @@ function unescapeLinkDest(value: string): string {
   return value.replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~])/g, '$1');
 }
 
+function findUnescapedAngleClose(text: string, from: number): number {
+  for (let i = from; i < text.length; i++) {
+    if (text[i] === '\\') {
+      i++;
+      continue;
+    }
+    if (text[i] === '>') return i;
+  }
+  return -1;
+}
+
+const LINK_DEST_PUNCT_RE = /^[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]$/;
+
+function splitUnescapedHref(dest: string): { rawHref: string; rawTitle: string } {
+  for (let i = 0; i < dest.length; i++) {
+    if (dest[i] === '\\' && i + 1 < dest.length && LINK_DEST_PUNCT_RE.test(dest[i + 1])) {
+      i++;
+      continue;
+    }
+    if (/\s/.test(dest[i])) {
+      return { rawHref: dest.slice(0, i), rawTitle: dest.slice(i).trim() };
+    }
+  }
+  return { rawHref: dest, rawTitle: '' };
+}
+
 function parseDestination(raw: string): Destination {
   const dest = String(raw || '').trim();
   let href = '';
   let title = '';
   if (dest.charAt(0) === '<') {
-    const close = dest.indexOf('>');
+    const close = findUnescapedAngleClose(dest, 1);
     if (close !== -1) {
       href = unescapeLinkDest(dest.slice(1, close));
       const rest = dest.slice(close + 1).trim();
       title = unescapeLinkDest(stripQuotes(rest));
     }
-  } else {
-    const split = /^(\S+)(?:\s+([\s\S]+))?$/.exec(dest);
-    if (split) {
-      href = unescapeLinkDest(split[1]);
-      title = unescapeLinkDest(stripQuotes((split[2] || '').trim()));
-    }
+  } else if (dest) {
+    const split = splitUnescapedHref(dest);
+    href = unescapeLinkDest(split.rawHref);
+    title = unescapeLinkDest(stripQuotes(split.rawTitle));
   }
   return { href: href, title: title };
 }
 
 function stripQuotes(value: string): string {
   if (!value) return '';
-  const m = /^["'(]([\s\S]*)["')]$/.exec(value);
-  return m ? m[1] : value;
+  const m = /^"([\s\S]*)"$|^'([\s\S]*)'$|^\(([\s\S]*)\)$/.exec(value);
+  return m ? (m[1] ?? m[2] ?? m[3] ?? '') : value;
 }
 
 function findMatching(text: string, start: number, open: string, close: string): number {
@@ -488,7 +533,7 @@ function canOpenEmphasis(text: string, index: number, delimiter: string): boolea
     return false;
   }
   const before = index > 0 ? text.charAt(index - 1) : '';
-  if (before === ch) return false;
+  if (before === ch && !isOddBackslashEscaped(text, index - 1)) return false;
   if (isIntrawordGuarded(ch) && before && isIntrawordNeighbor(before, ch)) return false;
   return true;
 }
@@ -530,27 +575,67 @@ function stepStarOrUnderRun(
   return -1;
 }
 
-function skipInlineLinkOrImage(text: string, i: number): number {
+const AUTO_LINK_STICKY_RE = /<((?:https?:\/\/|mailto:)[^>\s]+)>/iy;
+const BARE_URL_STICKY_RE = /(https?:\/\/[^\s<>"'\u2018-\u201f\u2014\u3000-\u303f\u4e00-\u9fff\uff00-\uffef]+)/iy;
+const ENTITY_STICKY_RE = /&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|([A-Za-z][A-Za-z0-9]{1,15}));/y;
+const FOOTNOTE_STICKY_RE = /\[\^([^\]\s]+)\]/y;
+
+function skipAutoOrBareLink(text: string, i: number, delimiter: string): number {
+  const ch = text.charAt(i);
+  if (ch === '<') {
+    AUTO_LINK_STICKY_RE.lastIndex = i;
+    const auto = AUTO_LINK_STICKY_RE.exec(text);
+    return auto ? i + auto[0].length - 1 : i;
+  }
+  if ((ch === 'h' || ch === 'H') && (i === 0 || !/[A-Za-z0-9/@._\-=]/.test(text.charAt(i - 1)))) {
+    BARE_URL_STICKY_RE.lastIndex = i;
+    const bare = BARE_URL_STICKY_RE.exec(text);
+    if (bare) {
+      let url = trimBareUrl(bare[1]);
+      if (
+        (delimiter === '==' || delimiter === '++') &&
+        url.endsWith(delimiter) &&
+        text.indexOf(delimiter, i + url.length) === -1
+      ) {
+        url = url.slice(0, -delimiter.length);
+      }
+      if (/^https?:\/\/\S/i.test(url)) return i + url.length - 1;
+    }
+  }
+  return i;
+}
+
+function skipInlineLinkOrImage(text: string, i: number, delimiter: string, inLink: boolean): number {
+  if (inLink) return i;
   const ch = text.charAt(i);
   const start = ch === '!' && text.charAt(i + 1) === '[' ? i + 1 : ch === '[' ? i : -1;
-  if (start === -1) return i;
+  if (start === -1) return skipAutoOrBareLink(text, i, delimiter);
   const link = parseLinkAt(text, start);
   return link ? link.end - 1 : i;
 }
 
-function findClosingDelimiter(text: string, from: number, delimiter: string): number {
+function findClosingDelimiter(
+  text: string,
+  from: number,
+  delimiter: string,
+  failedCache?: Set<string>,
+  inLink = false,
+): number {
   const ch = delimiter.charAt(0);
   const len = delimiter.length;
   const trackNested = (ch === '*' || ch === '_') && len < 3;
   const openedInsideTriple = trackNested && text.charAt(from) === ch;
+  const cacheKey = (inLink ? 'L:' : '') + delimiter;
+  if (!openedInsideTriple && failedCache?.has(cacheKey)) return -1;
   const state: EmphasisScanState = { complementOpen: false, tripleDepth: 0, fallbackTriple: -1 };
+  let sawAnyCloseCandidate = false;
   for (let i = from; i <= text.length - len; i++) {
     const jumped = skipCodeOrMath(text, i);
     if (jumped > i) {
       i = jumped;
       continue;
     }
-    const linkEnd = skipInlineLinkOrImage(text, i);
+    const linkEnd = skipInlineLinkOrImage(text, i, delimiter, inLink);
     if (linkEnd > i) {
       i = linkEnd;
       continue;
@@ -564,14 +649,19 @@ function findClosingDelimiter(text: string, from: number, delimiter: string): nu
     let runLen = 1;
     while (text.charAt(i + runLen) === ch) runLen++;
     if (runLen === len && canCloseAt(text, from, i, i, ch, len)) {
+      sawAnyCloseCandidate = true;
       if (openedInsideTriple && state.complementOpen) return -1;
       return i;
     }
     if (trackNested) {
+      if (runLen === 3 && i > from && !/\s/.test(text.charAt(i - 1))) sawAnyCloseCandidate = true;
       const matched = stepStarOrUnderRun(text, from, i, ch, len, runLen, state);
       if (matched !== -1) return matched;
     }
     i += runLen - 1;
+  }
+  if (state.fallbackTriple === -1 && !openedInsideTriple && !sawAnyCloseCandidate) {
+    failedCache?.add(cacheKey);
   }
   return state.fallbackTriple;
 }
@@ -632,13 +722,14 @@ function decodeCodePoint(cp: number): string {
 
 function inlineEntity(text: string, index: number): InlineToken | null {
   if (text.charAt(index) !== '&') return null;
-  const match = /^&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|([A-Za-z][A-Za-z0-9]{1,15}));/.exec(text.slice(index));
+  ENTITY_STICKY_RE.lastIndex = index;
+  const match = ENTITY_STICKY_RE.exec(text);
   if (!match) return null;
   if (match[1] || match[2]) {
     const cp = match[1] ? parseInt(match[1], 10) : parseInt(match[2], 16);
     return { html: escapeHtml(decodeCodePoint(cp)), next: index + match[0].length };
   }
-  const named = NAMED_ENTITIES[match[3]];
+  const named = Object.hasOwn(NAMED_ENTITIES, match[3]) ? NAMED_ENTITIES[match[3]] : undefined;
   return named ? { html: escapeHtml(named), next: index + match[0].length } : null;
 }
 
@@ -674,7 +765,8 @@ function inlineTeXMath(text: string, index: number): InlineToken | null {
 
 function inlineMath(text: string, index: number): InlineToken | null {
   if (text.charAt(index) !== '$') return null;
-  const display = text.substr(index, 2) === '$$';
+  const display = text.charAt(index + 1) === '$';
+  if (display && text.charAt(index + 2) === '$') return null;
   const delimiter = display ? '$$' : '$';
   const openEnd = index + delimiter.length;
   const close = findMathClose(text, openEnd, delimiter);
@@ -726,7 +818,8 @@ function inlineImage(text: string, index: number, ctx?: RenderContext): InlineTo
 
 function inlineFootnote(text: string, index: number, ctx: RenderContext): InlineToken | null {
   if (text.charAt(index) !== '[' || !ctx.footnotes) return null;
-  const footnote = /^\[\^([^\]\s]+)\]/.exec(text.slice(index));
+  FOOTNOTE_STICKY_RE.lastIndex = index;
+  const footnote = FOOTNOTE_STICKY_RE.exec(text);
   if (!footnote || !ctx.footnotes.has(footnote[1])) return null;
   const id = footnote[1];
   let number = ctx.footnoteNumbers.get(id);
@@ -738,15 +831,22 @@ function inlineFootnote(text: string, index: number, ctx: RenderContext): Inline
   return { html: '<sup class="mdstudio-footnote-ref">[' + number + ']</sup>', next: index + footnote[0].length };
 }
 
-function inlineLink(text: string, index: number, ctx: RenderContext): InlineToken | null {
+function inlineLink(text: string, index: number, ctx: RenderContext, failedBrackets?: Set<string>): InlineToken | null {
   if (text.charAt(index) !== '[') return null;
   const footnote = inlineFootnote(text, index, ctx);
   if (footnote) return footnote;
-  if (ctx.inLink) return null;
+  if (ctx.inLink || failedBrackets?.has('[')) return null;
   const link = parseLinkAt(text, index) || parseRefLinkAt(text, index, ctx.linkDefs);
-  if (!link) return null;
+  if (!link) {
+    if (text.indexOf(']', index + 1) === -1) failedBrackets?.add('[');
+    return null;
+  }
   const label = normalizeLabel(link.label);
-  const hideUrlLabel = /^https?:\/\//i.test(label) && ctx.options.linkFootnotes && isExternalHref(link.href);
+  const hideUrlLabel =
+    /^https?:\/\/\S+$/i.test(label) &&
+    label.toLowerCase() === link.href.toLowerCase() &&
+    ctx.options.linkFootnotes &&
+    isExternalHref(link.href);
   ctx.inLink = true;
   const innerHtml = hideUrlLabel ? '' : renderInline(link.label, ctx);
   ctx.inLink = false;
@@ -758,7 +858,8 @@ function inlineLink(text: string, index: number, ctx: RenderContext): InlineToke
 
 function inlineAutoLink(text: string, index: number, ctx: RenderContext): InlineToken | null {
   if (ctx.inLink || text.charAt(index) !== '<') return null;
-  const auto = /^<((?:https?:\/\/|mailto:)[^>\s]+)>/i.exec(text.slice(index));
+  AUTO_LINK_STICKY_RE.lastIndex = index;
+  const auto = AUTO_LINK_STICKY_RE.exec(text);
   if (!auto) return null;
   const label = auto[1].replace(/^mailto:/i, '');
   const hidden = ctx.options.linkFootnotes && isExternalHref(auto[1]);
@@ -795,9 +896,8 @@ function inlineBareLink(text: string, index: number, ctx: RenderContext): Inline
   const ch = text.charAt(index);
   if (ch !== 'h' && ch !== 'H') return null;
   if (index !== 0 && /[A-Za-z0-9/@._\-=]/.test(text.charAt(index - 1))) return null;
-  const bare = /^(https?:\/\/[^\s<>"'\u2018-\u201f\u2014\u3000-\u303f\u4e00-\u9fff\uff00-\uffef]+)/i.exec(
-    text.slice(index),
-  );
+  BARE_URL_STICKY_RE.lastIndex = index;
+  const bare = BARE_URL_STICKY_RE.exec(text);
   if (!bare) return null;
   const url = trimBareUrl(bare[1]);
   if (!/^https?:\/\/\S/i.test(url)) return null;
@@ -820,11 +920,16 @@ const EMPHASIS_SPECS: ReadonlyArray<{ delim: string; open: string; close: string
   { delim: '_', open: '<em>', close: '</em>' },
 ];
 
-function inlineEmphasis(text: string, index: number, ctx: RenderContext): InlineToken | null {
+function inlineEmphasis(
+  text: string,
+  index: number,
+  ctx: RenderContext,
+  failedCache?: Set<string>,
+): InlineToken | null {
   for (let s = 0; s < EMPHASIS_SPECS.length; s++) {
     const spec = EMPHASIS_SPECS[s];
     if (!text.startsWith(spec.delim, index) || !canOpenEmphasis(text, index, spec.delim)) continue;
-    const end = findClosingDelimiter(text, index + spec.delim.length, spec.delim);
+    const end = findClosingDelimiter(text, index + spec.delim.length, spec.delim, failedCache, ctx.inLink);
     if (end !== -1) {
       return {
         html: spec.open + renderInline(text.slice(index + spec.delim.length, end), ctx) + spec.close,
@@ -835,16 +940,16 @@ function inlineEmphasis(text: string, index: number, ctx: RenderContext): Inline
   return null;
 }
 
-function inlineTokenAt(text: string, index: number, ctx: RenderContext): InlineToken | null {
+function inlineTokenAt(text: string, index: number, ctx: RenderContext, failedCache?: Set<string>): InlineToken | null {
   return (
     inlineEntity(text, index) ||
     inlineMath(text, index) ||
     inlineCode(text, index) ||
     inlineImage(text, index, ctx) ||
-    inlineLink(text, index, ctx) ||
+    inlineLink(text, index, ctx, failedCache) ||
     inlineAutoLink(text, index, ctx) ||
     inlineBareLink(text, index, ctx) ||
-    inlineEmphasis(text, index, ctx)
+    inlineEmphasis(text, index, ctx, failedCache)
   );
 }
 
@@ -852,6 +957,7 @@ function renderInline(text: string, ctx: RenderContext): string {
   let out = '';
   let buffer = '';
   let i = 0;
+  const failedCache = new Set<string>();
   function flush(): void {
     if (buffer) {
       out += escapeHtml(buffer);
@@ -872,7 +978,7 @@ function renderInline(text: string, ctx: RenderContext): string {
       i++;
       continue;
     }
-    const token = inlineTokenAt(text, i, ctx);
+    const token = inlineTokenAt(text, i, ctx, failedCache);
     if (token) {
       flush();
       out += token.html;
@@ -937,7 +1043,7 @@ function isHeading(line: string): boolean {
 }
 
 function isTableSeparatorLine(line: string): boolean {
-  return /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)+\|?\s*$/.test(line) || /^\s*\|\s*:?-{1,}:?\s*\|\s*$/.test(line);
+  return /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)+\|?\s*$/.test(line) || /^\s*\|\s*:?-{1,}:?\s*\|?\s*$/.test(line);
 }
 
 function isTableStart(lines: string[], index: number): boolean {
@@ -1143,6 +1249,23 @@ function stripLeadingColumns(line: string, count: number): string {
   return line.slice(i);
 }
 
+function listItemEndsInOpenParagraph(content: string[]): boolean {
+  let fence: FenceOpening | null = null;
+  let lastWasClosedFence = false;
+  for (let idx = 0; idx < content.length; idx++) {
+    const prevFence = fence;
+    fence = stepFenceState(fence, content[idx]);
+    lastWasClosedFence = Boolean(prevFence && !fence);
+  }
+  if (fence || lastWasClosedFence) return false;
+  const last = content[content.length - 1] || '';
+  if (!last.trim()) return false;
+  if (/^ {0,3}#{1,6}(?:\s|$)/.test(last)) return false;
+  if (/^ {0,3}(?:\$\$|:::+|\\\])$/.test(last.trim())) return false;
+  if (isHr(last)) return false;
+  return true;
+}
+
 function appendListContinuationLine(
   line: string,
   lines: string[],
@@ -1156,14 +1279,23 @@ function appendListContinuationLine(
   if (listMarkerMatches(line, match, baseIndent, !ordered)) return false;
   if (match && leadingColumns(match[1]) < baseIndent) return false;
   if (indent >= current.indent) {
-    current.lines.push(stripLeadingColumns(line, current.indent));
+    const stripCols =
+      current.childStripIndent !== undefined ? Math.min(current.indent, current.childStripIndent) : current.indent;
+    current.lines.push(stripLeadingColumns(line, stripCols));
     return true;
   }
   if (indent > baseIndent && (Boolean(match) || !isBlockStart(line, lines, i))) {
+    if (match && current.childStripIndent === undefined) current.childStripIndent = indent;
     current.lines.push(stripLeadingColumns(line, indent));
     return true;
   }
-  if (!match && !isBlockStart(line, lines, i)) {
+  if (
+    !match &&
+    !isBlockStart(line, lines, i) &&
+    !/^ {0,3}(?:=+|-+)[ \t]*$/.test(line) &&
+    listItemEndsInOpenParagraph(current.lines)
+  ) {
+    current.childStripIndent = undefined;
     current.lines.push(line);
     return true;
   }
@@ -1333,7 +1465,7 @@ function parseBlockquote(lines: string[], start: number, ctx: RenderContext): Bl
   let inlineTitle = '';
   if (content.length) {
     const firstLine = content[0];
-    const alertMatch = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(.*)$/i.exec(firstLine);
+    const alertMatch = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\](?:[ \t]+(.*)|[ \t]*)$/i.exec(firstLine);
     if (alertMatch) {
       alert = alertMatch[1].toUpperCase();
       inlineTitle = (alertMatch[2] || '').trim();
@@ -1556,7 +1688,10 @@ function parseDelimitedMathBlock(
 ): BlockResult | null {
   const single = singleRe.exec(lines[start]);
   if (single && single[1].trim() && single[1].indexOf(closeToken) === -1) {
-    return { html: renderDisplayMathHtml(single[1].trim()), next: start + 1 };
+    const closeIdx = lines[start].lastIndexOf(closeToken);
+    if (closeIdx > 0 && !isOddBackslashEscaped(lines[start], closeIdx)) {
+      return { html: renderDisplayMathHtml(single[1].trim()), next: start + 1 };
+    }
   }
   const open = openRe.exec(lines[start]);
   if (!open || open[1].indexOf(closeToken) !== -1) return null;
@@ -1793,7 +1928,11 @@ function isPlausibleLinkRefHref(href: string, angleBracketed: boolean): boolean 
   if (!href) return false;
   if (angleBracketed) return true;
   if (/^(?:[a-z][a-z0-9+.-]*:|\/|\.{1,2}\/|#|\?)/i.test(href)) return true;
-  return /^[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]+$/.test(href) && (href.includes('/') || href.includes('.'));
+  if (/^\d+(?:\.\d+)+$/.test(href)) return false;
+  return (
+    /^[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]+$/.test(href) &&
+    (href.includes('/') || (href.includes('.') && /[A-Za-z]/.test(href)))
+  );
 }
 
 function parseLinkRefDestination(raw: string): Destination | null {
@@ -1856,7 +1995,17 @@ function extractDefinitions(text: string): {
       continue;
     }
     if (current && /^(?: {2,}|\t)/.test(line) && line.trim()) {
-      current.text += '\n' + line.replace(/^(?: {2,}|\t)+/, '');
+      const stripped = line.replace(/^(?: {2,}|\t)+/, '');
+      current.text = current.text ? current.text + '\n' + stripped : stripped;
+      continue;
+    }
+    if (
+      current &&
+      !line.trim() &&
+      index + 1 < lines.length &&
+      /^(?: {2,}|\t)/.test(lines[index + 1]) &&
+      lines[index + 1].trim()
+    ) {
       continue;
     }
     if (canStartLinkDef && parseLinkRefLine(line, linkDefs)) {

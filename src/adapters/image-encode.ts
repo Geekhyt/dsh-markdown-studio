@@ -33,8 +33,9 @@ export function encodeImageForWechat(image: ImageLike, documentLike: CanvasDocum
   const canvas = documentLike.createElement('canvas');
   const context = canvas.getContext('2d');
   if (!context) return null;
-  const naturalWidth = image.naturalWidth || image.width || 1;
-  const naturalHeight = image.naturalHeight || image.height || 1;
+  const naturalWidth = image.naturalWidth || image.width || 0;
+  const naturalHeight = image.naturalHeight || image.height || 0;
+  if (naturalWidth <= 0 || naturalHeight <= 0) return null;
   const scale = Math.min(1, 1600 / naturalWidth, 3000 / naturalHeight);
   const width = Math.max(1, Math.round(naturalWidth * scale));
   const height = Math.max(1, Math.round(naturalHeight * scale));
@@ -51,15 +52,23 @@ export function encodeImageForWechat(image: ImageLike, documentLike: CanvasDocum
   }
   if (approximateDataBytes(encoded) > 1000000 && (width > 640 || height > 640)) {
     const smaller = documentLike.createElement('canvas');
-    smaller.width = Math.max(1, Math.round(width * 0.7));
-    smaller.height = Math.max(1, Math.round(height * 0.7));
     const smallContext = smaller.getContext('2d');
     if (smallContext) {
-      smallContext.fillStyle = '#ffffff';
-      smallContext.fillRect(0, 0, smaller.width, smaller.height);
-      smallContext.drawImage(image, 0, 0, smaller.width, smaller.height);
-      const smallEncoded = smaller.toDataURL('image/jpeg', 0.8);
-      if (approximateDataBytes(smallEncoded) <= 1000000) encoded = smallEncoded;
+      for (const factor of [0.7, 0.55, 0.4]) {
+        smaller.width = Math.max(1, Math.round(width * factor));
+        smaller.height = Math.max(1, Math.round(height * factor));
+        smallContext.fillStyle = '#ffffff';
+        smallContext.fillRect(0, 0, smaller.width, smaller.height);
+        smallContext.drawImage(image, 0, 0, smaller.width, smaller.height);
+        for (const smallQuality of [0.7, 0.5]) {
+          const smallEncoded = smaller.toDataURL('image/jpeg', smallQuality);
+          if (approximateDataBytes(smallEncoded) <= 1000000) {
+            encoded = smallEncoded;
+            break;
+          }
+        }
+        if (approximateDataBytes(encoded) <= 1000000) break;
+      }
     }
   }
   if (approximateDataBytes(encoded) > 1000000) return null;
@@ -76,6 +85,10 @@ export function prepareImageForWechat(dataUrl: unknown): Promise<PreparedImage> 
       dataUrl: sourceDataUrl,
       filename: 'image-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6) + '.' + sourceExt,
     };
+    if (!match) {
+      resolve(fallback);
+      return;
+    }
     if (
       (mime === 'image/png' || mime === 'image/jpeg' || mime === 'image/jpg') &&
       approximateDataBytes(dataUrl) <= 950000

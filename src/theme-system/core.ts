@@ -123,6 +123,7 @@ export function core(p: Palette): string {
           v('markText') +
           '; padding: 0.1em 0.3em; border-radius: 4px;',
       ),
+      rule('mark a, mark .mdstudio-link, mark sup, mark .mdstudio-ref, mark del', 'color: ' + v('markText') + ';'),
       rule(
         'u',
         'text-decoration: none; border-bottom: ' +

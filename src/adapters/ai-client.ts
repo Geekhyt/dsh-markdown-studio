@@ -222,6 +222,25 @@ async function readStreamLines(
   }
 }
 
+async function throwJsonStreamError(response: Response): Promise<never> {
+  let parsed: unknown;
+  try {
+    parsed = await response.json();
+  } catch {
+    if (!response.ok) throw httpStatusError(response.status);
+    throw new AiClientError('HOST_BAD_RESPONSE', '宿主 AI 响应格式异常');
+  }
+  const err = recordOf(recordOf(parsed)?.error);
+  const errCode = strOf(err?.code);
+  const errMessage = strOf(err?.message);
+  if (errCode || errMessage) {
+    const hint = strOf(err?.hint);
+    throw new AiClientError(errCode || 'AI_ERROR', formatErrorMessage(errMessage || 'AI 请求失败', hint), hint);
+  }
+  if (!response.ok) throw httpStatusError(response.status);
+  throw new AiClientError('AI_ERROR', 'AI 请求失败');
+}
+
 export class AiClient {
   private readonly route: string;
   private readonly fetchImpl: typeof fetch;
@@ -242,7 +261,7 @@ export class AiClient {
     } catch {
       return { available: false, provider: '', model: '', models: [] };
     }
-    const contentType = response.headers.get('content-type') || '';
+    const contentType = (response.headers.get('content-type') || '').toLowerCase();
     if (!contentType.includes('application/json')) {
       return { available: false, provider: '', model: '', models: [] };
     }
@@ -283,27 +302,14 @@ export class AiClient {
       if (request.signal?.aborted) throw new AiClientError('ABORTED', '已取消');
       throw new AiClientError('HOST_UNAVAILABLE', '无法连接宿主 AI 服务');
     }
-    const contentType = response.headers.get('content-type') || '';
+    const contentType = (response.headers.get('content-type') || '').toLowerCase();
     if (contentType.includes('application/json')) {
-      let parsed: unknown;
-      try {
-        parsed = await response.json();
-      } catch {
-        throw new AiClientError('HOST_BAD_RESPONSE', '宿主 AI 响应格式异常');
-      }
-      const json = recordOf(parsed);
-      const err = recordOf(json?.error);
-      const hint = strOf(err?.hint);
-      throw new AiClientError(
-        strOf(err?.code) || 'AI_ERROR',
-        formatErrorMessage(strOf(err?.message) || 'AI 请求失败', hint),
-        hint,
-      );
+      await throwJsonStreamError(response);
     }
     if (!response.ok) {
       throw httpStatusError(response.status);
     }
-    if (!contentType.toLowerCase().includes('ndjson')) {
+    if (!contentType.includes('ndjson')) {
       throw new AiClientError('HOST_BAD_RESPONSE', '宿主 AI 响应格式异常');
     }
     const acc: StreamAccumulator = { text: '', provider: '', model: '' };

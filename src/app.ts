@@ -45,6 +45,7 @@ import { useMathAssets } from './application/use-math-assets';
 import { useMermaidAssets } from './application/use-mermaid-assets';
 import { useScrollSync } from './application/use-scroll-sync';
 import { useSlashMenu } from './application/use-slash-menu';
+import { useStudioKeyboard } from './application/use-studio-keyboard';
 import { useWorkspace } from './application/use-workspace';
 import { useWritingSkills, type WritingSkillsApi } from './application/use-writing-skills';
 import {
@@ -63,14 +64,13 @@ import { sanitizeSettings } from './domain/settings';
 import { canStartAutosave } from './domain/file-session.machine';
 import {
   canFocusMarkdownEditor,
-  canHandleImmersiveShortcutPolicy,
   canShowSelectionBubble,
   computePaneVisibility,
+  initialStudioShellState,
   isFullscreenDrawer,
   isParentModalOpen,
-  resolveDocumentEscapeAction,
+  reduceStudioShellState,
   resolveEditorEscapeOutcome,
-  resolveWindowEscapeAction,
   shouldApplyAiPreview,
   shouldKeepCssWorkbenchOnViewChange,
   shouldKeepDrawerOnNavigation,
@@ -81,7 +81,6 @@ import { createStudioLocaleController } from './locales/ui-strings';
 import { isElementVisible, resolveSafeFocusTarget, useElementBinding } from './runtime/dom-surfaces';
 import {
   useDebouncedKeyTask,
-  useDocumentEvent,
   useExternalStore,
   useLatest,
   useMountDisposable,
@@ -95,7 +94,7 @@ import { useDialogHost } from './ui/dialog-host';
 import { type EditorAiModel, EditorPane } from './ui/editor-pane';
 import { createErrorBoundary } from './ui/error-boundary';
 import { HeaderBar } from './ui/header-bar';
-import { ImmersiveDock, type ImmersiveMode, useImmersiveShortcuts } from './ui/immersive-dock';
+import { ImmersiveDock } from './ui/immersive-dock';
 import { ImportModeDialog, LibraryDialog, MergeConflictDialog, WorkspaceDialog } from './ui/library-dialogs';
 import { PreviewPane } from './ui/preview-pane';
 import { useSelectionBubble } from './ui/selection-bubble';
@@ -129,11 +128,6 @@ function isAbortError(error: unknown): boolean {
   return Boolean(error && typeof error === 'object' && (error as { name?: unknown }).name === 'AbortError');
 }
 
-function isEventInside(event: Event, selector: string): boolean {
-  const el = event.target as Element | null;
-  return Boolean(el && typeof el.closest === 'function' && el.closest(selector));
-}
-
 function asFocusableElement(node: unknown): HTMLElement | null {
   return node && typeof (node as HTMLElement).focus === 'function' ? (node as HTMLElement) : null;
 }
@@ -145,7 +139,7 @@ function detectPlatformModifiers(): { modKey: string; shiftKey: string; altKey: 
       typeof document !== 'undefined' ? document.documentElement?.getAttribute?.('data-platform') || '' : '';
     const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
     const platformText = nav.userAgentData?.platform || navigator.platform || navigator.userAgent || '';
-    isMac = docPlatform === 'darwin' || /mac|iphone|ipad/i.test(String(platformText));
+    isMac = docPlatform ? docPlatform === 'darwin' : /mac|iphone|ipad/i.test(String(platformText));
   } catch {
     isMac = false;
   }
@@ -154,6 +148,12 @@ function detectPlatformModifiers(): { modKey: string; shiftKey: string; altKey: 
     shiftKey: isMac ? '⇧' : 'Shift+',
     altKey: isMac ? '⌥' : 'Alt+',
   };
+}
+
+const IMAGE_FILE_EXT_RE = /\.(?:png|jpe?g|gif|webp|avif|bmp|svg|ico)$/i;
+
+function isDroppedImageFile(file: File): boolean {
+  return /^image\//i.test(file.type || '') || (!file.type && IMAGE_FILE_EXT_RE.test(file.name || ''));
 }
 
 async function migrateDataImages(
@@ -241,16 +241,6 @@ function countMarkdownWords(text: string): number {
   return words;
 }
 
-/**
- * Why parent modals temporarily hide (`open = false`) while a child confirm/prompt/conflict
- * dialog is active: avoids dual modal focus-trap and Escape-key collisions in DSH Modal.
- * Consequently, any state that must survive a child confirmation lives outside the modal view.
- */
-function isUnhandledEscapeKey(event: KeyboardEvent): boolean {
-  if (event.isComposing || event.keyCode === 229) return false;
-  return event.key === 'Escape' && !event.defaultPrevented;
-}
-
 function buildEditorAiModel(
   skillsApi: WritingSkillsApi,
   bubblePos: { top: number; left: number } | null,
@@ -323,6 +313,10 @@ export function createClientPlugin(
     const dirtyDiskRef = React.useRef(false);
     const suppressAutosaveRef = React.useRef(false);
     const cancelAutosaveRef = React.useRef<() => void>(() => {});
+    const focusTimerRef = React.useRef<number | null>(null);
+    const [surfaceWidth, setSurfaceWidth] = React.useState(() =>
+      typeof window !== 'undefined' ? window.innerWidth : 1024,
+    );
 
     function trackInFlightAsset(filename: string, active: boolean): void {
       if (!filename) return;
@@ -335,23 +329,24 @@ export function createClientPlugin(
     const [previewMode, setPreviewMode] = React.useState<PreviewMode>(() =>
       typeof window !== 'undefined' && window.innerWidth >= 900 ? 'desktop' : 'mobile',
     );
-    const [drawerOpen, setDrawerOpen] = React.useState(false);
-    const [drawerTab, setDrawerTab] = React.useState<'theme' | 'help'>('theme');
-    const [drawerNavSeq, setDrawerNavSeq] = React.useState(0);
-    const [cssWorkbench, setCssWorkbench] = React.useState<{ open: boolean; targetId: string | null; seq: number }>({
-      open: false,
-      targetId: null,
-      seq: 0,
-    });
-    const [liveCssDraft, setLiveCssDraft] = React.useState('');
-    const [immersive, setImmersive] = React.useState<ImmersiveMode>(null);
-    const [menuOpen, setMenuOpen] = React.useState(false);
+    const [shell, dispatchShell] = React.useReducer(reduceStudioShellState, undefined, initialStudioShellState);
+    const {
+      drawerOpen,
+      drawerTab,
+      drawerNavSeq,
+      cssWorkbench,
+      liveCssDraft,
+      immersive,
+      menuOpen,
+      outlineOpen,
+      overlayEpoch,
+    } = shell;
+    const setMenuOpen = (open: boolean): void => dispatchShell({ type: 'SET_MENU_OPEN', open });
+    const setOutlineOpen = (open: boolean): void => dispatchShell({ type: 'SET_OUTLINE_OPEN', open });
     const [toast, setToast] = React.useState<ToastState | null>(null);
     const [localImageServerUrl, setLocalImageServerUrl] = React.useState('');
     const localImageServerUrlRef = useLatest(React, localImageServerUrl);
     const [searchPanel, setSearchPanel] = React.useState<SearchState>({ open: false, query: '', replacement: '' });
-    const [outlineOpen, setOutlineOpen] = React.useState(false);
-    const [overlayEpoch, setOverlayEpoch] = React.useState(0);
     const [editorFailed, setEditorFailed] = React.useState(false);
 
     function notify(text: string, tone: ToastTone = 'success'): void {
@@ -431,6 +426,22 @@ export function createClientPlugin(
       });
     }
 
+    function cancelFocusTimer(): void {
+      if (focusTimerRef.current !== null) {
+        window.clearTimeout(focusTimerRef.current);
+        focusTimerRef.current = null;
+      }
+    }
+
+    function scheduleFocusTimer(task: () => void, delayMs = 30): void {
+      cancelFocusTimer();
+      focusTimerRef.current = window.setTimeout(() => {
+        focusTimerRef.current = null;
+        if (!pageAliveRef.current) return;
+        task();
+      }, delayMs);
+    }
+
     function focusEditor(): void {
       if (!canFocusEditorRef.current()) return;
       if (codeMirrorApiRef.current) codeMirrorApiRef.current.focus();
@@ -438,10 +449,11 @@ export function createClientPlugin(
     }
 
     function focusEditorSoon(): void {
-      window.setTimeout(focusEditor, 30);
+      scheduleFocusTimer(focusEditor, 30);
     }
 
     function captureDialogTriggerFocus(preferEditor = false): void {
+      cancelFocusTimer();
       if (preferEditor) {
         dialogReturnFocusRef.current = null;
         return;
@@ -490,19 +502,19 @@ export function createClientPlugin(
     });
 
     function clearCssWorkbenchDraft(): void {
-      setCssWorkbench((prev) => (prev.open ? { open: false, targetId: null, seq: prev.seq } : prev));
-      setLiveCssDraft('');
+      dispatchShell({ type: 'CLOSE_CSS_WORKBENCH' });
+    }
+
+    function dismissEditorTransients(keepSearch = false): void {
+      slashMenu.close();
+      selectionBubble.clear();
+      selectionBubble.clearPointer();
+      if (!keepSearch) setSearchPanel((prev) => (prev.open ? { ...prev, open: false } : prev));
     }
 
     function dismissTransientOverlays(opts?: { keepSearch?: boolean; keepDrawer?: boolean; keepMenu?: boolean }): void {
-      if (!opts?.keepDrawer) setDrawerOpen(false);
-      if (!opts?.keepMenu) setMenuOpen(false);
-      slashMenu.close();
-      setOutlineOpen(false);
-      selectionBubble.clear();
-      selectionBubble.clearPointer();
-      if (!opts?.keepSearch) setSearchPanel((prev) => (prev.open ? { ...prev, open: false } : prev));
-      setOverlayEpoch((value) => value + 1);
+      dispatchShell({ type: 'DISMISS_TRANSIENT', keepDrawer: opts?.keepDrawer, keepMenu: opts?.keepMenu });
+      dismissEditorTransients(opts?.keepSearch);
     }
 
     const fileContext = useFileContext({
@@ -519,8 +531,26 @@ export function createClientPlugin(
         } finally {
           suppressAutosaveRef.current = false;
         }
-        const normalizedLen = markdownRef.current.length;
+        const normalizedText = markdownRef.current;
+        const normalizedLen = normalizedText.length;
         focusRange(normalizedLen, normalizedLen);
+        const folder = fileContext.linkedFolder();
+        const reloadedHandle = fileContext.linkedFile();
+        if (folder && reloadedHandle) {
+          void importFolderAssets(folder, normalizedText, hostClient, trackInFlightAsset)
+            .then((imported) => {
+              if (!pageAliveRef.current) return;
+              if (fileContext.linkedFile() !== reloadedHandle || store.getActive().markdown !== normalizedText) return;
+              if (imported.text !== normalizedText) {
+                setMarkdown(imported.text, {
+                  boundary: true,
+                  title: deriveTitleWithFallback(imported.text),
+                  prevSelection: selection(),
+                });
+              }
+            })
+            .catch(() => {});
+        }
       },
     });
 
@@ -616,7 +646,7 @@ export function createClientPlugin(
         });
       }
       detachFileContext();
-      window.setTimeout(() => focusRange(0, 0), 30);
+      scheduleFocusTimer(() => focusRange(0, 0), 30);
     }
 
     const deferredMarkdown = useDeferredText(doc.markdown);
@@ -720,16 +750,17 @@ export function createClientPlugin(
         if (!isCurrentOpen()) return false;
         const fileObj = openedFile || (await entry.handle.getFile());
         if (!isCurrentOpen()) return false;
-        resetEditorTo({ title: deriveTitleWithFallback(text), markdown: text, settings, view });
+        const normalizedText = normalizeLineEndings(text);
+        resetEditorTo({ title: deriveTitleWithFallback(normalizedText), markdown: normalizedText, settings, view });
         await fileContext.stampFile(entry.handle, fileObj, text);
         if (!isCurrentOpen()) return false;
         fileContext.applyDocumentRef({ kind: 'folder', directory, file: entry.handle });
         const isStaleOpen = (): boolean => !isCurrentOpen() || fileContext.linkedFile() !== entry.handle;
         if (isStaleOpen()) return false;
         fileContext.setFileName(entry.name);
-        const imported = await importFolderAssets(directory, text, hostClient, trackInFlightAsset);
-        if (isStaleOpen() || store.getActive().markdown !== text) return true;
-        if (imported.text !== text) {
+        const imported = await importFolderAssets(directory, normalizedText, hostClient, trackInFlightAsset);
+        if (isStaleOpen() || store.getActive().markdown !== normalizedText) return true;
+        if (imported.text !== normalizedText) {
           setMarkdown(imported.text, {
             boundary: true,
             title: deriveTitleWithFallback(imported.text),
@@ -870,6 +901,7 @@ export function createClientPlugin(
       notify,
       doc,
       settings,
+      getSettings: () => store.getActive().settings,
       localImageServerUrl,
       mermaidAssets,
       mathAssets,
@@ -1034,10 +1066,12 @@ export function createClientPlugin(
       getActiveArticleId: () => store.getActive().id,
       isPageAlive: () => pageAliveRef.current,
       flushBeforeSwitch: flushLinkedFileBeforeSwitch,
+      claimOpenTransition,
       onResetSurface: resetDocumentSurface,
     });
 
     function handleSurfaceResize(width: number): void {
+      if (width > 0) setSurfaceWidth(width);
       selectionBubble.clear();
       selectionBubble.clearPointer();
       slashMenu.close();
@@ -1048,51 +1082,42 @@ export function createClientPlugin(
     }
     const handleSurfaceResizeRef = useLatest(React, handleSurfaceResize);
 
+    const handleExternalMergeRef = useLatest(
+      React,
+      (
+        prevActive: { id: string; markdown: string },
+        nextActive: { id: string; markdown: string },
+        activeWasDirty: boolean,
+      ) => {
+        if (nextActive.id !== prevActive.id) {
+          openTransitionSeqRef.current++;
+          detachFileContext();
+          resetDocumentSurface();
+          docHistory.reset(nextActive.markdown);
+        } else if (!activeWasDirty && nextActive.markdown !== prevActive.markdown) {
+          docHistory.reset(nextActive.markdown);
+        }
+      },
+    );
+
     // Host titlebar clearance binding + Window flush/Escape/Immersive bindings + Mount disposable
-    useElementBinding(React, rootRef, (el) => observeHostTitlebarInset(el, (w) => handleSurfaceResizeRef.current(w)));
+    useElementBinding(React, rootRef, (el) => {
+      if (el.clientWidth > 0) setSurfaceWidth(el.clientWidth);
+      return observeHostTitlebarInset(el, (w) => handleSurfaceResizeRef.current(w));
+    });
     useWindowEvent(React, 'beforeunload', () => store.flush());
     useWindowEvent(React, 'pagehide', () => store.flush());
     useWindowEvent(React, 'storage', (event: StorageEvent) => {
       if (event.key !== LIBRARY_KEY_V2) return;
       const external = loadPersistedLibrary();
       if (!external) return;
-      const prevActive = store.getActive();
-      const activeWasDirty = store.isDocDirty(prevActive.id);
       store.syncExternal(external);
-      const nextActive = store.getActive();
-      if (nextActive.id !== prevActive.id) {
-        openTransitionSeqRef.current++;
-        detachFileContext();
-        resetDocumentSurface();
-        docHistory.reset(nextActive.markdown);
-      } else if (!activeWasDirty && nextActive.markdown !== prevActive.markdown) {
-        docHistory.reset(nextActive.markdown);
-      }
     });
 
     useWindowEvent(React, 'resize', () => {
       const width = rootRef.current?.clientWidth || window.innerWidth;
       handleSurfaceResize(width);
     });
-
-    useWindowEvent(
-      React,
-      'keydown',
-      (event: KeyboardEvent) => {
-        if (!isUnhandledEscapeKey(event)) return;
-        // Keep the docked desktop inspector open when pressing Esc inside the Markdown editor (CodeMirror Esc->Tab escape).
-        const action = resolveWindowEscapeAction({
-          hasModal: hasActiveModal(),
-          menuOpen,
-          drawerOpen,
-          inEditor: isEventInside(event, '.mdstudio-editor-pane:not(.mdstudio-css-workbench) .mdstudio-editor-wrap'),
-          fullscreenDrawer: isFullscreenDrawer(drawerOpen, containerWidth()),
-        });
-        if (action === 'close-menu') setMenuOpen(false);
-        else if (action === 'close-drawer') setDrawerOpen(false);
-      },
-      menuOpen || drawerOpen,
-    );
 
     useMountDisposable(React, () => {
       pageAliveRef.current = true;
@@ -1125,12 +1150,14 @@ export function createClientPlugin(
         setMarkdown(portableMd, { boundary: true, prevSelection: selection() });
       }
 
+      const migrateTargetId = store.getActive().id;
       const migrateTimer = window.setTimeout(() => {
+        if (!alive || store.getActive().id !== migrateTargetId) return;
         const snapshot = markdownRef.current;
         if (!/data:image\//i.test(snapshot)) return;
         migrateDataImages(snapshot, hostClient, trackInFlightAsset)
           .then((result) => {
-            if (!alive || !result.migrated) return;
+            if (!alive || !result.migrated || store.getActive().id !== migrateTargetId) return;
             const current = markdownRef.current;
             const next = replaceLocalImages(current, result.mapping);
             if (next !== current) {
@@ -1142,6 +1169,10 @@ export function createClientPlugin(
             /* keep base64 when host is unreachable */
           });
       }, 800);
+
+      const unsubscribeExternalMerge = store.subscribeExternalMerge((prevActive, nextActive, activeWasDirty) => {
+        handleExternalMergeRef.current(prevActive, nextActive, activeWasDirty);
+      });
 
       // Event-driven 1200ms debounced autosave to linked local file via DocumentStore subscription
       let lastObservedId = store.getActive().id;
@@ -1202,11 +1233,13 @@ export function createClientPlugin(
       return () => {
         alive = false;
         pageAliveRef.current = false;
+        cancelFocusTimer();
         store.flush();
         window.clearTimeout(migrateTimer);
         clearAutosaveTimer();
         cancelAutosaveRef.current = () => {};
         unsubscribeAutosave();
+        unsubscribeExternalMerge();
         if (cmScrollCleanupRef.current) cmScrollCleanupRef.current();
       };
     });
@@ -1215,17 +1248,20 @@ export function createClientPlugin(
 
     function handleDraftCssChange(nextCss: string): void {
       if (nextCss.trim() !== liveCssDraftRef.current.trim()) scrollSync.capturePreviewRatio();
-      setLiveCssDraft(nextCss);
+      dispatchShell({ type: 'SET_LIVE_CSS_DRAFT', css: nextCss });
     }
 
     function openCssWorkbench(targetId: string | null): void {
       scrollSync.capturePreviewRatio();
-      dismissTransientOverlays();
+      dismissEditorTransients();
       writingSkills.resetSession();
       if (view !== 'split') store.updateActive({ view: 'split' });
       const targetTheme = targetId ? findCustomTheme(settings.customThemes, targetId) : null;
-      setLiveCssDraft(targetTheme ? targetTheme.css : themes.exampleCss(lang() === 'en' ? 'en' : 'zh'));
-      setCssWorkbench((prev) => ({ open: true, targetId, seq: prev.seq + 1 }));
+      dispatchShell({
+        type: 'OPEN_CSS_WORKBENCH',
+        targetId,
+        draftCss: targetTheme ? targetTheme.css : themes.exampleCss(lang() === 'en' ? 'en' : 'zh'),
+      });
     }
 
     function closeCssWorkbench(): void {
@@ -1235,16 +1271,15 @@ export function createClientPlugin(
     }
 
     function enterImmersive(): void {
-      dismissTransientOverlays();
-      clearCssWorkbenchDraft();
+      dismissEditorTransients();
       const next: 'write' | 'preview' = view === 'preview' ? 'preview' : 'write';
-      setImmersive(next);
+      dispatchShell({ type: 'ENTER_IMMERSIVE', mode: next });
       if (next === 'write') focusEditorSoon();
     }
 
     function exitImmersive(): void {
-      dismissTransientOverlays({ keepSearch: view !== 'preview' });
-      setImmersive(null);
+      dismissEditorTransients(view !== 'preview');
+      dispatchShell({ type: 'EXIT_IMMERSIVE' });
       window.setTimeout(() => {
         resolveSafeFocusTarget(
           rootRef.current?.querySelector<HTMLElement>('.mdstudio-focus-btn') || null,
@@ -1277,51 +1312,55 @@ export function createClientPlugin(
 
     useDebouncedKeyTask(React, 'editor-scroll-restore', 0, panes.showMarkdownEditor, scrollSync.restoreEditorScroll);
 
-    function canHandleImmersiveShortcut(action: 'toggle' | 'exit'): boolean {
-      return canHandleImmersiveShortcutPolicy(
-        {
-          hasModal: hasActiveModal(),
-          showMarkdownEditor: panes.showMarkdownEditor,
-          searchOpen: searchPanel.open,
-          slashOpen: slashMenu.open,
-          outlineOpen,
-          hasAiSession: Boolean(writingSkills.session),
-          menuOpen,
-          drawerOpen,
-        },
-        action,
-      );
+    function runGlobalSaveShortcut(forceDialog: boolean): void {
+      const currentFile = fileContext.linkedFile();
+      if (forceDialog || currentFile?.createWritable) {
+        void fileActions.saveLocalFile(forceDialog);
+        return;
+      }
+      const saved = store.flush();
+      notify(t(saved ? 'toast.saved' : 'storage.saveFailed'), saved ? 'success' : 'error');
     }
 
-    useImmersiveShortcuts(React, immersive, enterImmersive, exitImmersive, canHandleImmersiveShortcut);
-
-    useDocumentEvent(
+    useStudioKeyboard({
       React,
-      'keydown',
-      (event: KeyboardEvent) => {
-        if (!isUnhandledEscapeKey(event)) return;
-        const action = resolveDocumentEscapeAction({
-          hasModal: hasActiveModal(),
-          menuOpen,
-          outlineOpen,
-          slashOpen: slashMenu.open,
-          drawerOpen,
-          inDrawer: isEventInside(event, '.mdstudio-drawer'),
-          showMarkdownEditor: panes.showMarkdownEditor,
-          searchOpen: searchPanel.open,
-          hasAiSession: Boolean(writingSkills.session),
-          fullscreenDrawer: isFullscreenDrawer(drawerOpen, containerWidth()),
-        });
-        if (action === 'close-search') {
-          closeSearchPanel();
-          event.preventDefault();
-        } else if (action === 'cancel-ai') {
-          writingSkills.cancelSession();
-          event.preventDefault();
-        }
+      rootRef,
+      state: {
+        hasModal: hasActiveModal(),
+        menuOpen,
+        drawerOpen,
+        showMarkdownEditor: panes.showMarkdownEditor,
+        slashOpen: slashMenu.open,
+        outlineOpen,
+        searchOpen: searchPanel.open,
+        hasAiSession: Boolean(writingSkills.session),
+        immersive,
+        containerWidth: surfaceWidth,
       },
-      panes.showMarkdownEditor && (searchPanel.open || Boolean(writingSkills.session)),
-    );
+      actions: {
+        onToggleImmersive: () => {
+          if (immersive) exitImmersive();
+          else enterImmersive();
+        },
+        onExitImmersive: exitImmersive,
+        onSave: runGlobalSaveShortcut,
+        onCopy: () => void copyActions.copyArticle(),
+        onOpenFind: () => {
+          selectionBubble.clear();
+          selectionBubble.clearPointer();
+          searchCmds.openSearch();
+        },
+        onCloseMenu: () => setMenuOpen(false),
+        onCloseDrawer: () => dispatchShell({ type: 'CLOSE_DRAWER' }),
+        onCloseSlash: slashMenu.close,
+        onCloseOutline: () => {
+          selectionBubble.clear();
+          setOutlineOpen(false);
+        },
+        onCloseSearch: closeSearchPanel,
+        onCancelAi: writingSkills.cancelSession,
+      },
+    });
 
     function handleEditorKeyDown(event: React.KeyboardEvent<HTMLElement>): void {
       const native = event.nativeEvent as KeyboardEvent | undefined;
@@ -1335,7 +1374,7 @@ export function createClientPlugin(
       const files: File[] = event.dataTransfer?.files ? Array.from(event.dataTransfer.files) : [];
       if (!files.length) return;
       event.preventDefault();
-      const images = files.filter((file) => /^image\//i.test(file.type || ''));
+      const images = files.filter(isDroppedImageFile);
       if (images.length) {
         insertImageFiles(images);
         return;
@@ -1476,12 +1515,11 @@ export function createClientPlugin(
             docLibrary.openLibrary();
           },
           onToggleDrawer: () => {
-            if (!drawerOpen) setDrawerTab('theme');
-            dismissTransientOverlays({ keepSearch: true, keepDrawer: true });
-            setDrawerOpen(!drawerOpen);
+            dismissEditorTransients(true);
+            dispatchShell({ type: 'TOGGLE_DRAWER' });
           },
           onToggleMenu: () => {
-            if (!menuOpen) dismissTransientOverlays({ keepSearch: true, keepDrawer: true, keepMenu: true });
+            if (!menuOpen) dismissEditorTransients(true);
             setMenuOpen(!menuOpen);
           },
           onCloseMenu: () => setMenuOpen(false),
@@ -1508,10 +1546,8 @@ export function createClientPlugin(
           },
           onCopyText: copyActions.copyPlainText,
           onShortcuts: () => {
-            dismissTransientOverlays({ keepSearch: true, keepDrawer: true });
-            setDrawerTab('help');
-            setDrawerOpen(true);
-            setDrawerNavSeq((n) => n + 1);
+            dismissEditorTransients(true);
+            dispatchShell({ type: 'OPEN_DRAWER_TAB', tab: 'help' });
           },
           onSample: () => {
             setMenuOpen(false);
@@ -1589,7 +1625,7 @@ export function createClientPlugin(
             onOutline: () => {
               selectionBubble.clear();
               slashMenu.close();
-              setOutlineOpen((prev) => !prev);
+              dispatchShell({ type: 'TOGGLE_OUTLINE' });
             },
             onReload: () => void fileActions.reloadLinkedFile(),
           },
@@ -1600,6 +1636,7 @@ export function createClientPlugin(
             pos: slashMenu.pos,
             onSelect: slashMenu.selectIndex,
             onApply: slashMenu.applyCommand,
+            onClose: slashMenu.close,
           },
           search: {
             open: searchPanel.open,
@@ -1664,6 +1701,7 @@ export function createClientPlugin(
               else selectionBubble.sync(editorValue(), nextSelection);
               if (
                 nextSelection.programmatic ||
+                nextSelection.composing ||
                 !panes.showMarkdownEditor ||
                 hasActiveModal() ||
                 nextSelection.start !== nextSelection.end ||
@@ -1679,11 +1717,11 @@ export function createClientPlugin(
             onPaste: handlePaste,
             onDrop: handleDrop,
             onBlur: slashMenu.close,
-            onTextareaInput: (value, _caret, boundary, selectionStart, selectionEnd) => {
+            onTextareaInput: (value, _caret, boundary, selectionStart, selectionEnd, composing) => {
               const nextRange = { start: selectionStart, end: selectionEnd };
-              setMarkdown(value, { boundary, prevSelection: lastSelectionRef.current });
+              setMarkdown(value, { boundary, composing: Boolean(composing), prevSelection: lastSelectionRef.current });
               lastSelectionRef.current = nextRange;
-              slashMenu.syncAtCaret(value, selectionStart);
+              if (!composing) slashMenu.syncAtCaret(value, selectionStart);
               selectionBubble.sync(value, nextRange);
             },
             onTextareaSelect: (selectionStart, selectionEnd) => {
@@ -1775,12 +1813,13 @@ export function createClientPlugin(
           t,
           ui: uiKit,
           open: drawerOpen,
+          fullscreen: isFullscreenDrawer(drawerOpen, surfaceWidth),
           initialTab: drawerTab,
           navSeq: drawerNavSeq,
-          onTabChange: setDrawerTab,
+          onTabChange: (tab) => dispatchShell({ type: 'SET_DRAWER_TAB', tab }),
           settings,
           shortcuts: shortcutRows,
-          onClose: () => setDrawerOpen(false),
+          onClose: () => dispatchShell({ type: 'CLOSE_DRAWER' }),
           themeActions: {
             onSettings: updateSettings,
             onPickTheme: pickTheme,
@@ -1883,7 +1922,11 @@ export function createClientPlugin(
           actions: {
             onConfirm: dialogHost.confirm,
             onPrompt: dialogHost.prompt,
-            onOpen: (entry) => void workspaceTools.openEntry(entry),
+            onOpen: (entry) => {
+              void workspaceTools.openEntry(entry).then((opened) => {
+                if (opened && store.getActive().view === 'preview') restoreDialogTriggerFocus();
+              });
+            },
             onPickFolder: workspaceTools.pickFolder,
             onRefresh: workspaceTools.refresh,
             onCreateFile: workspaceTools.createFile,
@@ -1944,8 +1987,8 @@ export function createClientPlugin(
             ui: uiKit,
             mode: immersive,
             onSwitch: (next) => {
-              dismissTransientOverlays();
-              setImmersive(next);
+              dismissEditorTransients();
+              dispatchShell({ type: 'SWITCH_IMMERSIVE', mode: next });
               if (next === 'write') focusEditorSoon();
             },
             onExit: exitImmersive,

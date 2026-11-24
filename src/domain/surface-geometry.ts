@@ -56,6 +56,7 @@ function avoidCornerObstacle(
   width: number,
   height: number,
   pad: number,
+  maxLeft: number,
   maxTop: number,
   obs: SurfaceRect,
   surface: SurfaceRect,
@@ -67,8 +68,12 @@ function avoidCornerObstacle(
   if (!rectsIntersect(left, top, width, height, bx, by, br, bb)) return { left, top };
   const belowTop = Math.round(bb + 6);
   if (belowTop <= maxTop) return { left, top: belowTop };
+  const aboveTop = Math.round(by - height - 6);
+  if (aboveTop >= pad) return { left, top: aboveTop };
   const shiftLeft = Math.round(bx - width - 8);
   if (shiftLeft >= pad) return { left: shiftLeft, top };
+  const shiftRight = Math.round(br + 8);
+  if (shiftRight <= maxLeft) return { left: shiftRight, top };
   return { left, top };
 }
 
@@ -87,7 +92,7 @@ export function computeSafePopoverPos(spec: PopoverPlacementSpec): { top: number
   let top = clamp(Math.round(spec.preferredTop), pad, maxTop);
   for (const obs of obstacles) {
     if (isSideOverlay(obs, spec.surface)) continue;
-    const adjusted = avoidCornerObstacle(left, top, spec.width, spec.height, pad, maxTop, obs, spec.surface);
+    const adjusted = avoidCornerObstacle(left, top, spec.width, spec.height, pad, maxLeft, maxTop, obs, spec.surface);
     left = adjusted.left;
     top = adjusted.top;
   }
@@ -137,9 +142,30 @@ export function computeCaretPopoverPos(spec: CaretPopoverSpec): {
     pad,
     obstacles: spec.obstacles,
   });
-  if (!preferBelow && placed.top === preferredTop) {
-    const bottom = Math.max(pad, Math.round(spec.surface.height - (caretTopRel - gap)));
-    return { bottom, left: placed.left, maxHeight };
+  if (!preferBelow) {
+    const caretClearBottom = Math.floor(caretTopRel - gap);
+    if (placed.top === preferredTop) {
+      const bottom = Math.max(pad, Math.round(spec.surface.height - caretClearBottom));
+      return { bottom, left: placed.left, maxHeight };
+    }
+    const clampedAbove = Math.floor(caretClearBottom - placed.top);
+    if (clampedAbove >= 72) {
+      return { top: placed.top, left: placed.left, maxHeight: Math.min(maxHeight, clampedAbove) };
+    }
+    if (spaceBelow >= 72) {
+      return {
+        top: Math.round(spec.caretBottom - spec.surface.top + gap),
+        left: placed.left,
+        maxHeight: Math.min(spec.maxMenuHeight, spaceBelow),
+      };
+    }
+  }
+  const caretBottomRel = spec.caretBottom - spec.surface.top + gap;
+  if (preferBelow && placed.top < caretBottomRel && spaceAbove >= 72) {
+    const clampedAbove = Math.floor(caretTopRel - gap - placed.top);
+    if (clampedAbove >= 72) {
+      return { top: placed.top, left: placed.left, maxHeight: Math.min(maxHeight, clampedAbove) };
+    }
   }
   return { top: placed.top, left: placed.left, maxHeight };
 }

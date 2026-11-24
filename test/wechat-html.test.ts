@@ -109,6 +109,12 @@ assert.deepEqual(
   assert.ok(boxRoot.querySelector('#with-border'), 'empty section with positive border is preserved');
   assert.ok(boxRoot.querySelector('#with-pad'), 'empty section with positive padding is preserved');
   assert.ok(boxRoot.querySelector('#with-height'), 'empty section with positive height is preserved');
+  assert.ok(
+    inspectWechatHtml(
+      '<section id="mdstudio"><ul><li><section class="mdstudio-math-block">x</section><ul><li>nested</li></ul></li></ul></section>',
+    ).some((i) => i.code === 'nested-list'),
+    'direct nested list after sibling <section> inside <li> is flagged',
+  );
   dom.window.close();
 }
 

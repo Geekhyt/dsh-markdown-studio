@@ -749,4 +749,102 @@ await check('formatAiClientError prioritizes structured error codes over loose s
   );
 });
 
+await check('G5 regressions: patch overlap, YAML block scalars, stale provider fallback & HTTP 401 JSON', async () => {
+  // Overlapping and OOB patches stay non-corrupting
+  assert.equal(
+    applySkillPatches('abcdefghij', [
+      { id: '1', start: 2, end: 6, original: 'cdef', replacement: 'X' },
+      { id: '2', start: 4, end: 8, original: 'efgh', replacement: 'Y' },
+      { id: '3', start: -5, end: 999, original: 'bad', replacement: 'Z' },
+    ]),
+    'abcdYij',
+  );
+  // Hallucinated URL suffix triggers protected token warning
+  assert.equal(
+    hasMissingProtectedTokens(
+      'See [docs](https://example.com) now.',
+      'See [docs](https://example.com/hallucinated-404) now.',
+    ),
+    true,
+  );
+  // Non-frontmatter HR --- preserved, YAML > and | block scalars parsed
+  const hrSkill = parseSkillMarkdown('---\nKeep rule 1.\n---\nKeep rule 2.');
+  assert.ok(hrSkill.instructions.includes('Keep rule 1.'));
+  const foldedSkill = parseSkillMarkdown(
+    '---\n# comment\nname: "Col Editor"\ndescription: >\n  Line one.\n  Line two.\ntags:\n  - writing\n  - style\nextra: |+\n  A\n  B\n---\nBody text.',
+  );
+  assert.equal(foldedSkill.name, 'Col Editor');
+  assert.equal(foldedSkill.description, 'Line one. Line two.');
+  assert.equal(foldedSkill.instructions, 'Body text.');
+
+  // AiHostService stale default provider falls back to available model & classifies 401/429 errors
+  const staleSvc = new AiHostService({
+    getLlm: () => ({
+      listProviders: async () => ['openai'],
+      listModels: async () => [{ provider: 'openai', id: 'gpt-4o', name: 'GPT-4o' }],
+      stream() {
+        return {
+          [Symbol.asyncIterator]() {
+            return {
+              next: async () => {
+                throw new Error('upstream HTTP 401 Unauthorized');
+              },
+            };
+          },
+        };
+      },
+    }),
+    getDefaultModel: () => ({ currentSelection: () => ({ provider: 'stale-provider', model: '' }) }),
+  });
+  const st = await staleSvc.status();
+  assert.equal(st.available, true);
+  assert.equal(st.provider, 'openai');
+  await assert.rejects(
+    () => staleSvc.stream({ system: 'sys', prompt: 'hi' }, () => {}),
+    (err: unknown) => err instanceof AiHostError && err.code === 'API_KEY_MISSING',
+  );
+  const rateSvc = new AiHostService({
+    getLlm: () => ({
+      stream() {
+        return {
+          [Symbol.asyncIterator]() {
+            return {
+              next: async () => {
+                throw new Error('HTTP 429 Too Many Requests');
+              },
+            };
+          },
+        };
+      },
+    }),
+    getDefaultModel: () => ({ currentSelection: () => ({ provider: 'p', model: 'm' }) }),
+  });
+  await assert.rejects(
+    () => rateSvc.stream({ system: 'sys', prompt: 'hi' }, () => {}),
+    (err: unknown) => err instanceof AiHostError && err.code === 'RATE_LIMITED',
+  );
+
+  // AiClient HTTP 401 JSON without plugin error.code maps to HTTP_401 instead of generic AI_ERROR
+  const client401 = new AiClient(
+    '/api/markdown-studio/ai',
+    async () =>
+      new Response(JSON.stringify({ detail: 'missing api key' }), {
+        status: 401,
+        headers: { 'Content-Type': 'APPLICATION/JSON; charset=utf-8' },
+      }),
+  );
+  await assert.rejects(
+    () => client401.stream({ system: 's', prompt: 'p' }),
+    (err: unknown) => err instanceof AiClientError && err.code === 'HTTP_401',
+  );
+  const clientBadJson = new AiClient(
+    '/api/markdown-studio/ai',
+    async () => new Response('{not-json', { status: 502, headers: { 'content-type': 'application/json' } }),
+  );
+  await assert.rejects(
+    () => clientBadJson.stream({ system: 's', prompt: 'p' }),
+    (err: unknown) => err instanceof AiClientError && err.code === 'HTTP_502',
+  );
+});
+
 console.log(`\n${checks} writing-skills checks passed.`);

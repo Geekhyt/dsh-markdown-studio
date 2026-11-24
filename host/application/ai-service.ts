@@ -153,6 +153,24 @@ function checkTerminalChunk(reason: { kind: string; failure?: { code?: string; m
   throw new AiHostError(code, msg);
 }
 
+const AUTH_STREAM_ERR_RE = /\b(?:401|403|api[_ -]?key|unauthori[sz]ed|invalid[_ -]?key|authentication)\b/i;
+const RATE_STREAM_ERR_RE = /\b(?:429|rate[_ -]?limit|too many requests|quota)\b/i;
+
+function rethrowStreamFailure(error: unknown, signal?: AbortSignal): never {
+  if (error instanceof AiHostError) throw error;
+  if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
+    throw new AiHostError('ABORTED', '已停止生成');
+  }
+  const rawMsg = error instanceof Error ? error.message : String(error || '');
+  if (AUTH_STREAM_ERR_RE.test(rawMsg)) {
+    throw new AiHostError('API_KEY_MISSING', '模型鉴权失败或未配置 API Key', '请检查 DeepSeek Harness 模型设置。');
+  }
+  if (RATE_STREAM_ERR_RE.test(rawMsg)) {
+    throw new AiHostError('RATE_LIMITED', '模型请求过于频繁，请稍后重试');
+  }
+  throw error;
+}
+
 export class AiHostService {
   private readonly getLlm: () => HostLlmRuntime | undefined;
   private readonly getDefaultModel: () => HostDefaultModelSource | undefined;
@@ -187,7 +205,7 @@ export class AiHostService {
         ? { provider: defProvider, model: defModel }
         : defProvider
           ? (() => {
-              const first = models.find((item) => item.provider === defProvider);
+              const first = models.find((item) => item.provider === defProvider) || models[0];
               return first ? { provider: first.provider, model: first.id } : { provider: '', model: '' };
             })()
           : models[0]
@@ -256,11 +274,7 @@ export class AiHostService {
         }
       }
     } catch (error) {
-      if (error instanceof AiHostError) throw error;
-      if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
-        throw new AiHostError('ABORTED', '已停止生成');
-      }
-      throw error;
+      rethrowStreamFailure(error, signal);
     }
     if (signal?.aborted) throw new AiHostError('ABORTED', '已停止生成');
     if (!finished) {

@@ -52,13 +52,13 @@ function handleActionKey(
   event: ReactNamespace.KeyboardEvent<HTMLElement>,
   key: string,
 ): boolean {
-  if (key === 'z') {
+  if (key === 'z' && !event.altKey) {
     event.preventDefault();
     if (event.shiftKey) options.redo();
     else options.undo();
     return true;
   }
-  if (key === 'y') {
+  if (key === 'y' && !event.altKey && !event.shiftKey) {
     event.preventDefault();
     options.redo();
     return true;
@@ -110,14 +110,19 @@ const ALT_KEY_TO_CODE: Record<string, string> = {
   l: 'KeyL',
 };
 
+function isAltGraphEvent(event: ReactNamespace.KeyboardEvent<HTMLElement>): boolean {
+  return Boolean(typeof event.getModifierState === 'function' && event.getModifierState('AltGraph'));
+}
+
 function handleAltShortcut(
   options: EditorShortcutsOptions,
   event: ReactNamespace.KeyboardEvent<HTMLElement>,
   key: string,
   code: string,
 ): boolean {
-  if (!event.altKey) return false;
+  if (!event.altKey || isAltGraphEvent(event)) return false;
   const resolved = ALT_CODE_MAP[code] ? code : ALT_KEY_TO_CODE[key] || '';
+  if (event.shiftKey && resolved !== 'KeyE') return false;
   const action = resolved ? ALT_CODE_MAP[resolved] : undefined;
   if (!action) return false;
   event.preventDefault();

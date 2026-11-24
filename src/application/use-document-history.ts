@@ -25,7 +25,16 @@ interface HistoryState {
   undoChars: number;
   redoChars: number;
   lastAt: number;
+  coalesceStartAt: number;
   forceBoundary: boolean;
+}
+
+function countLines(text: string): number {
+  let count = 1;
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) === 10) count++;
+  }
+  return count;
 }
 
 export interface DocumentHistoryOptions {
@@ -70,6 +79,7 @@ export function useDocumentHistory(options: DocumentHistoryOptions): DocumentHis
     undoChars: 0,
     redoChars: 0,
     lastAt: 0,
+    coalesceStartAt: 0,
     forceBoundary: true,
   });
   const lastSelectionRef = React.useRef<SelectionRange>({
@@ -94,6 +104,7 @@ export function useDocumentHistory(options: DocumentHistoryOptions): DocumentHis
     history.undoChars = 0;
     history.redoChars = 0;
     history.lastAt = 0;
+    history.coalesceStartAt = 0;
     history.forceBoundary = true;
   }
 
@@ -103,10 +114,12 @@ export function useDocumentHistory(options: DocumentHistoryOptions): DocumentHis
   }
 
   function recordUndoChange(history: HistoryState, entry: HistoryEntry, boundary: boolean): void {
+    const now = (options.now || Date.now)();
     pushUndoSnapshot(history, entry);
     history.redo = [];
     history.redoChars = 0;
-    history.lastAt = (options.now || Date.now)();
+    history.lastAt = now;
+    history.coalesceStartAt = now;
     history.forceBoundary = boundary;
   }
 
@@ -156,9 +169,18 @@ export function useDocumentHistory(options: DocumentHistoryOptions): DocumentHis
     }
     if (!opts.resetHistory) {
       const now = (options.now || Date.now)();
+      const lineBreakChanged = countLines(next) !== countLines(previous);
       const canCoalesce =
-        !opts.boundary && !history.forceBoundary && history.undo.length > 0 && now - history.lastAt < 700;
-      if (!canCoalesce) pushUndoSnapshot(history, snapshotSelection(previous, opts.prevSelection));
+        !opts.boundary &&
+        !history.forceBoundary &&
+        !lineBreakChanged &&
+        history.undo.length > 0 &&
+        now - history.lastAt < 700 &&
+        now - history.coalesceStartAt < 5000;
+      if (!canCoalesce) {
+        pushUndoSnapshot(history, snapshotSelection(previous, opts.prevSelection));
+        history.coalesceStartAt = now;
+      }
       history.redo = [];
       history.redoChars = 0;
       history.lastAt = now;
@@ -198,10 +220,10 @@ export function useDocumentHistory(options: DocumentHistoryOptions): DocumentHis
     if (!entry) return false;
     const current = options.getSelection();
     const currentMarkdown = markdownRef.current;
-    history.undo.push({ markdown: currentMarkdown, selStart: current.start, selEnd: current.end });
-    history.undoChars += currentMarkdown.length;
+    pushUndoSnapshot(history, { markdown: currentMarkdown, selStart: current.start, selEnd: current.end });
     history.redoChars = Math.max(0, history.redoChars - entry.markdown.length);
     history.lastAt = 0;
+    history.coalesceStartAt = 0;
     history.forceBoundary = true;
     markdownRef.current = entry.markdown;
     lastSelectionRef.current = { start: entry.selStart, end: entry.selEnd };
@@ -215,7 +237,15 @@ export function useDocumentHistory(options: DocumentHistoryOptions): DocumentHis
     composingBaseRef.current = null;
     markdownRef.current = normalized;
     lastSelectionRef.current = { start: normalized.length, end: normalized.length };
-    historyRef.current = { undo: [], redo: [], undoChars: 0, redoChars: 0, lastAt: 0, forceBoundary: true };
+    historyRef.current = {
+      undo: [],
+      redo: [],
+      undoChars: 0,
+      redoChars: 0,
+      lastAt: 0,
+      coalesceStartAt: 0,
+      forceBoundary: true,
+    };
   }
 
   return {
@@ -224,7 +254,9 @@ export function useDocumentHistory(options: DocumentHistoryOptions): DocumentHis
     setMarkdown,
     undo,
     redo,
-    canUndo: () => historyRef.current.undo.length > 0,
+    canUndo: () =>
+      historyRef.current.undo.length > 0 ||
+      Boolean(composingBaseRef.current && markdownRef.current !== composingBaseRef.current.markdown),
     canRedo: () => historyRef.current.redo.length > 0,
     reset,
     historyMarkdowns: () => [

@@ -205,6 +205,23 @@ function editorTheme(dark: boolean, isCss: boolean): Extension {
             fgFallback +
             ') 14%, transparent))',
         },
+      '.cm-selectionMatch': {
+        backgroundColor: dark ? 'rgba(96, 165, 250, 0.2)' : 'rgba(37, 99, 235, 0.14)',
+        borderRadius: '2px',
+      },
+      '.cm-selectionMatch-main': {
+        backgroundColor: dark ? 'rgba(96, 165, 250, 0.28)' : 'rgba(37, 99, 235, 0.22)',
+        borderRadius: '2px',
+      },
+      '&.cm-focused .cm-matchingBracket': {
+        backgroundColor: dark ? 'rgba(96, 165, 250, 0.24)' : 'rgba(37, 99, 235, 0.16)',
+        outline: dark ? '1px solid rgba(147, 197, 253, 0.45)' : '1px solid rgba(37, 99, 235, 0.3)',
+        borderRadius: '2px',
+      },
+      '&.cm-focused .cm-nonmatchingBracket': {
+        backgroundColor: dark ? 'rgba(248, 81, 73, 0.28)' : 'rgba(220, 38, 38, 0.18)',
+        borderRadius: '2px',
+      },
       '.cm-cursor, .cm-dropCursor': {
         borderLeftColor: 'var(--dsw-alias-brand-primary, ' + fgFallback + ')',
       },
@@ -323,7 +340,10 @@ class AiInlineBlockWidget extends WidgetType {
     if (!prose) return false;
     inlineBlockSpecs.set(dom, item);
     appendProseContent(prose, item);
-    if (existingWarn && item.warning) existingWarn.textContent = item.warning;
+    if (existingWarn && item.warning) {
+      existingWarn.textContent = item.warning;
+      existingWarn.title = item.warning;
+    }
     return true;
   }
 
@@ -338,12 +358,13 @@ class AiInlineBlockWidget extends WidgetType {
       `${item.primaryLabel}\0${item.secondaryLabel}\0${item.retryLabel || ''}`,
     );
     wrap.setAttribute('role', item.status === 'error' ? 'alert' : 'region');
-    wrap.setAttribute('aria-label', item.warning || item.primaryLabel || item.secondaryLabel);
+    wrap.setAttribute('aria-label', item.warning || item.secondaryLabel || item.primaryLabel);
     inlineBlockSpecs.set(wrap, item);
 
     const prose = document.createElement('div');
     prose.className = 'mdstudio-ai-inline-prose';
-    prose.setAttribute('aria-live', item.status === 'error' ? 'assertive' : 'polite');
+    if (item.status === 'error') prose.setAttribute('aria-live', 'assertive');
+    else if (item.status === 'ready') prose.setAttribute('aria-live', 'polite');
     appendProseContent(prose, item);
     wrap.appendChild(prose);
 
@@ -353,6 +374,7 @@ class AiInlineBlockWidget extends WidgetType {
       const warn = document.createElement('span');
       warn.className = 'mdstudio-ai-inline-reason is-warn';
       warn.textContent = item.warning;
+      warn.title = item.warning;
       bar.appendChild(warn);
     }
 
@@ -614,6 +636,7 @@ export function create(options: EditorOptions): EditorApi {
         end: selection.to,
         head: selection.head,
         programmatic: isProgrammaticSelection,
+        composing: nowComposing,
       });
     }
   };

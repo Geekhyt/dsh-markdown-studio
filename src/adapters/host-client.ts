@@ -95,7 +95,7 @@ export class HostClient {
         error instanceof Error ? error.message : '',
       );
     }
-    const contentType = response.headers.get('content-type') || '';
+    const contentType = (response.headers.get('content-type') || '').toLowerCase();
     if (!contentType.includes('application/json')) {
       throw new HostClientError('HOST_UNAVAILABLE', 'Host returned a non-JSON response');
     }

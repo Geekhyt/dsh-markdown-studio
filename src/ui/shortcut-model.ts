@@ -1,17 +1,38 @@
 import type { DshMenuShortcut } from '../types/dsh-primitives';
 
+const ARIA_KEY_MAP: Record<string, string> = {
+  '⌘': 'Meta',
+  Ctrl: 'Control',
+  Control: 'Control',
+  '⇧': 'Shift',
+  Shift: 'Shift',
+  '⌥': 'Alt',
+  Alt: 'Alt',
+  '↵': 'Enter',
+  Enter: 'Enter',
+};
+
+function toAriaKeyToken(raw: string): string {
+  const cleaned = raw.length > 1 && raw.endsWith('+') ? raw.slice(0, -1) : raw;
+  return ARIA_KEY_MAP[cleaned] || cleaned;
+}
+
 export function toMenuShortcut(parts: readonly string[]): DshMenuShortcut {
   const keys: string[] = [];
+  const ariaParts: string[] = [];
+  let isSlashHint = false;
   for (let i = 0; i < parts.length; i++) {
     const token = parts[i];
     if (!token) continue;
+    if (token.startsWith('/') && token.length > 1) isSlashHint = true;
     if (token.length > 1 && token.endsWith('+')) {
       keys.push(token.slice(0, -1), '+');
     } else {
       keys.push(token);
     }
+    ariaParts.push(toAriaKeyToken(token));
   }
-  return { keys, aria: parts.join('') };
+  return { keys, aria: isSlashHint || !ariaParts.length ? undefined : ariaParts.join('+') };
 }
 
 export function buildShortcutRows(

@@ -33,11 +33,39 @@ function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
+const IMAGE_EXT_MIME: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  avif: 'image/avif',
+  bmp: 'image/bmp',
+  svg: 'image/svg+xml',
+  ico: 'image/x-icon',
+};
+
+function inferImageMime(name: string): string {
+  const m = /\.([a-z0-9]+)$/i.exec(name || '');
+  return (m && IMAGE_EXT_MIME[m[1].toLowerCase()]) || '';
+}
+
+function normalizeImageDataUrl(dataUrl: string, file: File): string {
+  if (/^data:image\//i.test(dataUrl)) return dataUrl;
+  const inferred = inferImageMime(file.name);
+  if (!inferred) return dataUrl;
+  return dataUrl.replace(/^data:(?:application\/octet-stream)?;base64,/i, `data:${inferred};base64,`);
+}
+
+function isImageFile(file: File | null | undefined): file is File {
+  if (!file) return false;
+  if (/^image\//i.test(file.type || '')) return true;
+  return !file.type && Boolean(inferImageMime(file.name));
+}
+
 export function createImageInserter(options: ImageInsertOptions): ImageInsertApi {
   async function insertImageFiles(files: FileList | File[]): Promise<void> {
-    const list = Array.from(files || []).filter(function (file) {
-      return file && /^image\//i.test(file.type || '');
-    });
+    const list = Array.from(files || []).filter(isImageFile);
     if (!list.length) return;
     const accepted: File[] = [];
     let skipped = 0;
@@ -57,7 +85,7 @@ export function createImageInserter(options: ImageInsertOptions): ImageInsertApi
       const settled = await Promise.all(
         accepted.map(async function (file) {
           try {
-            const dataUrl = await fileToDataUrl(file);
+            const dataUrl = normalizeImageDataUrl(await fileToDataUrl(file), file);
             const prepared = await prepareImageForWechat(dataUrl);
             const stored = await options.hostClient.storeAsset(prepared.dataUrl, prepared.filename);
             const itemUrl = stored.assetPath || stored.localUrl || stored.url;
@@ -81,9 +109,11 @@ export function createImageInserter(options: ImageInsertOptions): ImageInsertApi
       }
       const block = items
         .map(function (item) {
-          const name = String(item.file.name || 'image')
-            .replace(/\.[^.]+$/, '')
-            .replace(/[[\]]/g, '');
+          const name =
+            String(item.file.name || 'image')
+              .replace(/\.[^.]+$/, '')
+              .replace(/[\r\n[\]]+/g, ' ')
+              .trim() || 'image';
           return '![' + name + '](' + item.url + ')';
         })
         .join('\n\n');
@@ -103,15 +133,13 @@ export function createImageInserter(options: ImageInsertOptions): ImageInsertApi
     const clipboard = event.clipboardData;
     if (!clipboard) return;
     const files: File[] =
-      clipboard.files && clipboard.files.length
-        ? Array.from(clipboard.files).filter((file) => Boolean(file && /^image\//i.test(file.type || '')))
-        : [];
+      clipboard.files && clipboard.files.length ? Array.from(clipboard.files).filter(isImageFile) : [];
     if (!files.length && clipboard.items) {
       for (let index = 0; index < clipboard.items.length; index++) {
         const item = clipboard.items[index];
-        if (item.kind === 'file' && /^image\//i.test(item.type || '')) {
+        if (item.kind === 'file') {
           const file = item.getAsFile();
-          if (file) files.push(file);
+          if (isImageFile(file)) files.push(file);
         }
       }
     }

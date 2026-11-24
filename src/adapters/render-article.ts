@@ -160,7 +160,7 @@ export function renderArticle(
   function localPlaceholder(img: HTMLImageElement, src: string): void {
     const alt = (img.getAttribute('alt') || '').trim();
     let name = alt;
-    if (!name) {
+    if (!name && !/^data:/i.test(String(src || '').trim())) {
       const base =
         String(src || '')
           .split('/')
@@ -170,6 +170,7 @@ export function renderArticle(
       } catch {
         name = base.split('?')[0];
       }
+      if (name.length > 80) name = name.slice(0, 77) + '…';
     }
     const placeholderPrefix =
       options.imagePlaceholderPrefix || (options.locale === 'en' ? '🖼 Insert image here: ' : '🖼 此处插入图片：');

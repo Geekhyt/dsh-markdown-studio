@@ -80,9 +80,17 @@ export function mergeConflicts(current: LibraryState, incoming: LibraryState): M
   return conflicts;
 }
 
-function collectUnionCustomThemes(current: LibraryState, incoming: LibraryState): CustomTheme[] {
+function collectUnionCustomThemes(
+  current: LibraryState,
+  incoming: LibraryState,
+  prefer: MergeDecision = 'incoming',
+): CustomTheme[] {
+  const ordered =
+    prefer === 'current'
+      ? [...incoming.docs, ...(incoming.trash || []), ...current.docs, ...(current.trash || [])]
+      : [...current.docs, ...(current.trash || []), ...incoming.docs, ...(incoming.trash || [])];
   let merged: CustomTheme[] = [];
-  for (const entry of [...current.docs, ...(current.trash || []), ...incoming.docs, ...(incoming.trash || [])]) {
+  for (const entry of ordered) {
     if (entry.settings.customThemes?.length) {
       merged = mergeCustomThemes(merged, entry.settings.customThemes);
     }
@@ -98,17 +106,20 @@ function attachSharedCustomThemes(docs: Article[], customThemes: CustomTheme[]):
   }));
 }
 
-function dedupeIncomingDocs(incomingDocs: readonly Article[], existingIds: ReadonlySet<string>): Article[] {
+function dedupeIncomingDocs(incomingDocs: readonly Article[], reservedIds: ReadonlySet<string>): Article[] {
   const seen = new Set<string>();
+  const taken = new Set<string>(reservedIds);
+  for (const entry of incomingDocs) taken.add(entry.id);
   return incomingDocs.map(function (entry) {
     if (!seen.has(entry.id)) {
       seen.add(entry.id);
       return entry;
     }
     let suffix = 2;
-    while (seen.has(`${entry.id}-${suffix}`) || existingIds.has(`${entry.id}-${suffix}`)) suffix++;
+    while (seen.has(`${entry.id}-${suffix}`) || taken.has(`${entry.id}-${suffix}`)) suffix++;
     const nextId = `${entry.id}-${suffix}`;
     seen.add(nextId);
+    taken.add(nextId);
     return { ...entry, id: nextId };
   });
 }
@@ -122,11 +133,15 @@ export function mergeLibraryBackup(
 ): LibraryState {
   const docs = new Map(current.docs.map((entry) => [entry.id, entry] as const));
   const trash = new Map((current.trash || []).map((entry) => [entry.id, entry] as const));
-  const existingIds = new Set<string>([...docs.keys(), ...trash.keys()]);
+  const reservedIds = new Set<string>([
+    ...docs.keys(),
+    ...trash.keys(),
+    ...(incoming.trash || []).map((entry) => entry.id),
+  ]);
   const decisionFor = (id: string, exists: boolean): MergeDecision =>
     Object.hasOwn(decisions, id) ? decisions[id] : exists ? prefer : 'incoming';
   const incomingDocIds = new Set<string>();
-  for (const entry of dedupeIncomingDocs(incoming.docs, existingIds)) {
+  for (const entry of dedupeIncomingDocs(incoming.docs, reservedIds)) {
     const exists = docs.has(entry.id) || trash.has(entry.id);
     const decision = decisionFor(entry.id, exists);
     if (decision === 'incoming' || !exists) {
@@ -151,7 +166,7 @@ export function mergeLibraryBackup(
       trash.delete(fallback.id);
     }
   }
-  const sharedThemes = collectUnionCustomThemes(current, incoming);
+  const sharedThemes = collectUnionCustomThemes(current, incoming, prefer);
   const nextDocs = attachSharedCustomThemes(Array.from(docs.values()), sharedThemes);
   const activeId = nextDocs.some((entry) => entry.id === current.activeId)
     ? current.activeId
@@ -165,6 +180,11 @@ export function mergeLibraryBackup(
 
 function recordOf(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function finiteTimestamp(raw: unknown): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : Date.now();
 }
 
 function parseBackupArticle(
@@ -181,9 +201,9 @@ function parseBackupArticle(
     markdown: record.markdown,
     settings: sanitizeSettings(record.settings),
     view: parseView(record.view),
-    updatedAt: Number(record.updatedAt) || Date.now(),
+    updatedAt: finiteTimestamp(record.updatedAt),
   };
-  if (includeDeletedAt) article.deletedAt = Number(record.deletedAt) || Date.now();
+  if (includeDeletedAt) article.deletedAt = finiteTimestamp(record.deletedAt);
   return article;
 }
 
@@ -192,14 +212,24 @@ export function parseLibraryBackup(input: unknown, fallbackTitle = '未命名'):
   if (!root || root.format !== 'markdown-studio-library' || root.version !== 1 || !Array.isArray(root.docs))
     return null;
   if (supportedSchemaVersion(root.schemaVersion, 1, BACKUP_SCHEMA_VERSION) === null) return null;
+  const reservedIds = new Set<string>();
+  const collectIds = (list: unknown[]): void => {
+    for (const item of list) {
+      const rec = recordOf(item);
+      if (rec && typeof rec.id === 'string' && rec.id) reservedIds.add(rec.id);
+    }
+  };
+  collectIds(root.docs);
+  if (Array.isArray(root.trash)) collectIds(root.trash);
   const seenIds = new Set<string>();
   const uniqueId = (rawId: string, prefix: string, idx: number): string => {
     let candidate = rawId || `${prefix}-${idx}-${Date.now().toString(36)}`;
     let n = 2;
-    while (seenIds.has(candidate)) {
+    while (seenIds.has(candidate) || (candidate !== rawId && reservedIds.has(candidate))) {
       candidate = `${rawId || prefix}-${n++}`;
     }
     seenIds.add(candidate);
+    reservedIds.add(candidate);
     return candidate;
   };
   const docs: Article[] = [];

@@ -26,12 +26,26 @@ function safeSlice(text: string, start: number, end: number): string {
   return text.slice(s, e);
 }
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function findMatchSpan(text: string, query: string): { at: number; length: number } {
+  try {
+    const match = new RegExp(escapeRegex(query), 'i').exec(text);
+    if (match) return { at: match.index, length: match[0].length };
+  } catch {
+    /* fallback below */
+  }
+  const at = text.toLowerCase().indexOf(query);
+  return { at, length: query.length };
+}
+
 function snippetAround(text: string, query: string): string {
-  const lower = text.toLowerCase();
-  const at = lower.indexOf(query);
+  const { at, length } = findMatchSpan(text, query);
   if (at < 0) return safeSlice(text, 0, 100).trim();
   const start = Math.max(0, at - 36);
-  const end = Math.min(text.length, at + query.length + 52);
+  const end = Math.min(text.length, at + length + 52);
   return (start > 0 ? '…' : '') + safeSlice(text, start, end).trim() + (end < text.length ? '…' : '');
 }
 
@@ -52,7 +66,7 @@ export function searchArticles(docs: Article[], rawQuery: string, limit = 50): L
       article,
       snippet: bodyIndex >= 0 ? snippetAround(plain, query) : safeSlice(plain, 0, 100),
       titleMatch: titleIndex >= 0,
-      score: (titleIndex >= 0 ? 1000 - titleIndex : 0) + hits * 10,
+      score: (titleIndex >= 0 ? Math.max(100, 1000 - titleIndex) : 0) + hits * 10,
     });
   }
   results.sort(function (a, b) {

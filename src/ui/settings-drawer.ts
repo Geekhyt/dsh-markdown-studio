@@ -38,6 +38,7 @@ export interface SettingsDrawerProps {
   t: (key: string) => string;
   ui: UiKit;
   open: boolean;
+  fullscreen?: boolean;
   initialTab: 'theme' | 'help';
   navSeq?: number;
   onTabChange?: (tab: 'theme' | 'help') => void;
@@ -291,7 +292,7 @@ function hasTakeoverSurface(
 ): boolean {
   const currentSeq = readWorkbenchSeq(drawer, root);
   if (currentSeq !== null && currentSeq !== mountedWbSeq) return true;
-  return Boolean(document.querySelector('[aria-modal="true"]'));
+  return Array.from(document.querySelectorAll('[aria-modal="true"]')).some((el) => el !== drawer);
 }
 
 function isFocusLost(active: Element | null): boolean {
@@ -392,13 +393,15 @@ function SettingsDrawerContent(props: SettingsDrawerProps): ReactNode {
     {
       ref: drawerRef,
       className: 'mdstudio-drawer',
+      role: props.fullscreen ? 'dialog' : undefined,
+      'aria-modal': props.fullscreen ? 'true' : undefined,
       'aria-label': t('drawer.title'),
       'data-mdstudio-tab': tab,
       onKeyDown: function (event: ReactNamespace.KeyboardEvent<HTMLElement>) {
         const containerW =
           drawerRef.current?.closest<HTMLElement>('.mdstudio-root')?.clientWidth ||
           (typeof window !== 'undefined' ? window.innerWidth : 1024);
-        if (containerW <= 720) trapModalTab(event);
+        if (props.fullscreen || containerW <= 720) trapModalTab(event);
       },
     },
     h(

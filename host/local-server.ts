@@ -97,13 +97,19 @@ export function createLocalImageServer(options: { service: LocalAssetReader }): 
 export function startLocalImageServer(options: {
   service: LocalAssetReader;
   ports?: number[];
+  signal?: AbortSignal;
 }): Promise<LocalServerHandle | null> {
   const service = options.service;
+  const signal = options.signal;
   const ports = options.ports && options.ports.length ? options.ports : [...LOCAL_SERVER_PORTS, 0];
   const server = createLocalImageServer({ service });
   let index = 0;
 
   function attempt(): Promise<{ server: http.Server; info: LocalServerInfo } | null> {
+    if (signal?.aborted) {
+      service.localServerInfo = null;
+      return Promise.resolve(null);
+    }
     if (index >= ports.length) {
       service.localServerInfo = null;
       service.localServerError = 'no free port';
@@ -113,16 +119,27 @@ export function startLocalImageServer(options: {
     return new Promise(function (resolve) {
       function onError(error: NodeJS.ErrnoException): void {
         server.removeListener('listening', onListening);
-        if (error?.code === 'EADDRINUSE') {
+        if (error?.code === 'EADDRINUSE' && !signal?.aborted) {
           void attempt().then(resolve);
           return;
         }
-        service.localServerInfo = null;
-        service.localServerError = String(error?.message || error);
+        if (!signal?.aborted) {
+          service.localServerInfo = null;
+          service.localServerError = String(error?.message || error);
+        }
         resolve(null);
       }
       function onListening(): void {
         server.removeListener('error', onError);
+        if (signal?.aborted) {
+          try {
+            server.close();
+          } catch {
+            /* ignore */
+          }
+          resolve(null);
+          return;
+        }
         server.on('error', function (runtimeError: Error) {
           service.localServerError = String(runtimeError?.message || runtimeError);
         });
@@ -145,7 +162,9 @@ export function startLocalImageServer(options: {
       server: result.server,
       info: result.info,
       stop: function (): Promise<void> {
-        service.localServerInfo = null;
+        if (service.localServerInfo === result.info) {
+          service.localServerInfo = null;
+        }
         return new Promise(function (resolve) {
           try {
             result.server.close(function () {

@@ -1783,6 +1783,34 @@ await page.waitForTimeout(60);
     () => document.querySelector('.mdstudio-css-workbench .cm-editor')?.getAttribute('data-mdstudio-smoke-cm') === '1',
   );
   assert.equal(sameWbCm, true, 'CssWorkbench first save keeps CodeMirror instance mounted');
+
+  // 6. Native 1x1 Canvas CSS Color 4/5 resolution in dark preview (oklch / lch / color-mix)
+  await page.evaluate(() => {
+    const cm = document.querySelector('.mdstudio-css-workbench .cm-content') as HTMLElement | null;
+    if (cm) cm.focus();
+  });
+  await page.keyboard.press('ControlOrMeta+a');
+  await page.keyboard.insertText(
+    '#mdstudio { background: lch(94% 4 240); color: oklch(22% 0.03 250); }\n#mdstudio p { color: lch(24% 6 240); }\n#mdstudio blockquote { background: color-mix(in oklch, oklch(92% 0.04 200) 75%, white); }',
+  );
+  await page.waitForTimeout(220);
+  await page.evaluate(() => document.body.setAttribute('data-ds-dark-theme', ''));
+  await page.waitForTimeout(260);
+  const darkColor4Check = await page.evaluate(() => {
+    const root = document.querySelector('.mdstudio-preview-article #mdstudio') as HTMLElement | null;
+    const p = document.querySelector('.mdstudio-preview-article #mdstudio p') as HTMLElement | null;
+    return {
+      rootBg: root ? getComputedStyle(root).backgroundColor : '',
+      pColor: p ? getComputedStyle(p).color : '',
+      darkStyles: document.querySelectorAll('style[id^="js_darkmode_style__"]').length,
+    };
+  });
+  assert.ok(
+    Boolean(darkColor4Check.rootBg && darkColor4Check.pColor && darkColor4Check.darkStyles > 0),
+    `CSS Color 4/5 custom theme renders cleanly in dark preview (${JSON.stringify(darkColor4Check)})`,
+  );
+  await page.evaluate(() => document.body.removeAttribute('data-ds-dark-theme'));
+  await page.waitForTimeout(160);
 }
 
 await page.locator('button[aria-label="更多"]').click();

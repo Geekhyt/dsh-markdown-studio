@@ -3199,6 +3199,96 @@ console.log('ok - English locale boots with English sample article and zero Chin
         null,
         'second Mod+Shift+F exits immersive mode',
       );
+      // 20b. Portaled plugin menu on document.body (outside .mdstudio-root) stays inside plugin shortcut scope,
+      // while external host inputs on document.body remain isolated.
+      const portaledMenu = document.createElement('div');
+      portaledMenu.className = 'mdstudio-menu mdstudio-header-menu';
+      const portaledItem = document.createElement('button');
+      portaledMenu.appendChild(portaledItem);
+      const externalHostInput = document.createElement('input');
+      document.body.appendChild(portaledMenu);
+      document.body.appendChild(externalHostInput);
+      try {
+        await act(async () => {
+          externalHostInput.dispatchEvent(
+            new window.KeyboardEvent('keydown', {
+              key: 'f',
+              metaKey: true,
+              shiftKey: true,
+              bubbles: true,
+              cancelable: true,
+            }),
+          );
+        });
+        await settle(15);
+        assert.equal(
+          comboContainer.querySelector('.mdstudio-root')?.getAttribute('data-mdstudio-immersive'),
+          null,
+          'external host input outside plugin root does not trigger plugin immersive mode',
+        );
+        await act(async () => {
+          portaledItem.dispatchEvent(
+            new window.KeyboardEvent('keydown', {
+              key: 'f',
+              metaKey: true,
+              shiftKey: true,
+              bubbles: true,
+              cancelable: true,
+            }),
+          );
+        });
+        await settle(20);
+        assert.equal(
+          comboContainer.querySelector('.mdstudio-root')?.getAttribute('data-mdstudio-immersive'),
+          'write',
+          'portaled plugin menu outside rootRef still triggers Mod+Shift+F immersive toggle',
+        );
+        await act(async () => {
+          window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        });
+        await settle(20);
+      } finally {
+        portaledMenu.remove();
+        externalHostInput.remove();
+      }
+      // 20c. Escape handled by Studio stops propagation before host window Escape listener & Mod+F works from Outline item.
+      let hostEscCount = 0;
+      const hostEsc = (ev: KeyboardEvent): void => {
+        if (ev.key === 'Escape') hostEscCount++;
+      };
+      window.addEventListener('keydown', hostEsc, false);
+      try {
+        await act(async () => {
+          comboContainer.querySelector<HTMLButtonElement>('.mdstudio-outline-anchor button')?.click();
+        });
+        await settle(15);
+        const outlineBtn = comboContainer.querySelector<HTMLButtonElement>('.mdstudio-outline-item');
+        if (outlineBtn) {
+          await act(async () => {
+            outlineBtn.focus();
+            outlineBtn.dispatchEvent(
+              new window.KeyboardEvent('keydown', { key: 'f', metaKey: true, bubbles: true, cancelable: true }),
+            );
+          });
+          await settle(15);
+          assert.ok(comboContainer.querySelector('.mdstudio-searchbar'), 'Mod+F works when focused inside Outline');
+        }
+        await act(async () => {
+          comboContainer
+            .querySelector('.mdstudio-title-input')
+            ?.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        });
+        await settle(15);
+        assert.equal(hostEscCount, 0, 'Studio Escape calls stopPropagation() before reaching host window listener');
+        await act(async () => {
+          comboContainer
+            .querySelector('.mdstudio-title-input')
+            ?.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        });
+        await settle(15);
+      } finally {
+        window.removeEventListener('keydown', hostEsc, false);
+      }
     } finally {
       window.removeEventListener('keydown', hostBlocker, false);
     }
@@ -3357,9 +3447,14 @@ console.log('ok - English locale boots with English sample article and zero Chin
       'Escape from CssWorkbench input closes SettingsDrawer',
     );
     await act(async () => {
-      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-css-back')?.click();
+      comboContainer.querySelector<HTMLButtonElement>('.mdstudio-css-back-btn')?.click();
     });
     await settle(20);
+    assert.equal(
+      comboContainer.querySelector('.mdstudio-css-workbench'),
+      null,
+      'clicking CssWorkbench back button returns to Markdown editor',
+    );
 
     // 25. SearchBar Mod+F re-entry focuses and selects existing query (C13)
     const taSearch = comboContainer.querySelector<HTMLTextAreaElement>('.mdstudio-editor')!;
@@ -3416,6 +3511,7 @@ console.log('ok - English locale boots with English sample article and zero Chin
       document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
     });
     await settle(20);
+
     await act(async () => {
       comboContainer.querySelector<HTMLButtonElement>('.mdstudio-header-actions button[aria-haspopup="menu"]')?.click();
     });
@@ -3439,6 +3535,50 @@ console.log('ok - English locale boots with English sample article and zero Chin
       document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
     });
     await settle(20);
+
+    // G6 regression: global Mod+F and Mod+S work from Title input outside the editor
+    const titleInput = comboContainer.querySelector<HTMLInputElement>('.mdstudio-title-input')!;
+    assert.ok(titleInput, 'title input exists');
+    await act(async () => {
+      titleInput.focus();
+      titleInput.dispatchEvent(
+        new window.KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true }),
+      );
+    });
+    await settle(15);
+    assert.ok(comboContainer.querySelector('.mdstudio-searchbar'), 'global Mod+F from Title input opens SearchBar');
+    await act(async () => {
+      titleInput.focus();
+      titleInput.dispatchEvent(
+        new window.KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true, cancelable: true }),
+      );
+    });
+    await settle(15);
+    assert.ok(document.querySelector('.mdstudio-toast'), 'global Mod+S from Title input persists draft with toast');
+    await act(async () => {
+      document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    });
+    await settle(20);
+
+    // Host isolation regression: external host input outside .mdstudio-root must NOT be hijacked by Mod+F
+    const externalHostInput = document.createElement('input');
+    document.body.appendChild(externalHostInput);
+    try {
+      await act(async () => {
+        externalHostInput.focus();
+        externalHostInput.dispatchEvent(
+          new window.KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true }),
+        );
+      });
+      await settle(15);
+      assert.equal(
+        comboContainer.querySelector('.mdstudio-searchbar'),
+        null,
+        'global Mod+F from external host input outside .mdstudio-root does not hijack into Studio SearchBar',
+      );
+    } finally {
+      externalHostInput.remove();
+    }
   } finally {
     await act(async () => {
       comboRoot.unmount();

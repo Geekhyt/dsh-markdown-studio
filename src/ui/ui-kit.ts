@@ -15,6 +15,7 @@ export function createUiKit(
     title: string;
     active?: boolean;
     disabled?: boolean;
+    tooltipDisabled?: boolean;
     ariaExpanded?: boolean;
     onClick?: () => void;
     children?: ReactNode;
@@ -24,7 +25,7 @@ export function createUiKit(
     return h(bridge.Tooltip, {
       label: props.title,
       side: 'bottom',
-      disabled: !!props.disabled,
+      disabled: Boolean(props.disabled || props.tooltipDisabled),
       children: h(
         'button',
         {

@@ -66,6 +66,16 @@ export function collectSurfaceObstacles(rootEl: HTMLElement | null): MeasuredRec
   return out;
 }
 
+export function isEventInside(event: Event, selector: string): boolean {
+  const el = event.target as Element | null;
+  return Boolean(el && typeof el.closest === 'function' && el.closest(selector));
+}
+
+export function hasVisibleElement(selector: string): boolean {
+  if (typeof document === 'undefined') return false;
+  return Array.from(document.querySelectorAll<HTMLElement>(selector)).some(isElementVisible);
+}
+
 /**
  * Checks whether an element is connected, enabled, and not hidden by ancestor
  * `display: none` or `visibility: hidden` (works identically in browsers & JSDOM).

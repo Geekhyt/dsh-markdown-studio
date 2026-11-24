@@ -291,6 +291,36 @@ press('e', 'insertMathBlock', { altKey: true, shiftKey: true, code: 'KeyE' });
   fmt.setLinePrefix('1. ');
   assert.equal(doc, '1. first\n\n2. second', 'ordered list numbering stays consecutive across blank lines');
 
+  // G5 regressions: symmetric wrapSelection toggle, setLinePrefix toggle, and AltGraph bypass
+  doc = 'hello';
+  sel = { start: 0, end: 5 };
+  fmt.wrapSelection('*', '*', 'italic');
+  assert.equal(doc, '*hello*');
+  fmt.wrapSelection('*', '*', 'italic');
+  assert.equal(doc, 'hello', 'second Italic press toggles off cleanly instead of producing **hello**');
+  fmt.wrapSelection('**', '**', 'bold');
+  assert.equal(doc, '**hello**');
+  fmt.wrapSelection('**', '**', 'bold');
+  assert.equal(doc, 'hello', 'second Bold press toggles off cleanly');
+  doc = 'quote line';
+  sel = { start: 0, end: doc.length };
+  fmt.setLinePrefix('> ');
+  assert.equal(doc, '> quote line');
+  fmt.setLinePrefix('> ');
+  assert.equal(doc, 'quote line', 'second Quote press toggles off cleanly');
+
+  called.length = 0;
+  handler({
+    key: 'c',
+    code: 'KeyC',
+    ctrlKey: true,
+    altKey: true,
+    getModifierState: (mod: string) => mod === 'AltGraph',
+    nativeEvent: {},
+    preventDefault() {},
+  } as unknown as React.KeyboardEvent<HTMLElement>);
+  assert.equal(called.length, 0, 'AltGraph character composition is never hijacked as Ctrl+Alt shortcut');
+
   // Unicode case-folding search/replace (Turkish İ -> i\u0307 expands length under toLowerCase)
   let searchDoc = 'İstanbul foo bar';
   let searchSel = { start: 0, end: 0 };
@@ -368,6 +398,55 @@ press('e', 'insertMathBlock', { altKey: true, shiftKey: true, code: 'KeyE' });
     r.unmount();
   });
   dom.window.close();
+}
+
+// Post-review formatting regressions: multi-paragraph bold toggle, ***bold+italic*** italic toggle, task->bullet convert
+{
+  const { createFormattingCommands } = await import('../src/application/editor-formatting');
+  const { DEFAULT_SETTINGS } = await import('../src/themes');
+  let val = 'Para 1\n\nPara 2';
+  let sel = { start: 0, end: val.length };
+  const fmt = createFormattingCommands({
+    editorValue: () => val,
+    selection: () => sel,
+    replaceRange: (_cur, start, end, text, nextStart, nextEnd) => {
+      val = val.slice(0, start) + text + val.slice(end);
+      sel = { start: nextStart ?? start, end: nextEnd ?? start + text.length };
+    },
+    setMarkdown: (next) => {
+      val = next;
+    },
+    focusRange: (s, e) => {
+      sel = { start: s, end: e };
+    },
+    clearSlash: () => {},
+    imageRef: { current: null },
+    t: (k) => k,
+    notify: () => {},
+    settings: { ...DEFAULT_SETTINGS },
+    updateSettings: () => {},
+  });
+  fmt.wrapSelection('**', '**');
+  assert.equal(val, '**Para 1**\n\n**Para 2**');
+  fmt.wrapSelection('**', '**');
+  assert.equal(val, 'Para 1\n\nPara 2', 'multi-paragraph bold toggles off cleanly on second press');
+
+  val = '**foo** and **bar**';
+  sel = { start: 0, end: val.length };
+  fmt.wrapSelection('**', '**');
+  assert.equal(val, '****foo** and **bar****', 'multi-span selection does not strip inner matched delimiters');
+
+  val = '**hello**';
+  sel = { start: 2, end: 7 };
+  fmt.wrapSelection('*', '*');
+  assert.equal(val, '***hello***');
+  fmt.wrapSelection('*', '*');
+  assert.equal(val, '**hello**', 'italic toggles off cleanly inside ***bold+italic***');
+
+  val = '- [ ] todo';
+  sel = { start: 0, end: 0 };
+  fmt.insertList();
+  assert.equal(val, '- todo', 'bullet list converts task item to regular bullet instead of stripping');
 }
 
 console.log('ok - Notion-aligned, conflict-free formatting, document, multi-line Tab, and macOS Option shortcuts pass');

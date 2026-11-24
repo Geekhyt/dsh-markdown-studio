@@ -33,7 +33,10 @@ export function createTrashCommands(options: TrashCommandsOptions): TrashCommand
     const target = (options.store.getSnapshot().trash || []).find((entry) => entry.id === id);
     const purgedAssets = target ? assetFilesInMarkdown(target.markdown) : [];
     options.store.purge(id);
-    options.store.flush();
+    if (!options.store.flush()) {
+      options.notify(options.t('storage.saveFailed'), 'error');
+      return;
+    }
     options.onPruneAssets?.(purgedAssets);
     options.notify(options.t('library.purged'));
   }
@@ -46,7 +49,10 @@ export function createTrashCommands(options: TrashCommandsOptions): TrashCommand
       for (const file of assetFilesInMarkdown(entry.markdown)) purgedAssets.add(file);
     }
     options.store.emptyTrash();
-    options.store.flush();
+    if (!options.store.flush()) {
+      options.notify(options.t('storage.saveFailed'), 'error');
+      return;
+    }
     options.onPruneAssets?.(purgedAssets);
     options.notify(options.t('library.trashEmptied'));
   }
@@ -82,6 +88,7 @@ export function useDocumentLibrary(options: DocumentLibraryOptions): DocumentLib
   const React = options.React;
   const [open, setOpen] = React.useState(false);
   const [openSeq, setOpenSeq] = React.useState(0);
+  const opSeqRef = React.useRef(0);
   const trashCommands = createTrashCommands({
     store: options.store,
     notify: options.notify,
@@ -100,12 +107,13 @@ export function useDocumentLibrary(options: DocumentLibraryOptions): DocumentLib
   }
 
   function runAfterFlush(action: () => void): Promise<void> | void {
+    const seq = ++opSeqRef.current;
     if (!options.flushBeforeSwitch || (options.needsFlushBeforeSwitch && !options.needsFlushBeforeSwitch())) {
       action();
       return;
     }
     return options.flushBeforeSwitch().then(function (ok) {
-      if (ok) action();
+      if (ok && opSeqRef.current === seq) action();
     });
   }
 
@@ -125,10 +133,11 @@ export function useDocumentLibrary(options: DocumentLibraryOptions): DocumentLib
 
   function newDocument(): Promise<void> | void {
     return runAfterFlush(function () {
+      const liveSettings = options.store.getActive().settings || options.settings;
       const entry = options.store.create({
         title: options.t('untitled'),
         markdown: '',
-        settings: options.settings,
+        settings: liveSettings,
         view: 'split',
       });
       options.onActivate(entry);
@@ -140,10 +149,11 @@ export function useDocumentLibrary(options: DocumentLibraryOptions): DocumentLib
   async function deleteDocument(id: string): Promise<void> {
     const ok = await options.confirm({ title: options.t('library.deleteConfirm'), danger: true });
     if (!ok) return;
-    const previousActive = options.store.getActive().id;
-    if (previousActive === id && options.flushBeforeSwitch && !(await options.flushBeforeSwitch())) return;
+    if (options.store.getActive().id === id && options.flushBeforeSwitch && !(await options.flushBeforeSwitch()))
+      return;
+    const activeBeforeDelete = options.store.getActive().id;
     const next = options.store.delete(id, options.t('untitled'));
-    if (previousActive === id) {
+    if (activeBeforeDelete === id) {
       options.onActivate(next);
     }
   }

@@ -156,13 +156,47 @@ function unquoteYaml(raw: string): string {
   return trimmed;
 }
 
-function parseFrontmatterFields(block: string): Record<string, string> {
+function isYamlBlockScalar(val: string): boolean {
+  return /^[>|](?:[+-]\d*|\d+[+-]?)?$/.test(val);
+}
+
+function parseFrontmatterFields(block: string): Record<string, string> | null {
   const fields: Record<string, string> = Object.create(null);
-  for (const line of block.split(/\r?\n/)) {
-    const m = /^([a-zA-Z0-9_-]+)\s*:\s*(.+)$/.exec(line.trim());
-    if (m) fields[m[1].toLowerCase()] = unquoteYaml(m[2]);
+  let blockKey = '';
+  let blockMode: '>' | '|' | '' = '';
+  let blockLines: string[] = [];
+  let seenKey = false;
+  const flushBlock = (): void => {
+    if (!blockKey) return;
+    fields[blockKey] = blockLines.join(blockMode === '>' ? ' ' : '\n').trim();
+    blockKey = '';
+    blockMode = '';
+    blockLines = [];
+  };
+  for (const raw of block.split(/\r?\n/)) {
+    if (blockKey && (/^[ \t]+/.test(raw) || !raw.trim())) {
+      blockLines.push(raw.trim());
+      continue;
+    }
+    flushBlock();
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    if (seenKey && (/^[ \t]+/.test(raw) || /^-\s+/.test(trimmed))) continue;
+    const m = /^([a-zA-Z0-9_-]+)\s*:\s*(.*)$/.exec(trimmed);
+    if (!m) return null;
+    seenKey = true;
+    const key = m[1].toLowerCase();
+    const val = m[2].trim();
+    if (isYamlBlockScalar(val)) {
+      blockKey = key;
+      blockMode = val[0] as '>' | '|';
+      blockLines = [];
+    } else if (val) {
+      fields[key] = unquoteYaml(val);
+    }
   }
-  return fields;
+  flushBlock();
+  return seenKey ? fields : null;
 }
 
 export function parseSkillMarkdown(
@@ -174,10 +208,13 @@ export function parseSkillMarkdown(
     .trim();
   let body = normalized;
   let meta: Record<string, string> = {};
-  const fmMatch = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(normalized);
+  const fmMatch = /^---[ \t]*\n([\s\S]*?)\n---[ \t]*(?:\n([\s\S]*))?$/.exec(normalized);
   if (fmMatch) {
-    meta = parseFrontmatterFields(fmMatch[1]);
-    body = fmMatch[2].trim();
+    const parsedMeta = parseFrontmatterFields(fmMatch[1]);
+    if (parsedMeta) {
+      meta = parsedMeta;
+      body = (fmMatch[2] || '').trim();
+    }
   }
   const headingMatch = /^#\s+(.+)$/m.exec(body);
   const rawName = meta.title || meta.name || (headingMatch ? headingMatch[1] : '') || fallbackName;
@@ -254,11 +291,15 @@ export function unwrapMarkdownFenceIfProse(candidate: string, original: string):
 
 export function applySkillPatches(markdown: string, patches: readonly SkillPatch[]): string {
   if (!patches.length) return markdown;
-  const ordered = patches.slice().sort((a, b) => b.start - a.start);
+  const origLen = markdown.length;
+  const ordered = patches.slice().sort((a, b) => b.start - a.start || b.end - a.end);
   let result = markdown;
+  let minAppliedStart = origLen;
   for (const patch of ordered) {
-    if (patch.start < 0 || patch.end > result.length || patch.start > patch.end) continue;
+    if (patch.start < 0 || patch.end > origLen || patch.start > patch.end) continue;
+    if (patch.end > minAppliedStart) continue;
     result = result.slice(0, patch.start) + patch.replacement + result.slice(patch.end);
+    minAppliedStart = patch.start;
   }
   // Only the patched ranges change: the rest of the document (e.g. intentional blank
   // lines inside code fences) is preserved byte-for-byte.
@@ -279,6 +320,8 @@ function matchFencedBlock(text: string, index: number): number {
   const fenceLen = open[1].length;
   const lineEnd = text.indexOf('\n', index);
   if (lineEnd < 0) return -1;
+  const infoRest = text.slice(index + fenceLen, lineEnd);
+  if (fenceChar === '`' && infoRest.includes('`')) return -1;
   const closeRe = new RegExp(`^[ \\t]{0,3}${fenceChar}{${fenceLen},}[ \\t]*(?:\\r?\\n|$)`, 'gm');
   closeRe.lastIndex = lineEnd + 1;
   const closed = closeRe.exec(text);
@@ -435,8 +478,7 @@ export function hasMissingProtectedTokens(original: string, candidate: string): 
     candCounts.set(token, (candCounts.get(token) || 0) + 1);
   }
   for (const [token, needed] of counts.entries()) {
-    if ((candCounts.get(token) || 0) < needed && !candidate.includes(token)) return true;
-    if (needed > 1 && (candCounts.get(token) || 0) < needed) return true;
+    if ((candCounts.get(token) || 0) < needed) return true;
   }
   return false;
 }

@@ -104,6 +104,7 @@ function renderThemeChipStrip(
             type: 'button',
             key: item.id,
             className: 'mdstudio-custom-chip' + (selected ? ' is-active' : ''),
+            title: item.name,
             'aria-pressed': selected,
             onClick: function () {
               onSelect(item);
@@ -140,12 +141,14 @@ function renderCssSurface(
   props: CssWorkbenchProps,
   editorKey: string,
   cssDraft: string,
+  cmFailed: boolean,
   setCssDraft: (value: string) => void,
   onKeyDown: (event: ReactNamespace.KeyboardEvent<HTMLElement>) => void,
+  onCmError: () => void,
 ): ReactNode {
   const h = props.React.createElement;
   const t = props.t;
-  const useCm = typeof window !== 'undefined' && typeof window.ResizeObserver === 'function';
+  const useCm = !cmFailed && typeof window !== 'undefined' && typeof window.ResizeObserver === 'function';
   if (useCm) {
     return h(
       'div',
@@ -160,6 +163,7 @@ function renderCssSurface(
           ariaLabel: t('drawer.custom'),
           enableHistory: true,
         },
+        onError: onCmError,
         onChange: setCssDraft,
         onKeyDown: onKeyDown,
       }),
@@ -245,6 +249,7 @@ function CssWorkbenchContent(props: CssWorkbenchProps): ReactNode {
     resolveTargetDraft(settings, props.targetId, t('drawer.defaultCustomName'), cssLocale),
   );
   const [editorEpoch, setEditorEpoch] = React.useState(0);
+  const [cmFailed, setCmFailed] = React.useState(false);
   const { editingId, nameDraft, cssDraft } = draft;
   const nameInputRef = React.useRef<HTMLInputElement | null>(null);
 
@@ -460,7 +465,17 @@ function CssWorkbenchContent(props: CssWorkbenchProps): ReactNode {
     h(
       'div',
       { className: 'mdstudio-editor-wrap mdstudio-css-editor-wrap' },
-      renderCssSurface(props, 'css-ed-' + editorEpoch, cssDraft, updateCssDraft, onEditorKeyDown),
+      renderCssSurface(
+        props,
+        'css-ed-' + editorEpoch,
+        cssDraft,
+        cmFailed,
+        updateCssDraft,
+        onEditorKeyDown,
+        function () {
+          setCmFailed(true);
+        },
+      ),
     ),
     h(
       'div',

@@ -70,14 +70,12 @@ interface InlineImageSpan {
 
 function scanInlineImages(source: string): InlineImageSpan[] {
   const spans: InlineImageSpan[] = [];
-  let maxBracketFail = -1;
   for (let i = 0; i < source.length - 1; i++) {
     if (source[i] !== '!' || source[i + 1] !== '[') continue;
-    if (i < maxBracketFail) continue;
     const closeBracket = findBracketEnd(source, i + 1);
     if (closeBracket < 0) {
-      maxBracketFail = source.length;
-      break;
+      if (source.indexOf(']', i + 2) < 0) break;
+      continue;
     }
     if (source[closeBracket + 1] !== '(') {
       i = closeBracket;
@@ -206,6 +204,9 @@ function findBracketEnd(source: string, openIndex: number): number {
     if (ch === '\\') {
       i++;
       continue;
+    }
+    if (ch === '\n' && (source[i + 1] === '\n' || (source[i + 1] === '\r' && source[i + 2] === '\n'))) {
+      return -1;
     }
     if (ch === '[') depth++;
     else if (ch === ']') {

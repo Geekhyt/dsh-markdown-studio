@@ -6,7 +6,7 @@ import type { Heading } from '../domain/article';
 import type { EditorApi, EditorDiffTransition, EditorInlineBlock, EditorSelection } from '../domain/editor-types';
 import { computeSafePopoverPos } from '../domain/surface-geometry';
 import type { WritingSkill } from '../domain/writing-skills';
-import { collectSurfaceObstacles } from '../runtime/dom-surfaces';
+import { collectSurfaceObstacles, hasVisibleElement } from '../runtime/dom-surfaces';
 import { useDocumentEvent, useWindowEvent } from '../runtime/react-lifecycle';
 import type { DshMenuEntry } from '../types/dsh-primitives';
 import { CodeMirrorEditor } from './codemirror-editor';
@@ -75,6 +75,7 @@ export interface EditorSlashModel {
   pos?: { top?: number; bottom?: number; left: number; maxHeight?: number } | null;
   onSelect: (index: number) => void;
   onApply: (index: number) => void;
+  onClose?: () => void;
 }
 
 export interface EditorSearchModel {
@@ -117,6 +118,7 @@ export interface EditorContentModel {
     boundary: boolean,
     selectionStart: number,
     selectionEnd: number,
+    composing?: boolean,
   ) => void;
   onTextareaSelect: (selectionStart: number, selectionEnd: number) => void;
   onTextareaScroll: () => void;
@@ -674,13 +676,15 @@ function computeOutlineLeft(anchor: HTMLElement | null): number {
   }).left;
 }
 
-function hasOpenModal(): boolean {
-  return typeof document !== 'undefined' && Boolean(document.querySelector('[aria-modal="true"]'));
+function hasOpenMenu(): boolean {
+  return hasVisibleElement('[role="menu"], [data-menu-material]');
 }
 
-function isUnhandledEscape(event: KeyboardEvent): boolean {
-  if (event.isComposing || event.keyCode === 229) return false;
-  return event.key === 'Escape' && !event.defaultPrevented && !hasOpenModal();
+function shouldDeferSearchEscape(event: ReactNamespace.KeyboardEvent<HTMLElement>, outlineOpen: boolean): boolean {
+  if (outlineOpen || hasOpenMenu()) return true;
+  const root = event.currentTarget.closest<HTMLElement>('.mdstudio-root');
+  const width = root ? root.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 0) : 0;
+  return Boolean(root && width > 0 && width <= 720 && root.querySelector('.mdstudio-drawer'));
 }
 
 function isImeEvent(event: ReactNamespace.KeyboardEvent<HTMLElement>): boolean {
@@ -719,18 +723,6 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
       outline.onClose();
     },
     outline.open,
-  );
-
-  useDocumentEvent(
-    props.React,
-    'keydown',
-    function (event: KeyboardEvent) {
-      if (!isUnhandledEscape(event)) return;
-      event.preventDefault();
-      outline.onClose();
-      focusAnchorButton(outlineAnchorRef.current);
-    },
-    outline.open && props.visible,
   );
 
   useWindowEvent(
@@ -776,7 +768,10 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
         t: t,
         icons: icons,
         toolbar: toolbar,
-        onOpen: outline.onClose,
+        onOpen: function () {
+          outline.onClose();
+          props.slash.onClose?.();
+        },
       }),
       h(
         icons.ToolButton,
@@ -823,9 +818,16 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
           {
             title: t('toolbar.outline'),
             active: outline.open,
+            tooltipDisabled: outline.open,
             ariaExpanded: outline.open,
             onClick: function () {
-              if (!outline.open) setOutlineLeft(computeOutlineLeft(outlineAnchorRef.current));
+              if (!outline.open) {
+                setOutlineLeft(computeOutlineLeft(outlineAnchorRef.current));
+                const active = document.activeElement as Element | null;
+                if (active && typeof active.closest === 'function' && active.closest('.mdstudio-drawer')) {
+                  focusAnchorButton(outlineAnchorRef.current);
+                }
+              }
               toolbar.onOutline();
             },
           },
@@ -849,7 +851,7 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
                 search.inputRef.current?.select();
                 return;
               }
-              if (outline.open) return;
+              if (shouldDeferSearchEscape(event, outline.open)) return;
               if (event.key === 'Escape') {
                 event.preventDefault();
                 event.stopPropagation();
@@ -876,7 +878,7 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
                 event.preventDefault();
                 search.onFind();
               }
-              if (event.key === 'Escape' && !outline.open) {
+              if (event.key === 'Escape' && !shouldDeferSearchEscape(event, outline.open)) {
                 event.preventDefault();
                 search.onClose();
               }
@@ -897,7 +899,7 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
                 event.preventDefault();
                 search.onReplaceOne();
               }
-              if (event.key === 'Escape' && !outline.open) {
+              if (event.key === 'Escape' && !shouldDeferSearchEscape(event, outline.open)) {
                 event.preventDefault();
                 search.onClose();
               }
@@ -988,6 +990,17 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
                 boundary,
                 event.target.selectionStart,
                 event.target.selectionEnd,
+                Boolean(native.isComposing),
+              );
+            },
+            onCompositionEnd: function (event: ReactNamespace.CompositionEvent<HTMLTextAreaElement>) {
+              content.onTextareaInput(
+                event.currentTarget.value,
+                event.currentTarget.selectionStart,
+                false,
+                event.currentTarget.selectionStart,
+                event.currentTarget.selectionEnd,
+                false,
               );
             },
             onSelect: function (event: ReactNamespace.SyntheticEvent<HTMLTextAreaElement>) {

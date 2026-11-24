@@ -3,8 +3,145 @@ export type SurfaceImmersiveMode = 'write' | 'preview' | null;
 export type AiSessionPhase = 'none' | 'streaming' | 'ready' | 'error';
 export type ParentModalKind = 'none' | 'library' | 'workspace' | 'skills';
 export type ChildModalKind = 'none' | 'confirm' | 'importMode' | 'mergeReview';
-export type EscapeAction = 'none' | 'close-search' | 'cancel-ai' | 'close-menu' | 'close-drawer';
+export type UnifiedEscapeAction =
+  | 'none'
+  | 'close-menu'
+  | 'close-drawer'
+  | 'close-slash'
+  | 'close-outline'
+  | 'close-search'
+  | 'cancel-ai'
+  | 'exit-immersive';
 export type EditorEscapeOutcome = 'close-search' | 'cancel-ai' | 'defer' | false;
+
+export interface StudioShellState {
+  drawerOpen: boolean;
+  drawerTab: 'theme' | 'help';
+  drawerNavSeq: number;
+  cssWorkbench: { open: boolean; targetId: string | null; seq: number };
+  liveCssDraft: string;
+  immersive: SurfaceImmersiveMode;
+  menuOpen: boolean;
+  outlineOpen: boolean;
+  overlayEpoch: number;
+}
+
+export type StudioShellAction =
+  | { type: 'DISMISS_TRANSIENT'; keepDrawer?: boolean; keepMenu?: boolean }
+  | { type: 'OPEN_CSS_WORKBENCH'; targetId: string | null; draftCss: string }
+  | { type: 'CLOSE_CSS_WORKBENCH' }
+  | { type: 'SET_LIVE_CSS_DRAFT'; css: string }
+  | { type: 'ENTER_IMMERSIVE'; mode: 'write' | 'preview' }
+  | { type: 'SWITCH_IMMERSIVE'; mode: 'write' | 'preview' }
+  | { type: 'EXIT_IMMERSIVE' }
+  | { type: 'TOGGLE_DRAWER' }
+  | { type: 'OPEN_DRAWER_TAB'; tab: 'theme' | 'help' }
+  | { type: 'SET_DRAWER_TAB'; tab: 'theme' | 'help' }
+  | { type: 'CLOSE_DRAWER' }
+  | { type: 'SET_MENU_OPEN'; open: boolean }
+  | { type: 'TOGGLE_OUTLINE' }
+  | { type: 'SET_OUTLINE_OPEN'; open: boolean };
+
+export function initialStudioShellState(): StudioShellState {
+  return {
+    drawerOpen: false,
+    drawerTab: 'theme',
+    drawerNavSeq: 0,
+    cssWorkbench: { open: false, targetId: null, seq: 0 },
+    liveCssDraft: '',
+    immersive: null,
+    menuOpen: false,
+    outlineOpen: false,
+    overlayEpoch: 0,
+  };
+}
+
+function dismissShellTransient(
+  state: StudioShellState,
+  opts?: { keepDrawer?: boolean; keepMenu?: boolean },
+): StudioShellState {
+  return {
+    ...state,
+    drawerOpen: opts?.keepDrawer ? state.drawerOpen : false,
+    menuOpen: opts?.keepMenu ? state.menuOpen : false,
+    outlineOpen: false,
+    overlayEpoch: state.overlayEpoch + 1,
+  };
+}
+
+function reduceShellOverlayAction(state: StudioShellState, action: StudioShellAction): StudioShellState | null {
+  switch (action.type) {
+    case 'DISMISS_TRANSIENT':
+      return dismissShellTransient(state, action);
+    case 'TOGGLE_DRAWER':
+      return {
+        ...dismissShellTransient(state),
+        drawerOpen: !state.drawerOpen,
+        drawerTab: state.drawerOpen ? state.drawerTab : 'theme',
+      };
+    case 'OPEN_DRAWER_TAB':
+      return {
+        ...dismissShellTransient(state, { keepDrawer: true }),
+        drawerOpen: true,
+        drawerTab: action.tab,
+        drawerNavSeq: state.drawerNavSeq + 1,
+      };
+    case 'SET_DRAWER_TAB':
+      return state.drawerTab === action.tab ? state : { ...state, drawerTab: action.tab };
+    case 'CLOSE_DRAWER':
+      return state.drawerOpen ? { ...state, drawerOpen: false } : state;
+    case 'SET_MENU_OPEN':
+      if (action.open === state.menuOpen) return state;
+      return action.open
+        ? { ...dismissShellTransient(state, { keepDrawer: true, keepMenu: true }), menuOpen: true }
+        : { ...state, menuOpen: false };
+    case 'TOGGLE_OUTLINE':
+      return { ...state, outlineOpen: !state.outlineOpen };
+    case 'SET_OUTLINE_OPEN':
+      return state.outlineOpen === action.open ? state : { ...state, outlineOpen: action.open };
+    default:
+      return null;
+  }
+}
+
+/** Single runtime reducer owning all Studio shell overlays, drawer, CSS workbench, and immersive mode. */
+export function reduceStudioShellState(state: StudioShellState, action: StudioShellAction): StudioShellState {
+  const overlayNext = reduceShellOverlayAction(state, action);
+  if (overlayNext) return overlayNext;
+  switch (action.type) {
+    case 'OPEN_CSS_WORKBENCH':
+      return {
+        ...dismissShellTransient(state),
+        cssWorkbench: { open: true, targetId: action.targetId, seq: state.cssWorkbench.seq + 1 },
+        liveCssDraft: action.draftCss,
+      };
+    case 'CLOSE_CSS_WORKBENCH':
+      return {
+        ...state,
+        cssWorkbench: state.cssWorkbench.open
+          ? { open: false, targetId: null, seq: state.cssWorkbench.seq }
+          : state.cssWorkbench,
+        liveCssDraft: '',
+      };
+    case 'SET_LIVE_CSS_DRAFT':
+      return state.liveCssDraft === action.css ? state : { ...state, liveCssDraft: action.css };
+    case 'ENTER_IMMERSIVE':
+      return {
+        ...dismissShellTransient(state),
+        cssWorkbench: state.cssWorkbench.open
+          ? { open: false, targetId: null, seq: state.cssWorkbench.seq }
+          : state.cssWorkbench,
+        liveCssDraft: '',
+        immersive: action.mode,
+      };
+    case 'SWITCH_IMMERSIVE':
+      return { ...dismissShellTransient(state), immersive: action.mode };
+    case 'EXIT_IMMERSIVE':
+      return { ...dismissShellTransient(state), immersive: null };
+    default:
+      return state;
+  }
+}
 
 export const NARROW_CONTAINER_PX = 720;
 
@@ -138,39 +275,6 @@ export function resolveEditorEscapeOutcome(flags: {
   return false;
 }
 
-export function resolveDocumentEscapeAction(flags: {
-  hasModal: boolean;
-  menuOpen: boolean;
-  outlineOpen: boolean;
-  slashOpen: boolean;
-  drawerOpen: boolean;
-  inDrawer: boolean;
-  showMarkdownEditor: boolean;
-  searchOpen: boolean;
-  hasAiSession: boolean;
-  fullscreenDrawer?: boolean;
-}): 'none' | 'close-search' | 'cancel-ai' {
-  if (flags.hasModal || flags.menuOpen || flags.outlineOpen || flags.slashOpen) return 'none';
-  if (flags.drawerOpen && (flags.inDrawer || flags.fullscreenDrawer)) return 'none';
-  if (!flags.showMarkdownEditor) return 'none';
-  if (flags.searchOpen) return 'close-search';
-  if (flags.hasAiSession) return 'cancel-ai';
-  return 'none';
-}
-
-export function resolveWindowEscapeAction(flags: {
-  hasModal: boolean;
-  menuOpen: boolean;
-  drawerOpen: boolean;
-  inEditor: boolean;
-  fullscreenDrawer?: boolean;
-}): 'none' | 'close-menu' | 'close-drawer' {
-  if (flags.hasModal) return 'none';
-  if (flags.menuOpen) return 'close-menu';
-  if (flags.drawerOpen && (!flags.inEditor || flags.fullscreenDrawer)) return 'close-drawer';
-  return 'none';
-}
-
 export function canHandleImmersiveShortcutPolicy(
   flags: {
     hasModal: boolean;
@@ -189,6 +293,42 @@ export function canHandleImmersiveShortcutPolicy(
   const editorBlocking =
     flags.showMarkdownEditor && (flags.searchOpen || flags.slashOpen || flags.outlineOpen || flags.hasAiSession);
   return !(editorBlocking || flags.menuOpen || flags.drawerOpen);
+}
+
+export interface UnifiedEscapeFlags {
+  hasModal: boolean;
+  hasDomMenu?: boolean;
+  menuOpen: boolean;
+  drawerOpen: boolean;
+  fullscreenDrawer: boolean;
+  inDrawer: boolean;
+  inEditor: boolean;
+  showMarkdownEditor: boolean;
+  slashOpen: boolean;
+  outlineOpen: boolean;
+  searchOpen: boolean;
+  hasAiSession: boolean;
+  immersive: SurfaceImmersiveMode;
+}
+
+/**
+ * Single authoritative LIFO Escape priority ladder shared between the runtime
+ * keyboard router (`useStudioKeyboard`) and the exhaustive formal model (`applyEscape`).
+ */
+export function resolveStudioEscape(flags: UnifiedEscapeFlags): UnifiedEscapeAction {
+  if (flags.hasModal) return 'none';
+  if (flags.menuOpen) return 'close-menu';
+  if (flags.hasDomMenu) return 'none';
+  if (flags.fullscreenDrawer || (flags.drawerOpen && flags.inDrawer)) return 'close-drawer';
+  if (flags.showMarkdownEditor) {
+    if (flags.slashOpen) return 'close-slash';
+    if (flags.outlineOpen) return 'close-outline';
+    if (flags.searchOpen) return 'close-search';
+    if (flags.hasAiSession) return 'cancel-ai';
+  }
+  if (flags.drawerOpen && !flags.inEditor) return 'close-drawer';
+  if (flags.immersive && canHandleImmersiveShortcutPolicy(flags, 'exit')) return 'exit-immersive';
+  return 'none';
 }
 
 export function initialStudioSurfaceState(narrow = false): StudioSurfaceState {
@@ -244,89 +384,43 @@ function dismissTransient(
   };
 }
 
-function applyEditorEscape(state: StudioSurfaceState, showMarkdownEditor: boolean): StudioSurfaceState | null {
-  if (!showMarkdownEditor) return null;
-  const fullscreenDrawer = isFullscreenDrawer(state.drawerOpen, state.narrow ? 640 : 1024);
-  if (fullscreenDrawer) {
-    return state.menuOpen ? { ...state, menuOpen: false } : { ...state, drawerOpen: false };
-  }
-  if (state.slashOpen) return { ...state, slashOpen: false };
-  const outcome = resolveEditorEscapeOutcome({
-    menuOpen: state.menuOpen,
-    outlineOpen: state.outlineOpen,
-    showMarkdownEditor,
-    searchOpen: state.searchOpen,
-    hasAiSession: state.aiSession !== 'none',
-    fullscreenDrawer,
-  });
-  if (outcome === 'close-search') return { ...state, searchOpen: false };
-  if (outcome === 'cancel-ai') return { ...state, aiSession: 'none' };
-  if (outcome === 'defer') {
-    if (state.menuOpen) return { ...state, menuOpen: false };
-    if (state.outlineOpen) return { ...state, outlineOpen: false };
-  }
-  return null;
-}
-
-function applyNonEditorEscape(
-  state: StudioSurfaceState,
-  target: 'drawer' | 'document',
-  showMarkdownEditor: boolean,
-): StudioSurfaceState | null {
-  const fullscreenDrawer = isFullscreenDrawer(state.drawerOpen, state.narrow ? 640 : 1024);
-  const docAction = resolveDocumentEscapeAction({
-    hasModal: false,
-    menuOpen: state.menuOpen,
-    outlineOpen: state.outlineOpen,
-    slashOpen: state.slashOpen,
-    drawerOpen: state.drawerOpen,
-    inDrawer: target === 'drawer',
-    showMarkdownEditor,
-    searchOpen: state.searchOpen,
-    hasAiSession: state.aiSession !== 'none',
-    fullscreenDrawer,
-  });
-  if (docAction === 'close-search') return { ...state, searchOpen: false };
-  if (docAction === 'cancel-ai') return { ...state, aiSession: 'none' };
-  if (state.menuOpen) return { ...state, menuOpen: false };
-  if (fullscreenDrawer) return { ...state, drawerOpen: false };
-  if (target === 'document' && state.outlineOpen) return { ...state, outlineOpen: false };
-  if (target === 'document' && state.slashOpen) return { ...state, slashOpen: false };
-  const winAction = resolveWindowEscapeAction({
-    hasModal: false,
-    menuOpen: state.menuOpen,
-    drawerOpen: state.drawerOpen,
-    inEditor: false,
-    fullscreenDrawer,
-  });
-  return winAction === 'close-drawer' ? { ...state, drawerOpen: false } : null;
-}
-
 function applyEscape(state: StudioSurfaceState, target: 'editor' | 'drawer' | 'document'): StudioSurfaceState {
   if (state.childModal !== 'none') return { ...state, childModal: 'none' };
   if (state.parentModal !== 'none') return { ...state, parentModal: 'none' };
   const panes = computePaneVisibility(state.immersive, state.view, state.cssWorkbenchOpen);
-  const handled =
-    target === 'editor'
-      ? applyEditorEscape(state, panes.showMarkdownEditor)
-      : applyNonEditorEscape(state, target, panes.showMarkdownEditor);
-  if (handled) return handled;
-  const canExit = canHandleImmersiveShortcutPolicy(
-    {
-      hasModal: false,
-      showMarkdownEditor: panes.showMarkdownEditor,
-      searchOpen: state.searchOpen,
-      slashOpen: state.slashOpen,
-      outlineOpen: state.outlineOpen,
-      hasAiSession: state.aiSession !== 'none',
-      menuOpen: state.menuOpen,
-      drawerOpen: state.drawerOpen,
-    },
-    'exit',
-  );
-  return state.immersive && canExit
-    ? { ...dismissTransient(state, { keepSearch: state.view !== 'preview' }), immersive: null }
-    : state;
+  const fullscreenDrawer = isFullscreenDrawer(state.drawerOpen, state.narrow ? 640 : 1024);
+  const action = resolveStudioEscape({
+    hasModal: false,
+    menuOpen: state.menuOpen,
+    drawerOpen: state.drawerOpen,
+    fullscreenDrawer,
+    inDrawer: target === 'drawer',
+    inEditor: target === 'editor',
+    showMarkdownEditor: panes.showMarkdownEditor,
+    slashOpen: state.slashOpen,
+    outlineOpen: state.outlineOpen,
+    searchOpen: state.searchOpen,
+    hasAiSession: state.aiSession !== 'none',
+    immersive: state.immersive,
+  });
+  switch (action) {
+    case 'close-menu':
+      return { ...state, menuOpen: false };
+    case 'close-drawer':
+      return { ...state, drawerOpen: false };
+    case 'close-slash':
+      return { ...state, slashOpen: false };
+    case 'close-outline':
+      return { ...state, outlineOpen: false };
+    case 'close-search':
+      return { ...state, searchOpen: false };
+    case 'cancel-ai':
+      return { ...state, aiSession: 'none' };
+    case 'exit-immersive':
+      return { ...dismissTransient(state, { keepSearch: state.view !== 'preview' }), immersive: null };
+    default:
+      return state;
+  }
 }
 
 function stepModalEvent(state: StudioSurfaceState, event: StudioSurfaceEvent): StudioSurfaceState | null {
@@ -359,7 +453,13 @@ function stepOverlayEvent(state: StudioSurfaceState, event: StudioSurfaceEvent):
       if (state.immersive || hasSurfaceModal(state)) return state;
       return { ...dismissTransient(state, { keepSearch: true, keepDrawer: true }), drawerOpen: !state.drawerOpen };
     case 'OPEN_SLASH':
-      if (!panes.showMarkdownEditor || hasSurfaceModal(state) || state.aiSession !== 'none') return state;
+      if (
+        !panes.showMarkdownEditor ||
+        hasSurfaceModal(state) ||
+        state.aiSession !== 'none' ||
+        isFullscreenDrawer(state.drawerOpen, state.narrow ? 640 : 1024)
+      )
+        return state;
       return { ...state, slashOpen: true, outlineOpen: false };
     case 'TOGGLE_OUTLINE':
       if (!panes.showMarkdownEditor || hasSurfaceModal(state)) return state;

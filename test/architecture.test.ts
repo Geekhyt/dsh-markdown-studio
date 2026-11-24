@@ -433,11 +433,23 @@ assert.ok(
   'CHROME_CSS collapses secondary top dock clearance in host-titlebar narrow Immersive Write',
 );
 
-// Host shortcut precedence: Mod+Shift+F must bind on document bubble with host dialog guard so DSH window listeners cannot swallow it.
-const immersiveDockSrc = fs.readFileSync(path.join(root, 'src/ui/immersive-dock.ts'), 'utf8');
+// Host shortcut precedence & unified keyboard router:
+// Mod+Shift+F and Escape routing must live in the single router (src/application/use-studio-keyboard.ts),
+// with document bubble + host dialog guard, and zero scattered global keydown listeners in editor-pane or immersive-dock.
+const keyboardRouterSrc = fs.readFileSync(path.join(root, 'src/application/use-studio-keyboard.ts'), 'utf8');
 assert.ok(
-  immersiveDockSrc.includes('useDocumentEvent') && immersiveDockSrc.includes('[role="dialog"]'),
-  'src/ui/immersive-dock.ts handles Mod+Shift+F on document bubble with dialog guard',
+  keyboardRouterSrc.includes('useDocumentEvent') && keyboardRouterSrc.includes('[role="dialog"]'),
+  'src/application/use-studio-keyboard.ts handles Mod+Shift+F on document bubble with dialog guard',
+);
+const immersiveDockSrc = fs.readFileSync(path.join(root, 'src/ui/immersive-dock.ts'), 'utf8');
+const editorPaneSrc = fs.readFileSync(path.join(root, 'src/ui/editor-pane.ts'), 'utf8');
+assert.ok(
+  !immersiveDockSrc.includes('useDocumentEvent') && !immersiveDockSrc.includes('useWindowEvent'),
+  'src/ui/immersive-dock.ts stays purely presentational without scattered global keyboard listeners',
+);
+assert.ok(
+  !/use(?:Document|Window)Event\([^,]+,\s*['"]keydown['"]/.test(editorPaneSrc),
+  'src/ui/editor-pane.ts delegates Escape routing to useStudioKeyboard instead of registering global keydown listeners',
 );
 
 // Empty preview stage background reconciliation: usePreviewHtmlSurface must reconcile stageRef on unmount/empty.
@@ -467,13 +479,17 @@ for (const sel of [
   );
 }
 
-// Window Escape inEditor guard must target only the Markdown text wrap (never toolbar buttons or CSS workbench).
+// Unified overlay reducer & Escape inEditor guard invariants:
+// 1. StudioPage must drive overlays from the verified domain reducer + unified keyboard router (no shadow-only state machine).
+// 2. Escape inEditor guard must target only the Markdown text wrap (never toolbar buttons or CSS workbench).
 const appSrcForEsc = fs.readFileSync(path.join(root, 'src/app.ts'), 'utf8');
 assert.ok(
-  appSrcForEsc.includes(
-    "isEventInside(event, '.mdstudio-editor-pane:not(.mdstudio-css-workbench) .mdstudio-editor-wrap')",
-  ),
-  'src/app.ts narrows Escape inEditor guard to Markdown editor wrap so Toolbar & CssWorkbench close SettingsDrawer',
+  appSrcForEsc.includes('reduceStudioShellState') && appSrcForEsc.includes('useStudioKeyboard'),
+  'src/app.ts drives overlay state via reduceStudioShellState and keyboard/Escape routing via useStudioKeyboard',
+);
+assert.ok(
+  keyboardRouterSrc.includes("'.mdstudio-editor-pane:not(.mdstudio-css-workbench) .mdstudio-editor-wrap'"),
+  'src/application/use-studio-keyboard.ts narrows Escape inEditor guard to Markdown editor wrap so Toolbar & CssWorkbench close SettingsDrawer',
 );
 
 // PreviewPane relayoutKey must track deferred CSS draft readiness so urgent workbench open
@@ -493,6 +509,44 @@ assert.ok(
 assert.ok(
   !/,\s*\.mdstudio-skill-item\s*\{\s*min-height:\s*44px/.test(CHROME_CSS),
   'CHROME_CSS must scope coarse-pointer 44px override to button.mdstudio-skill-item (not span.is-draft)',
+);
+
+// CSS responsive cascade order invariant:
+// 1. All `@container mdstudio (max-width: Npx)` blocks must appear in strictly descending width order.
+// 2. `@media (pointer: coarse)` must appear AFTER all `@container` blocks so narrow container rules cannot shrink 44px touch targets.
+// 3. `@media (prefers-reduced-motion: reduce)` must appear last.
+{
+  const containerWidths = [...CHROME_CSS.matchAll(/@container\s+mdstudio\s*\(\s*max-width:\s*(\d+)px\s*\)/g)].map(
+    (m) => ({ px: Number(m[1]), index: m.index ?? -1 }),
+  );
+  assert.ok(containerWidths.length >= 5, 'CHROME_CSS defines descending container breakpoints');
+  for (let i = 1; i < containerWidths.length; i++) {
+    assert.ok(
+      containerWidths[i].px < containerWidths[i - 1].px,
+      `CHROME_CSS @container max-width breakpoints must be strictly descending (${containerWidths[i - 1].px}px -> ${containerWidths[i].px}px)`,
+    );
+  }
+  const lastContainerAt = containerWidths[containerWidths.length - 1].index;
+  const coarseAt = CHROME_CSS.indexOf('@media (pointer: coarse)');
+  const reducedMotionAt = CHROME_CSS.indexOf('@media (prefers-reduced-motion: reduce)');
+  assert.ok(
+    coarseAt > lastContainerAt,
+    '@media (pointer: coarse) must come after all @container breakpoints so narrow width rules cannot clobber 44px touch targets',
+  );
+  assert.ok(
+    reducedMotionAt > coarseAt,
+    '@media (prefers-reduced-motion: reduce) must appear after touch/responsive rules',
+  );
+}
+
+// DocumentStore unified per-article intent invariant:
+// Multi-tab sync must track a single exclusive intent map (`pendingIntents`), never overlapping deleted/purged/dirty Sets.
+const docStoreSrc = stripComments(fs.readFileSync(path.join(root, 'src/application/document-store.ts'), 'utf8'));
+assert.ok(
+  docStoreSrc.includes('pendingIntents') &&
+    !docStoreSrc.includes('pendingDeletedIds') &&
+    !docStoreSrc.includes('pendingPurgedIds'),
+  'src/application/document-store.ts uses unified pendingIntents map instead of overlapping tombstone Sets',
 );
 
 // Single canonical Host loopback/origin security boundary (G2): ai-route and local-server must
@@ -516,12 +570,42 @@ for (const token of ['--mdstudio-ui-toast-success', '--mdstudio-ui-toast-info', 
   assert.ok(CHROME_CSS.includes(token), `CHROME_CSS defines high-contrast dark-toast icon token ${token}`);
 }
 
-// CodeMirror Markdown GFM language invariant (G7): use markdownLanguage directly so GFM Tables/Tasks work
-// without dragging in unused @codemirror/lang-html / @lezer/javascript parsers.
+// CodeMirror Markdown GFM language & dark .cm-selectionMatch contrast invariants (G6/G7):
+// use markdownLanguage directly and explicitly theme .cm-selectionMatch so CodeMirror's light neon
+// highlight never fails WCAG contrast on dark surfaces.
 const cmCoreSrc = stripComments(fs.readFileSync(path.join(root, 'src/ui/codemirror-core.ts'), 'utf8'));
 assert.ok(
   cmCoreSrc.includes('markdownLanguage') && !/\bmarkdown\(\s*\)/.test(cmCoreSrc),
   'src/ui/codemirror-core.ts must configure GFM-capable markdownLanguage instead of bare markdown()',
+);
+assert.ok(
+  cmCoreSrc.includes("'.cm-selectionMatch'"),
+  'src/ui/codemirror-core.ts must explicitly theme .cm-selectionMatch for dark/light contrast',
+);
+
+// Modal header row & keyboard-accessible library row actions invariants (G6).
+assert.ok(
+  CHROME_CSS.includes('.mdstudio-modal-content > div:last-child:not(.mdstudio-modal-head)'),
+  'CHROME_CSS must exclude .mdstudio-modal-head from column flex-1 stacking rule',
+);
+assert.equal(
+  /\.mdstudio-library-row:not\(\.is-trash-row\)\s+\.mdstudio-library-row-actions\s*\{[^}]*display\s*:\s*none/.test(
+    CHROME_CSS,
+  ),
+  false,
+  'LibraryDialog row actions must remain in keyboard Tab / A11y tree (use opacity, never display: none)',
+);
+
+// Mermaid SSRF directive stripping & host symlink O_NOFOLLOW security invariants (G2).
+const mermaidEntrySrc = stripComments(fs.readFileSync(path.join(root, 'src/mermaid-entry.ts'), 'utf8'));
+assert.ok(
+  mermaidEntrySrc.includes('stripMermaidImageDirectives') && mermaidEntrySrc.includes('sanitizeMermaidSvg'),
+  'src/mermaid-entry.ts must strip @{ img } SSRF directives and sanitize rendered SVGs',
+);
+const imageStoreSrc = stripComments(fs.readFileSync(path.join(root, 'host/application/image-store.ts'), 'utf8'));
+assert.ok(
+  imageStoreSrc.includes('O_NOFOLLOW') && imageStoreSrc.includes('lstat'),
+  'host/application/image-store.ts must guard asset reads/writes with lstat and O_NOFOLLOW',
 );
 
 // CSS cascade ordering invariant (G8): base .mdstudio-input must precede specialized .mdstudio-search-input
