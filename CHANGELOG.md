@@ -2,6 +2,37 @@
 
 All notable changes to `dsh-markdown-studio` are documented in this file.
 
+## [0.1.18] - 2026-11-24
+
+### Changed & Refactored
+- **Runtime Overlay Reducer & Unified Keyboard/Escape Router (Phase A)**:
+  - Promoted `src/domain/studio-overlay.machine.ts` from a verification-only model into the real runtime `StudioShellState` / `reduceStudioShellState` reducer and single LIFO `resolveStudioEscape` priority ladder shared between production and exhaustive BFS verification.
+  - Replaced 9 scattered overlay `useState` hooks in `src/app.ts` and 5 scattered global `keydown` listeners across `src/app.ts`, `src/ui/editor-pane.ts`, and `src/ui/immersive-dock.ts` with the single authoritative `useStudioKeyboard` router (`src/application/use-studio-keyboard.ts`), supporting plugin-owned portaled menus (`document.body`), Outline/AI-pill global shortcuts, universal `stopPropagation()` on handled Escapes, and strict external DeepSeek Harness host isolation.
+- **Deterministic CSS Cascade Order & Native 1×1 Canvas CSS Color 4/5 Dark Preview (Phase B)**:
+  - Reordered `src/ui/styles.ts` into strictly descending `@container mdstudio (max-width)` breakpoints → `@media (max-width: 720px)` → `@media (pointer: coarse)` → `@media (prefers-reduced-motion: reduce)` with an automated AST order gate in `test/architecture.test.ts`, fixing narrow touch copy-button shrinkage (`32×30px → 44×44px`), standalone mobile toolbar vertical overflow (`42/39px → 49/49px`), and `is-settings`/`<=960px` shorthand padding collisions.
+  - Added a cached browser-native 1×1 `<canvas>` sRGB resolver in `src/adapters/dark-preview.ts` covering all CSS Color 4/5 syntax (`lch`, `lab`, `oklch`, `oklab`, `hwb`, `display-p3`, `color-mix`, relative colors) with O(1) fast paths for opaque `rgb()`/`#hex`, anchored regexes immune to nested `color-mix(..., rgba(...))` misparsing, and pure JS fallback for non-canvas JSDOM.
+- **Monotonic Revision (`rev`) & Single Exclusive `pendingIntents` Multi-Tab Sync (Phase C)**:
+  - Added backward-compatible optional monotonic `rev?: number` to `Article` (`src/domain/article.ts`, `src/adapters/storage.ts`) and replaced overlapping `dirtyDocIds` / `pendingDeletedIds` / `pendingPurgedIds` Sets in `src/application/document-store.ts` with a single exclusive `pendingIntents: Map<string, 'live' | 'trashed' | 'purged'>` plus structural `sameCustomThemes` comparison.
+  - Eliminated a latent data-loss bug where `restore(id)` followed by `flush()` dropped restored articles during pre-write disk merge, fixed ID-collision restore purging live articles, preserved live custom-theme edits ahead of stale trashed snapshots, stopped cloned `sanitizeSettings()` arrays from overwriting sibling tabs' new custom themes, and cleared `pendingActiveSwitch` when remote tabs delete the switched-to doc.
+
+### Fixed
+- **CSS Syntax Level 3 Lexer, Inliner & Formatting Hardening (`G1`, P0)**:
+  - Added shared `preprocessCssInput()` (`\r\n`/`\r`/`\f → \n`, `NUL → U+FFFD`) across `src/domain/custom-css.ts`, `src/css-inliner.ts`, and `src/themes.ts` to close CSS form-feed (`\f`) sanitizer bypasses; converted CSS counters to `Object.create(null)`; upgraded rule/declaration/formatter splitting to be quote- and escape-aware; preserved fallback declarations and stylesheet `!important` shorthand precedence; and fixed `:is(:nth-child)` specificity.
+- **Mermaid 11 SSRF, Host Cross-Site & Asset Storage Security (`G2`, P0)**:
+  - Added quote- and brace-balanced `stripMermaidImageDirectives()` in `src/mermaid-entry.ts` plus DOM-level SVG sanitization (`src/mermaid-entry.ts`, `src/math-entry.ts`), blocking Mermaid 11 `@{ img }` outbound HTTP requests (`1 → 0`) in standalone and real DeepSeek Harness hosts.
+  - Enforced universal `Sec-Fetch-Site: cross-site` rejection across `file:` / `http:` / `https:` while preserving trusted Electron desktop protocols (`dsh-app://`, `dsh://`, `app://`) and `:80`/`:443` Host normalization in `host/http/routes.ts`; hardened local asset reads with `lstat` + `O_NOFOLLOW` in `host/application/image-store.ts`; rejected control-character URLs in `src/domain/urls.ts`; and made host/client lifecycle registration transactional (`index.ts`, `src/shell-entry.ts`).
+- **Markdown Engine Performance (`71.5×`), AssetGC, WeChat DOM & WCAG AA Contrast (`G3`)**:
+  - Added linear-time forward delimiter caching in `src/markdown-parser.ts` (10k pathological unclosed `*` `386ms → 5.4ms`), null-prototype HTML entity lookup, math/code isolation, bare URL trailing `==`/`++` protection, and multi-level nested list / YAML frontmatter fixes.
+  - Fixed `scanInlineImages` (`src/domain/images.ts`) to continue scanning real assets past unbalanced `![` tokens so AssetGC and backup exports never miss downstream images.
+  - Hardened `src/adapters/wechat-clipboard-dom.ts` and `src/domain/wechat-html-lint.ts` (Base64 copy placeholders, recursive `p > strong > section` unwrapping, `<ol start>` preservation, loose list trailing-prose order, and stack-based nested list linting) and guaranteed WCAG AA `>= 4.5:1` contrast for mid-luminance `onAccent` (`#797979`: `4.82:1`) and nested `==~~del~~==` / `==[link]==` (`13.44:1`) in `src/theme-system/compose.ts`.
+- **Editor Ergonomics, Writing Skills, Search & UI/A11y Polish (`G4`–`G6`)**:
+  - Preserved trailing Chinese paragraph text when invoking `/` SlashMenu (`src/application/use-slash-menu.ts`); fixed symmetric double-press Bold/Italic toggling (`src/application/editor-formatting.ts`); added W3C `AltGraph` modifier guards (`src/application/editor-shortcuts.ts`); added AI patch overlap/URL-hallucination guards, YAML block scalars, and HTTP 401/403/429 classification (`src/domain/writing-skills.ts`, `src/adapters/ai-client.ts`); and fixed Unicode (`İ`) case-folding search snippet offsets (`src/domain/library-search.ts`).
+  - Fixed `FallbackModal` header horizontal layout, dark CodeMirror `.cm-selectionMatch` contrast (`3.92:1 → 12.47:1`), Immersive Write AI error banner dock clearance, 360px `WorkspaceDialog` two-row header & Chinese confirmation punctuation, `SkillManagerDialog` frontmatter-derived Save enablement, 360px macOS frameless titlebar width (`14px → 65px`), `LibraryDialog` keyboard-accessible row actions, `FallbackMenu` `ArrowUp` focus wrap, and caret-safe top-obstacle `SlashMenu` height clamping.
+
+### Verification & Regression Gates
+- Passed 36/36 live BEFORE→AFTER probes (Core 12/12 + Standalone Chromium 18/18 + Real DeepSeek Harness 6/6; 22 real BEFORE/AFTER screenshot pairs) and two full rounds of adversarial regression reviews (35 intercepted fixes).
+- All permanent CI gates passed on the release tree: `format` / `lint` / `typecheck` (170 files, 0 issues), `verify:models` (1,492 Overlay + 25,000 FileSession states), `test:fuzz` (500 MD/CSS fuzz + ReDoS), `quality` (94.92% statements / 89.44% branches / 96.24% functions; all 2,494 runtime AST functions `CRAP <= 30`; all 5 raw+gzip budgets passed with `dist/client.js` `5.2 / 2.4 KiB` and `dist/client.studio.js` `1185.8 / 364.9 KiB`), `mutation` (36/36 killed), `check:host-api`, `licenses:check` (81 packages), `test:browser` (pixel baseline + axe 0 serious), and `test:dsh`.
+
 ## [0.1.17] - 2026-11-23
 
 ### Fixed
