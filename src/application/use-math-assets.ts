@@ -1,6 +1,11 @@
 import type * as ReactNamespace from 'react';
 import { containsMath } from '../engine';
-import { useDebouncedKeyTask, useMountDisposable } from '../runtime/react-lifecycle';
+import {
+  isPluginLifecycleMounted,
+  onPluginLifecycleUnmount,
+  useDebouncedKeyTask,
+  useMountDisposable,
+} from '../runtime/react-lifecycle';
 
 export interface MathAssetsOptions {
   React: typeof ReactNamespace;
@@ -18,6 +23,9 @@ export function hasMath(markdown: string): boolean {
 }
 
 let sharedMathLoadPromise: Promise<void> | null = null;
+onPluginLifecycleUnmount(() => {
+  sharedMathLoadPromise = null;
+});
 
 function loadMathScript(): Promise<void> {
   if (typeof window !== 'undefined' && window.__MDSTUDIO_MATH__) return Promise.resolve();
@@ -34,6 +42,12 @@ function loadMathScript(): Promise<void> {
     script.setAttribute('data-plugin', 'dsh-markdown-studio');
     script.onload = function () {
       sharedMathLoadPromise = null;
+      if (!isPluginLifecycleMounted() && typeof window !== 'undefined') {
+        delete (window as unknown as Record<string, unknown>).__MDSTUDIO_MATH__;
+        script.remove();
+        resolve();
+        return;
+      }
       if (!window.__MDSTUDIO_MATH__) {
         script.remove();
       }

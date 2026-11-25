@@ -86,7 +86,7 @@ export class HostClient {
       response = await doFetch(this.route, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ action, ...payload }),
+        body: JSON.stringify({ ...payload, action }),
       });
     } catch (error) {
       throw new HostClientError(
@@ -98,6 +98,7 @@ export class HostClient {
     }
     const contentType = (response.headers.get('content-type') || '').toLowerCase();
     if (!contentType.includes('application/json')) {
+      void response.body?.cancel?.().catch(() => undefined);
       throw new HostClientError('HOST_UNAVAILABLE', 'Host returned a non-JSON response');
     }
     let rawJson: unknown;
@@ -151,7 +152,8 @@ export class HostClient {
     return data.assets.map(assetItemOf).filter((item): item is AssetItem => item !== null);
   }
 
-  async deleteAsset(filename: string, expectedStoredAt?: string): Promise<void> {
-    await this.post('asset.delete', expectedStoredAt ? { filename, expectedStoredAt } : { filename });
+  async deleteAsset(filename: string, expectedStoredAt?: string): Promise<boolean> {
+    const data = await this.post('asset.delete', expectedStoredAt ? { filename, expectedStoredAt } : { filename });
+    return data.deleted !== false;
   }
 }

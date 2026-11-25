@@ -27,7 +27,18 @@ function imports(file: string): string[] {
 }
 
 function stripComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, ts.LanguageVariant.Standard, source);
+  let out = '';
+  let lastEnd = 0;
+  for (let token = scanner.scan(); token !== ts.SyntaxKind.EndOfFileToken; token = scanner.scan()) {
+    if (token === ts.SyntaxKind.SingleLineCommentTrivia || token === ts.SyntaxKind.MultiLineCommentTrivia) {
+      const start = scanner.getTokenPos();
+      const end = scanner.getTextPos();
+      out += source.slice(lastEnd, start) + source.slice(start, end).replace(/[^\r\n]/g, ' ');
+      lastEnd = end;
+    }
+  }
+  return out + source.slice(lastEnd);
 }
 
 function forbidden(filesList: string[], patterns: RegExp[], label: string): void {
@@ -327,13 +338,55 @@ for (const file of allSrcFiles) {
         `${file} must measure container .clientWidth (or @container mdstudio) instead of branching on window.innerWidth`,
       );
     }
-    // Unicode case-folding length safety: never slice original UI text via `toLowerCase().indexOf(...)`
+    // Unicode case-folding length safety: never slice original text via `toLowerCase().indexOf(...)` in UI
     // (Turkish `İ`.toLowerCase() expands from 1 to 2 UTF-16 code units, causing +1 highlight offset drift).
     if (normalized.startsWith('src/ui/')) {
       assert.ok(
         !/\.to(?:Lower|Upper)Case\(\)\s*\.indexOf\(/.test(code),
         `${file} must not use toLowerCase()/toUpperCase().indexOf() in UI (use length-preserving RegExp "i" instead)`,
       );
+    }
+    // Single canonical storage key owner: localStorage keys (`dsh.markdown-studio.*`) must be declared in src/adapters/storage.ts only.
+    if (normalized !== 'src/adapters/storage.ts') {
+      assert.ok(
+        !/['"]dsh\.markdown-studio\.[a-z0-9._-]+['"]/.test(code),
+        `${file} must import storage keys from src/adapters/storage.ts instead of duplicating dsh.markdown-studio.* literals`,
+      );
+    }
+    // Hidden file inputs must set native `hidden: true` so DSH Modal focus queries (`!el.closest('[hidden]')`) skip them.
+    if (code.includes('mdstudio-hidden-input') && normalized !== 'src/ui/styles.ts') {
+      const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+      let checked = 0;
+      const visit = (node: ts.Node): void => {
+        if (
+          ts.isCallExpression(node) &&
+          node.arguments.length >= 2 &&
+          ts.isStringLiteral(node.arguments[0]) &&
+          node.arguments[0].text === 'input' &&
+          ts.isObjectLiteralExpression(node.arguments[1])
+        ) {
+          const props = node.arguments[1].properties;
+          const hasHiddenClass = props.some(
+            (p) =>
+              ts.isPropertyAssignment(p) &&
+              p.name.getText(sf) === 'className' &&
+              p.initializer.getText(sf).includes('mdstudio-hidden-input'),
+          );
+          if (hasHiddenClass) {
+            checked++;
+            const hasNativeHidden = props.some(
+              (p) =>
+                ts.isPropertyAssignment(p) &&
+                p.name.getText(sf) === 'hidden' &&
+                p.initializer.kind === ts.SyntaxKind.TrueKeyword,
+            );
+            assert.ok(hasNativeHidden, `${file} renders .mdstudio-hidden-input without native hidden: true`);
+          }
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(sf);
+      assert.ok(checked > 0, `${file} references mdstudio-hidden-input on an input element`);
     }
   }
 
@@ -557,14 +610,34 @@ assert.ok(
   'src/application/document-store.ts uses unified pendingIntents map instead of overlapping tombstone Sets',
 );
 
-// Single canonical Host loopback/origin security boundary (G2): ai-route and local-server must
-// import isLoopbackHostHeader/isLoopbackReq from host/http/routes.ts instead of duplicating parsers.
-for (const hostRouteFile of ['host/http/ai-route.ts', 'host/local-server.ts']) {
+// Single canonical Host loopback/origin/auth security boundary (G2): all host HTTP route modules and local-server
+// must delegate Host/Origin/Auth checks to canonical helpers in host/http/routes.ts (or static-bundle-route.ts).
+for (const hostRouteFile of ['host/http/ai-route.ts', 'host/http/static-bundle-route.ts', 'host/local-server.ts']) {
   const src = stripComments(fs.readFileSync(path.join(root, hostRouteFile), 'utf8'));
   assert.ok(
-    (src.includes('isLoopbackHostHeader') || src.includes('isAllowedOrigin')) &&
+    (src.includes('isLoopbackHostHeader') || src.includes('isAllowedOrigin') || src.includes('checkHostAuthJson')) &&
       !/\bfunction\s+(?:isLoopbackHost|isAllowedOrigin|isLoopback)\b/.test(src),
-    `${hostRouteFile} must delegate Host/Origin validation to canonical helpers in host/http/routes.ts`,
+    `${hostRouteFile} must delegate Host/Origin/Auth validation to canonical helpers in host/http/routes.ts`,
+  );
+}
+for (const bundleRouteFile of ['host/http/math-route.ts', 'host/http/mermaid-route.ts']) {
+  const src = stripComments(fs.readFileSync(path.join(root, bundleRouteFile), 'utf8'));
+  assert.ok(
+    src.includes('createStaticBundleRoute'),
+    `${bundleRouteFile} must delegate loopback/auth/ETag handling to createStaticBundleRoute`,
+  );
+}
+// Native DSH Tooltip must opt into `portal: true` so fixed tooltips escape immersive dock flex layout.
+assert.ok(
+  /function adaptTooltip[\s\S]{0,360}portal:\s*props\.portal\s*\?\?\s*true/.test(primitivesSrc),
+  'src/ui/dsh-primitives.ts adaptTooltip must enable portal: props.portal ?? true',
+);
+// Host entry must enforce DSH host `connection.requestRejection` auth boundary across all registered HTTP routes.
+{
+  const indexCode = stripComments(fs.readFileSync(path.join(root, 'index.ts'), 'utf8'));
+  assert.ok(
+    indexCode.includes('requestRejection') && (indexCode.match(/\bcheckAuth\b/g) || []).length >= 5,
+    'index.ts must wire DSH host connection.requestRejection auth checker into all 5 HTTP routes',
   );
 }
 

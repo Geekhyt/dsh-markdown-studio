@@ -3,7 +3,12 @@ import type { HostClient } from '../adapters/host-client';
 import { prepareImageForWechat } from '../adapters/image-encode';
 import type { MermaidCacheEntry } from '../domain/mermaid';
 import { renderMarkdown } from '../markdown-parser';
-import { useDebouncedKeyTask, useLatest } from '../runtime/react-lifecycle';
+import {
+  isPluginLifecycleMounted,
+  onPluginLifecycleUnmount,
+  useDebouncedKeyTask,
+  useLatest,
+} from '../runtime/react-lifecycle';
 import { type MermaidTheme, mermaidCacheKey } from '../themes';
 
 interface MermaidModule {
@@ -11,6 +16,9 @@ interface MermaidModule {
 }
 
 let sharedMermaidLoadPromise: Promise<MermaidModule | null> | null = null;
+onPluginLifecycleUnmount(() => {
+  sharedMermaidLoadPromise = null;
+});
 
 function loadMermaidModule(): Promise<MermaidModule | null> {
   if (typeof window !== 'undefined' && window.__MDSTUDIO_MERMAID__) {
@@ -29,6 +37,12 @@ function loadMermaidModule(): Promise<MermaidModule | null> {
     script.setAttribute('data-plugin', 'dsh-markdown-studio');
     script.onload = function () {
       sharedMermaidLoadPromise = null;
+      if (!isPluginLifecycleMounted() && typeof window !== 'undefined') {
+        delete (window as unknown as Record<string, unknown>).__MDSTUDIO_MERMAID__;
+        script.remove();
+        resolve(null);
+        return;
+      }
       if (!window.__MDSTUDIO_MERMAID__) {
         script.remove();
       }
@@ -84,7 +98,7 @@ export function extractMermaidBlocks(markdown: unknown): string[] {
 }
 
 export function prependMermaidDirective(code: string, directive: string): string {
-  const fm = /^---[ \t]*\r?\n(?:[\s\S]*?\r?\n)?---[ \t]*(?:\r?\n|$)/.exec(code);
+  const fm = /^[ \t]*---[ \t]*\r?\n(?:[\s\S]*?\r?\n)?[ \t]*---[ \t]*(?:\r?\n|$)/.exec(code);
   if (fm) return fm[0] + (fm[0].endsWith('\n') ? '' : '\n') + directive + '\n' + code.slice(fm[0].length);
   return directive + '\n' + code;
 }
@@ -108,19 +122,32 @@ function parseSvgDimension(root: Element, viewBox: number[], name: string, index
   return viewBoxSize(viewBox, index) || parseAbsoluteSvgLength(root.getAttribute(name)) || fallback;
 }
 
+function parseSvgRoot(svg: string): Element {
+  const documentNode = new DOMParser().parseFromString(svg, 'image/svg+xml');
+  const root = documentNode.documentElement;
+  if (!root || root.tagName.toLowerCase() !== 'svg' || documentNode.querySelector('parsererror')) {
+    throw new Error('invalid mermaid svg');
+  }
+  return root;
+}
+
+function prepareSvgImagePayload(svg: string): { blob: Blob; width: number; height: number } {
+  const root = parseSvgRoot(svg);
+  const rawViewBox = String(root.getAttribute('viewBox') || '').trim();
+  const viewBox = rawViewBox ? rawViewBox.split(/[\s,]+/).map(Number) : [];
+  const width = parseSvgDimension(root, viewBox, 'width', 2, 800);
+  const height = parseSvgDimension(root, viewBox, 'height', 3, 600);
+  root.setAttribute('width', String(width));
+  root.setAttribute('height', String(height));
+  if (!root.getAttribute('xmlns')) root.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  const blob = new Blob([new XMLSerializer().serializeToString(root)], { type: 'image/svg+xml;charset=utf-8' });
+  return { blob, width, height };
+}
+
 function svgToPng(svg: string, background: string): Promise<string> {
   return new Promise(function (resolve, reject) {
     try {
-      const documentNode = new DOMParser().parseFromString(svg, 'image/svg+xml');
-      const root = documentNode.documentElement;
-      const rawViewBox = String(root.getAttribute('viewBox') || '').trim();
-      const viewBox = rawViewBox ? rawViewBox.split(/[\s,]+/).map(Number) : [];
-      const width = parseSvgDimension(root, viewBox, 'width', 2, 800);
-      const height = parseSvgDimension(root, viewBox, 'height', 3, 600);
-      root.setAttribute('width', String(width));
-      root.setAttribute('height', String(height));
-      if (!root.getAttribute('xmlns')) root.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-      const blob = new Blob([new XMLSerializer().serializeToString(root)], { type: 'image/svg+xml;charset=utf-8' });
+      const { blob, width, height } = prepareSvgImagePayload(svg);
       const url = URL.createObjectURL(blob);
       const image = new Image();
       image.onload = function () {

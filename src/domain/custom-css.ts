@@ -184,6 +184,7 @@ function scanIdentBeforeParen(text: string, from: number, parenIndex: number): {
 function findNextFunctionCall(
   text: string,
   from: number,
+  includeDynamic = false,
 ): { start: number; fnName: string; rawName: string; open: number; close: number } | null {
   let quote = '';
   for (let i = from; i < text.length; i++) {
@@ -204,7 +205,11 @@ function findNextFunctionCall(
     const ident = scanIdentBeforeParen(text, from, i);
     if (!ident.rawName) continue;
     const fnName = decodeCssEscapes(ident.rawName).trim().toLowerCase();
-    if (CSS_URL_FUNCS.has(fnName) || CSS_MULTI_URL_FUNCS.has(fnName)) {
+    if (
+      CSS_URL_FUNCS.has(fnName) ||
+      CSS_MULTI_URL_FUNCS.has(fnName) ||
+      (includeDynamic && DYNAMIC_CSS_URL_FUNCS.has(fnName))
+    ) {
       return { start: ident.start, fnName, rawName: ident.rawName, open: i, close: findBalancedParenEnd(text, i) };
     }
   }
@@ -232,14 +237,17 @@ function hasExternalQuotedString(text: string): boolean {
   return false;
 }
 
+const DYNAMIC_CSS_URL_FUNCS = new Set(['var', 'env', 'attr']);
+
 function candidateHasExternalUrl(candidate: string): boolean {
   const trimmed = candidate.trim();
   if (!trimmed) return false;
   if (hasExternalQuotedString(trimmed)) return true;
   let cursor = 0;
   while (cursor < trimmed.length) {
-    const nested = findNextFunctionCall(trimmed, cursor);
+    const nested = findNextFunctionCall(trimmed, cursor, true);
     if (!nested) break;
+    if (DYNAMIC_CSS_URL_FUNCS.has(nested.fnName)) return true;
     const inner = trimmed.slice(nested.open + 1, nested.close);
     const bad = CSS_URL_FUNCS.has(nested.fnName)
       ? isExternalUrlArg(inner)
@@ -422,10 +430,15 @@ export function splitCssTopLevel(text: string, separator: string): string[] {
       i = skipCssComment(text, i);
       continue;
     }
-    if (ch === '(' || ch === '[') depth++;
-    else if (ch === ')' || ch === ']') depth = Math.max(0, depth - 1);
+    if (ch === '(' || ch === '[' || ch === '{') depth++;
+    else if (ch === ')' || ch === ']' || ch === '}') depth = Math.max(0, depth - 1);
     else if (ch === separator && depth === 0) {
       parts.push(text.slice(start, i));
+      start = i + 1;
+    }
+    if (ch === '}' && depth === 0 && separator === ';') {
+      // Nested CSS block (e.g. `& h2 { ... }`) terminates without a trailing semicolon; advance start past `}`.
+      parts.push(text.slice(start, i + 1));
       start = i + 1;
     }
   }

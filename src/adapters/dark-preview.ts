@@ -300,6 +300,8 @@ function resolveFgHex(element: HTMLElement, bgRgb: [number, number, number]): st
   const fgRgb = rgbTuple(raw);
   if (!fgRgb) return null;
   const alpha = alphaOf(raw);
+  // Preserve authored `color: transparent` (e.g. unchecked task checkboxes) instead of turning it visible gray.
+  if (alpha <= 0.01) return null;
   const effective = alpha < 0.99 ? compositeOver(fgRgb, alpha, bgRgb) : fgRgb;
   return rgbToHex(effective[0], effective[1], effective[2]);
 }
@@ -316,7 +318,8 @@ function needsContrastLift(fgHex: string | null, bgHex: string): fgHex is string
 function liftElementContrast(element: HTMLElement, root: HTMLElement, darkened: ReadonlySet<HTMLElement>): void {
   if (!shouldLiftElement(element, darkened)) return;
   const bg = nearestOpaqueBgHex(element, root);
-  if (bg.lum >= 0.25) return;
+  // Cover mid-luminance surfaces up to 0.45 so no dead-zone exists between normalizeSurfaceElement (>0.42) and contrast lifting.
+  if (bg.lum >= 0.45) return;
   const fgHex = resolveFgHex(element, bg.rgb);
   if (!needsContrastLift(fgHex, bg.hex)) return;
   element.style.setProperty('color', ensureContrast(fgHex, bg.hex, DARK_TEXT_MIN_CONTRAST), 'important');

@@ -250,8 +250,8 @@ const mutations: Mutation[] = [
   {
     name: 'strip Mermaid 11 @{ img } directives (incl. quoted/tagged YAML keys) before render',
     file: 'src/mermaid-entry.ts',
-    find: "if (parsed.key.trim().toLowerCase() === 'img') {",
-    replace: 'if (false && parsed.key) {',
+    find: "if (keyLower === 'img' || keyLower === '<<') {",
+    replace: 'if (false && keyLower) {',
     test: 'test/copy-spec.test.ts',
   },
   {
@@ -310,7 +310,89 @@ const mutations: Mutation[] = [
     replace: '...defaultKeymap,',
     test: 'test/dom.test.ts',
   },
+  {
+    name: 'enforce DSH host connection.requestRejection auth check on HTTP routes',
+    file: 'host/http/routes.ts',
+    find: 'const rejection = checkAuth?.(req);\n  if (rejection === undefined) return true;',
+    replace: 'const rejection = checkAuth?.(req);\n  if (rejection === undefined || true) return true;',
+    test: 'test/host.test.ts',
+  },
+  {
+    name: 'advance ImageHostService storedAt monotonically on immediate re-store',
+    file: 'host/application/image-store.ts',
+    find: 'storedAt: nextMonotonicStoredAt(existing?.storedAt),',
+    replace: 'storedAt: existing?.storedAt || new Date().toISOString(),',
+    test: 'test/host.test.ts',
+  },
+  {
+    name: 'block var() nested inside image-set() fail-closed in custom CSS sanitizer',
+    file: 'src/domain/custom-css.ts',
+    find: 'if (DYNAMIC_CSS_URL_FUNCS.has(nested.fnName)) return true;',
+    replace: 'if (false && DYNAMIC_CSS_URL_FUNCS.has(nested.fnName)) return true;',
+    test: 'test/custom-css.test.ts',
+  },
+  {
+    name: 'scrub Mermaid pre-render CSS/HTML/sequence external resource vectors',
+    file: 'src/mermaid-entry.ts',
+    find: 'const scrubbed = scrubStyleDeclList(styleMatch[2]);',
+    replace: 'const scrubbed = styleMatch[2];',
+    test: 'test/copy-spec.test.ts',
+  },
+  {
+    name: 'preserve live article concurrently restored by sibling tab against stale purge',
+    file: 'src/application/document-store.ts',
+    find: 'if (baseRev !== undefined && readRev(ext) > baseRev) {\n        merged.push(ext);\n      }',
+    replace: 'if (false && baseRev !== undefined) { merged.push(ext); }',
+    test: 'test/document-store.test.ts',
+  },
+  {
+    name: 'fail closed in AssetGC when asset storedAt timestamp is missing or malformed',
+    file: 'src/application/asset-gc.ts',
+    find: 'if (!storedAt) return true;',
+    replace: 'if (!storedAt) return false;',
+    test: 'test/data-integrity.test.ts',
+  },
+  {
+    name: 'refuse copy+delete workspace directory rename when protected .git/node_modules subtree exists',
+    file: 'src/application/use-workspace.ts',
+    find: 'await assertSafeDirectoryCopy(source);',
+    replace: '/* skip protected subtree check */',
+    test: 'test/file-session.test.ts',
+  },
+  {
+    name: 'preserve single-line text across repeated Tab presses',
+    file: 'src/application/editor-shortcuts.ts',
+    find: 'const selectsWholeLine =\n    range.end > range.start && range.start <= blockStart + leadingWsLen && range.end === blockEnd;',
+    replace:
+      'const selectsWholeLine =\n    range.end > range.start && range.start === blockStart && range.end === blockEnd;',
+    test: 'test/shortcuts-regression.test.ts',
+  },
+  {
+    name: 'enable portal: true on native DSH Tooltip adapter so immersive dock tooltips escape flex layout',
+    file: 'src/ui/dsh-primitives.ts',
+    find: 'portal: props.portal ?? true,',
+    replace: 'portal: props.portal,',
+    test: 'test/dsh-primitives.test.ts',
+  },
 ];
+
+let activeRestore: { file: string; original: string } | null = null;
+function restoreActiveMutation(): void {
+  if (!activeRestore) return;
+  const { file, original } = activeRestore;
+  activeRestore = null;
+  try {
+    fs.writeFileSync(file, original);
+  } catch {
+    /* best effort */
+  }
+}
+for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(sig, () => {
+    restoreActiveMutation();
+    process.exit(130);
+  });
+}
 
 let survived = 0;
 for (const mutation of mutations) {
@@ -321,6 +403,7 @@ for (const mutation of mutations) {
     survived++;
     continue;
   }
+  activeRestore = { file, original };
   fs.writeFileSync(file, original.replace(mutation.find, mutation.replace));
   try {
     const result = spawnSync(process.execPath, [tsx, mutation.test], {
@@ -328,14 +411,19 @@ for (const mutation of mutations) {
       encoding: 'utf8',
       timeout: 30_000,
     });
-    if (result.status === 0) {
+    if (result.error || result.signal) {
+      console.error(
+        `FAIL ${mutation.name}: test runner errored or timed out (${result.signal || result.error?.message})`,
+      );
+      survived++;
+    } else if (result.status === 0) {
       console.error(`FAIL ${mutation.name}: test suite survived the mutation`);
       survived++;
     } else {
       console.log(`ok   ${mutation.name}: killed by ${mutation.test}`);
     }
   } finally {
-    fs.writeFileSync(file, original);
+    restoreActiveMutation();
   }
 }
 if (survived) process.exit(1);

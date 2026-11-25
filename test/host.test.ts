@@ -7,7 +7,7 @@ import { Readable } from 'node:stream';
 import { AiHostService } from '../host/application/ai-service';
 import { ImageHostError, ImageHostService, MAX_IMAGE_BYTES, parseDataUrl } from '../host/application/image-store';
 import { AI_ROUTE_PATH, createAiRoute } from '../host/http/ai-route';
-import { MATH_PATH, mathRoute } from '../host/http/math-route';
+import { createMathRoute, MATH_PATH, mathRoute } from '../host/http/math-route';
 import { MERMAID_PATH, mermaidRoute } from '../host/http/mermaid-route';
 import {
   ASSET_PREFIX,
@@ -155,7 +155,16 @@ try {
     const response = await fetch(`${localHandle.info.url}/uploads/${stored.filename}`);
     assert.equal(response.status, 200);
     assert.equal(response.headers.get('content-type'), 'image/png');
-    assert.equal(response.headers.get('access-control-allow-origin'), '*');
+    assert.equal(response.headers.get('access-control-allow-origin'), null);
+    assert.equal(response.headers.get('vary'), 'Origin');
+    const loopbackResp = await fetch(`${localHandle.info.url}/uploads/${stored.filename}`, {
+      headers: { Origin: 'http://127.0.0.1:3000' },
+    });
+    assert.equal(loopbackResp.headers.get('access-control-allow-origin'), 'http://127.0.0.1:3000');
+    const evilResp = await fetch(`${localHandle.info.url}/uploads/${stored.filename}`, {
+      headers: { Origin: 'https://evil.example' },
+    });
+    assert.equal(evilResp.headers.get('access-control-allow-origin'), null);
     const bytes = Buffer.from(await response.arrayBuffer());
     assert.ok(bytes.length > 0);
     const head = await fetch(`${localHandle.info.url}/uploads/${stored.filename}`, { method: 'HEAD' });
@@ -359,6 +368,20 @@ try {
       body: JSON.stringify({ action: 'health' }),
     });
     assert.equal(blocked.status, 403);
+    for (const badDesktopOrigin of [
+      'dsh-app://user:pass@main',
+      'dsh-app://main?q=1',
+      'dsh-app://main#frag',
+      'dsh-app://main/subpath',
+      'dsh-app://',
+    ]) {
+      const res = await fetch(`http://127.0.0.1:${routeServer.port}/api/markdown-studio/wechat`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: badDesktopOrigin },
+        body: JSON.stringify({ action: 'health' }),
+      });
+      assert.equal(res.status, 403, `rejects dirty desktop origin: ${badDesktopOrigin}`);
+    }
   });
 
   await check('asset route handles HEAD requests and internal errors safely', async () => {
@@ -619,6 +642,89 @@ try {
           );
         } finally {
           effectCleanup?.();
+        }
+
+        // Cluster A regressions: DSH checkAuth 401/403, monotonic immediate re-store storedAt, cross-process manifest freshness,
+        // non-existent deleteAsset -> deleted:false, ETag/304 static bundle routes, and immediate AbortSignal on local server.
+        {
+          const authRejectRoute = createImageRoute({
+            service,
+            checkAuth: (req) => (req.headers['x-test-auth'] === 'ok' ? undefined : 401),
+          });
+          const authServer = await listen(authRejectRoute);
+          try {
+            const unauth = await post(authServer.port, { action: 'health' });
+            assert.equal(unauth.status, 401, 'image route enforces DSH checkAuth 401');
+            const authed = await post(authServer.port, { action: 'health' }, { 'x-test-auth': 'ok' });
+            assert.equal(authed.status, 200, 'image route allows authenticated DSH requests');
+          } finally {
+            authServer.server.close();
+          }
+
+          // Monotonic storedAt on immediate (<15s) re-store & two-process manifest reload & deleted:false on absent file
+          const twoProcDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-twoproc-'));
+          try {
+            const svcA = new ImageHostService({ storageDir: twoProcDir });
+            const svcB = new ImageHostService({ storageDir: twoProcDir });
+            const firstStore = await svcA.storeAsset({ dataUrl: IMAGE, filename: 'same.png' });
+            const firstTs = (await svcA.listAssets()).assets.find((x) => x.filename === firstStore.filename)?.storedAt;
+            const secondStore = await svcA.storeAsset({ dataUrl: IMAGE, filename: 'same.png' });
+            const secondTs = (await svcA.listAssets()).assets.find(
+              (x) => x.filename === secondStore.filename,
+            )?.storedAt;
+            assert.ok(firstTs && secondTs && secondTs > firstTs, 'immediate re-store advances storedAt monotonically');
+            const staleDel2 = await svcA.deleteAsset({ filename: firstStore.filename, expectedStoredAt: firstTs });
+            assert.equal(staleDel2.deleted, false, 'stale GC expectedStoredAt fails after immediate re-upload');
+            // Second process sees fresh manifest written by svcA
+            const seenByB = await svcB.listAssets();
+            assert.ok(
+              seenByB.assets.some((x) => x.filename === firstStore.filename),
+              'second ImageHostService instance refreshes manifest from disk mtime/size',
+            );
+            const missingDel = await svcA.deleteAsset({ filename: '000000000000000000000000.png' });
+            assert.equal(missingDel.deleted, false, 'deleting non-existent asset returns deleted: false');
+          } finally {
+            await fs.rm(twoProcDir, { recursive: true, force: true });
+          }
+
+          // Static bundle ETag / 304 + auth gate
+          const mathAuthRoute = createMathRoute({
+            checkAuth: (req) => (req.headers['x-test-auth'] === 'ok' ? undefined : 401),
+          });
+          const mathAuthSrv = await listen(mathAuthRoute);
+          try {
+            const unauthMath = await fetch(`http://127.0.0.1:${mathAuthSrv.port}/api/markdown-studio/math.js`);
+            assert.equal(unauthMath.status, 401, 'math.js enforces DSH checkAuth 401');
+            const firstMath = await fetch(`http://127.0.0.1:${mathAuthSrv.port}/api/markdown-studio/math.js`, {
+              headers: { 'x-test-auth': 'ok' },
+            });
+            assert.equal(firstMath.status, 200);
+            const etag = firstMath.headers.get('etag');
+            assert.ok(etag, 'math.js sends ETag');
+            const notMod = await fetch(`http://127.0.0.1:${mathAuthSrv.port}/api/markdown-studio/math.js`, {
+              headers: { 'x-test-auth': 'ok', 'if-none-match': etag! },
+            });
+            assert.equal(notMod.status, 304, 'math.js returns 304 Not Modified on matching ETag');
+          } finally {
+            mathAuthSrv.server.close();
+          }
+
+          // Immediate & mid-bind AbortSignal during startLocalImageServer resolves cleanly to null without hang
+          const preAborted = new AbortController();
+          preAborted.abort();
+          assert.equal(
+            await startLocalImageServer({ service, signal: preAborted.signal }),
+            null,
+            'pre-aborted startLocalImageServer resolves cleanly to null',
+          );
+          const midAbort = new AbortController();
+          const midPromise = startLocalImageServer({ service, ports: [0], signal: midAbort.signal });
+          midAbort.abort();
+          const midResult = await Promise.race([
+            midPromise,
+            new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 1500)),
+          ]);
+          assert.equal(midResult, null, 'same-tick aborted startLocalImageServer settles promptly to null');
         }
       } finally {
         mathServer.server.close();

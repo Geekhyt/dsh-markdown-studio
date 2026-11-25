@@ -366,8 +366,7 @@ class AiInlineBlockWidget extends WidgetType {
 
     const prose = document.createElement('div');
     prose.className = 'mdstudio-ai-inline-prose';
-    if (item.status === 'error') prose.setAttribute('aria-live', 'assertive');
-    else if (item.status === 'ready') prose.setAttribute('aria-live', 'polite');
+    if (item.status === 'ready') prose.setAttribute('aria-live', 'polite');
     appendProseContent(prose, item);
     wrap.appendChild(prose);
 
@@ -651,6 +650,17 @@ export function create(options: EditorOptions): EditorApi {
   const contentAttrsCompartment = new Compartment();
   const resolveAriaLabel = (label?: string, ph?: string): string =>
     label || ph || (isCss ? 'CSS editor' : 'Markdown editor');
+  let currentAriaLabel = resolveAriaLabel(opts.ariaLabel, opts.placeholder);
+  let slashAriaState: { open: boolean; activeId: string | null } = { open: false, activeId: null };
+  const buildContentAttrs = (): Record<string, string> => {
+    const attrs: Record<string, string> = { 'aria-label': currentAriaLabel };
+    if (!isCss && slashAriaState.open) {
+      attrs['aria-controls'] = 'mdstudio-slash-list';
+      attrs['aria-expanded'] = 'true';
+      if (slashAriaState.activeId) attrs['aria-activedescendant'] = slashAriaState.activeId;
+    }
+    return attrs;
+  };
 
   let destroyed = false;
   const extensions: Extension[] = [
@@ -668,9 +678,7 @@ export function create(options: EditorOptions): EditorApi {
     highlightCompartment.of(syntaxHighlighting(dark ? darkHighlightStyle : lightHighlightStyle, { fallback: true })),
     isCss ? css() : new LanguageSupport(markdownLanguage, [pasteURLAsLink, Prec.high(keymap.of(markdownKeymap))]),
     EditorView.lineWrapping,
-    contentAttrsCompartment.of(
-      EditorView.contentAttributes.of({ 'aria-label': resolveAriaLabel(opts.ariaLabel, opts.placeholder) }),
-    ),
+    contentAttrsCompartment.of(EditorView.contentAttributes.of(buildContentAttrs())),
     placeholderCompartment.of(opts.placeholder ? placeholder(opts.placeholder) : []),
     themeCompartment.of(editorTheme(dark, isCss)),
     keymap.of([
@@ -724,16 +732,33 @@ export function create(options: EditorOptions): EditorApi {
   };
   scrollElement.addEventListener('scroll', handleScroll, { passive: true });
 
+  const clampEditorSelection = (
+    length: number,
+    selection?: { anchor: number; head?: number },
+  ): { anchor: number; head: number } | undefined => {
+    if (!selection) return undefined;
+    const anchor = Math.max(0, Math.min(length, selection.anchor));
+    const head = Math.max(0, Math.min(length, selection.head ?? selection.anchor));
+    return { anchor, head };
+  };
+  const buildProgrammaticAnnotations = (markUpdate: boolean, markSelection: boolean) => [
+    ...(markUpdate ? [ProgrammaticUpdate.of(true)] : []),
+    ...(markSelection ? [ProgrammaticSelection.of(true)] : []),
+  ];
+
   return {
     getValue() {
       return view.state.doc.toString();
     },
-    setValue(value: string, silent = false) {
+    setValue(value: string, silent = false, selection?: { anchor: number; head?: number }) {
       const change = computeMinimalChange(view.state.doc.toString(), value);
-      if (!change) return;
+      if (!change && !selection) return;
+      const clampedSel = clampEditorSelection(value.length, selection);
+      const annotations = buildProgrammaticAnnotations(silent && Boolean(change), Boolean(clampedSel));
       view.dispatch({
-        changes: change,
-        ...(silent ? { annotations: ProgrammaticUpdate.of(true) } : {}),
+        ...(change ? { changes: change } : {}),
+        ...(clampedSel ? { selection: clampedSel, scrollIntoView: true } : {}),
+        ...(annotations.length ? { annotations } : {}),
       });
     },
     getSelection() {
@@ -799,13 +824,21 @@ export function create(options: EditorOptions): EditorApi {
       });
     },
     setPlaceholder(nextPlaceholder: string, nextAriaLabel?: string) {
-      const label = resolveAriaLabel(nextAriaLabel, nextPlaceholder);
-      view.scrollDOM.setAttribute('aria-label', label);
+      currentAriaLabel = resolveAriaLabel(nextAriaLabel, nextPlaceholder);
+      view.scrollDOM.setAttribute('aria-label', currentAriaLabel);
       view.dispatch({
         effects: [
           placeholderCompartment.reconfigure(nextPlaceholder ? placeholder(nextPlaceholder) : []),
-          contentAttrsCompartment.reconfigure(EditorView.contentAttributes.of({ 'aria-label': label })),
+          contentAttrsCompartment.reconfigure(EditorView.contentAttributes.of(buildContentAttrs())),
         ],
+      });
+    },
+    setSlashAria(open: boolean, activeDescendantId: string | null) {
+      if (isCss) return;
+      if (slashAriaState.open === open && slashAriaState.activeId === activeDescendantId) return;
+      slashAriaState = { open, activeId: activeDescendantId };
+      view.dispatch({
+        effects: contentAttrsCompartment.reconfigure(EditorView.contentAttributes.of(buildContentAttrs())),
       });
     },
     setDiffTransition(transition: EditorDiffTransition | null) {

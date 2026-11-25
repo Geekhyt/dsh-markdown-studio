@@ -113,11 +113,7 @@ function isOddBackslashEscaped(text: string, index: number): boolean {
 function findMathClose(text: string, from: number, delimiter: string): number {
   let pos = from;
   while (pos < text.length) {
-    if (
-      text.charAt(pos) === '`' &&
-      !isOddBackslashEscaped(text, pos) &&
-      (pos === from || /[\s([\u2014\u2013-]/.test(text.charAt(pos - 1)))
-    ) {
+    if (text.charAt(pos) === '`' && !isOddBackslashEscaped(text, pos)) {
       let ticks = 1;
       while (text.charAt(pos + ticks) === '`') ticks++;
       const codeClose = findCodeSpanClose(text, pos + ticks, ticks);
@@ -144,21 +140,29 @@ function findMathClose(text: string, from: number, delimiter: string): number {
   return -1;
 }
 
-function skipTeXMath(text: string, index: number): number {
+function skipTeXMath(text: string, index: number, failedCache?: Set<string>): number {
   if (text.charAt(index) !== '\\') return index;
   const next = text.charAt(index + 1);
   if (next !== '(' && next !== '[') return index;
-  const close = findMathClose(text, index + 2, next === '(' ? '\\)' : '\\]');
-  return close === -1 ? index : close + 1;
+  const closeDelim = next === '(' ? '\\)' : '\\]';
+  if (failedCache?.has(closeDelim)) return index;
+  const close = findMathClose(text, index + 2, closeDelim);
+  if (close === -1) {
+    failedCache?.add(closeDelim);
+    return index;
+  }
+  return close + 1;
 }
 
 function isInlineCurrencyMath(text: string, openEnd: number, close: number): boolean {
-  if (/[0-9]/.test(text.charAt(close + 1))) return true;
+  const afterClose = text.charAt(close + 1);
+  if (/[0-9]/.test(afterClose)) return true;
   const source = text.slice(openEnd, close);
   if (!source.trim().length || /^\s/.test(source) || /\s$/.test(source)) return true;
+  if (/[A-Za-z_]/.test(afterClose) && /^[A-Z_][A-Z0-9_]*[/:\\]$/.test(source)) return true;
   if (/^[0-9]/.test(source) && !source.includes('\\')) {
     if (/[\u3000-\u303f\uff00-\uffef\u4e00-\u9fff]/.test(source)) return true;
-    if (/[(\-–—/]$/.test(source)) return true;
+    if (/[(\-–—/,:;]$/.test(source)) return true;
     if (/^\d[\d,.]*[)\s]/.test(source) && /[a-zA-Z]{2,}/.test(source) && !/[+=<>^_*/\\([{]/.test(source)) {
       return true;
     }
@@ -166,9 +170,9 @@ function isInlineCurrencyMath(text: string, openEnd: number, close: number): boo
   return false;
 }
 
-function skipCodeOrMath(text: string, index: number): number {
+function skipCodeOrMath(text: string, index: number, failedCache?: Set<string>): number {
   const ch = text[index];
-  if (ch === '\\') return skipTeXMath(text, index);
+  if (ch === '\\') return skipTeXMath(text, index, failedCache);
   if (ch !== '`' && ch !== '$') return index;
   let len = 1;
   while (text[index + len] === ch) len++;
@@ -176,8 +180,13 @@ function skipCodeOrMath(text: string, index: number): number {
     const close = findCodeSpanClose(text, index + len, len);
     return close === -1 ? index + len - 1 : close + len - 1;
   }
-  const close = findMathClose(text, index + len, '$'.repeat(len));
-  if (close === -1) return index;
+  const delim = '$'.repeat(len);
+  if (failedCache?.has(delim)) return index;
+  const close = findMathClose(text, index + len, delim);
+  if (close === -1) {
+    failedCache?.add(delim);
+    return index;
+  }
   if (len === 1 && isInlineCurrencyMath(text, index + 1, close)) return index;
   return close + len - 1;
 }
@@ -396,29 +405,22 @@ function splitUnescapedHref(dest: string): { rawHref: string; rawTitle: string }
   return { rawHref: dest, rawTitle: '' };
 }
 
-function parseDestination(raw: string): Destination {
+function parseDestination(raw: string): Destination | null {
   const dest = String(raw || '').trim();
-  let href = '';
-  let title = '';
+  if (!dest) return { href: '', title: '' };
   if (dest.charAt(0) === '<') {
     const close = findUnescapedAngleClose(dest, 1);
-    if (close !== -1) {
-      href = unescapeLinkDest(dest.slice(1, close));
-      const rest = dest.slice(close + 1).trim();
-      title = unescapeLinkDest(stripQuotes(rest));
-    }
-  } else if (dest) {
-    const split = splitUnescapedHref(dest);
-    href = unescapeLinkDest(split.rawHref);
-    title = unescapeLinkDest(stripQuotes(split.rawTitle));
+    if (close === -1) return null;
+    const href = unescapeLinkDest(dest.slice(1, close));
+    const rest = dest.slice(close + 1).trim();
+    const title = parseStrictDelimitedTitle(rest);
+    if (title === null) return null;
+    return { href, title };
   }
-  return { href: href, title: title };
-}
-
-function stripQuotes(value: string): string {
-  if (!value) return '';
-  const m = /^"([\s\S]*)"$|^'([\s\S]*)'$|^\(([\s\S]*)\)$/.exec(value);
-  return m ? (m[1] ?? m[2] ?? m[3] ?? '') : value;
+  const split = splitUnescapedHref(dest);
+  const title = parseStrictDelimitedTitle(split.rawTitle);
+  if (title === null) return null;
+  return { href: unescapeLinkDest(split.rawHref), title };
 }
 
 function findMatching(text: string, start: number, open: string, close: string): number {
@@ -461,11 +463,11 @@ function findMatching(text: string, start: number, open: string, close: string):
   return -1;
 }
 
-function buildBracketMatchMap(text: string): Map<number, number> {
+function buildBracketMatchMap(text: string, failedCache?: Set<string>): Map<number, number> {
   const matches = new Map<number, number>();
   const stack: number[] = [];
   for (let i = 0; i < text.length; i++) {
-    const jumped = skipCodeOrMath(text, i);
+    const jumped = skipCodeOrMath(text, i, failedCache);
     if (jumped > i) {
       i = jumped;
       continue;
@@ -483,12 +485,17 @@ function buildBracketMatchMap(text: string): Map<number, number> {
   return matches;
 }
 
-function findLinkBracketEnd(text: string, start: number, bracketMap?: Map<number, number>): number {
+function findLinkBracketEnd(
+  text: string,
+  start: number,
+  bracketMap?: Map<number, number>,
+  failedCache?: Set<string>,
+): number {
   if (text.charAt(start) !== '[') return -1;
   if (bracketMap) return bracketMap.get(start) ?? -1;
   let depth = 0;
   for (let i = start; i < text.length; i++) {
-    const jumped = skipCodeOrMath(text, i);
+    const jumped = skipCodeOrMath(text, i, failedCache);
     if (jumped > i) {
       i = jumped;
       continue;
@@ -507,12 +514,22 @@ function findLinkBracketEnd(text: string, start: number, bracketMap?: Map<number
   return -1;
 }
 
-function parseLinkAt(text: string, start: number, bracketMap?: Map<number, number>): LinkMatch | null {
-  const end = findLinkBracketEnd(text, start, bracketMap);
+function parseLinkAt(
+  text: string,
+  start: number,
+  bracketMap?: Map<number, number>,
+  failedCache?: Set<string>,
+): LinkMatch | null {
+  const end = findLinkBracketEnd(text, start, bracketMap, failedCache);
   if (end === -1 || text.charAt(end + 1) !== '(') return null;
+  if (failedCache?.has(')')) return null;
   const close = findMatching(text, end + 1, '(', ')');
-  if (close === -1) return null;
+  if (close === -1) {
+    if (text.indexOf(')', end + 2) === -1) failedCache?.add(')');
+    return null;
+  }
   const dest = parseDestination(text.slice(end + 2, close));
+  if (!dest) return null;
   return {
     label: text.slice(start + 1, end),
     href: dest.href,
@@ -684,8 +701,9 @@ function findClosingDelimiter(
   if (failedCache?.has(cacheKey)) return -1;
   const state: EmphasisScanState = { complementOpen: false, tripleDepth: 0, fallbackTriple: -1 };
   let sawAnyCloseCandidate = false;
+  let nestedSameOpen = 0;
   for (let i = from; i <= text.length - len; i++) {
-    const jumped = skipCodeOrMath(text, i);
+    const jumped = skipCodeOrMath(text, i, failedCache);
     if (jumped > i) {
       i = jumped;
       continue;
@@ -703,12 +721,21 @@ function findClosingDelimiter(
     if (cur !== ch) continue;
     let runLen = 1;
     while (text.charAt(i + runLen) === ch) runLen++;
-    if (runLen === len && canCloseAt(text, from, i, i, ch, len)) {
-      sawAnyCloseCandidate = true;
-      if (openedInsideTriple && state.complementOpen) return -1;
-      return i;
-    }
-    if (trackNested) {
+    if (runLen === len) {
+      if (canCloseAt(text, from, i, i, ch, len)) {
+        sawAnyCloseCandidate = true;
+        if (nestedSameOpen > 0) {
+          nestedSameOpen--;
+          i += runLen - 1;
+          continue;
+        }
+        if (openedInsideTriple && state.complementOpen) return -1;
+        return i;
+      }
+      if (len >= 2 && canOpenEmphasis(text, i, delimiter)) {
+        nestedSameOpen++;
+      }
+    } else if (trackNested) {
       if (runLen === 3 && i > from && !/\s/.test(text.charAt(i - 1))) sawAnyCloseCandidate = true;
       const matched = stepStarOrUnderRun(text, from, i, ch, len, runLen, state);
       if (matched !== -1) return matched;
@@ -806,26 +833,35 @@ function renderMathSpan(display: boolean, source: string): string {
   );
 }
 
-function inlineTeXMath(text: string, index: number): InlineToken | null {
+function inlineTeXMath(text: string, index: number, failedCache?: Set<string>): InlineToken | null {
   if (text.charAt(index) !== '\\') return null;
   const next = text.charAt(index + 1);
   if (next !== '(' && next !== '[') return null;
   const display = next === '[';
-  const close = findMathClose(text, index + 2, display ? '\\]' : '\\)');
-  if (close === -1) return null;
+  const closeDelim = display ? '\\]' : '\\)';
+  if (failedCache?.has(closeDelim)) return null;
+  const close = findMathClose(text, index + 2, closeDelim);
+  if (close === -1) {
+    failedCache?.add(closeDelim);
+    return null;
+  }
   const source = text.slice(index + 2, close).trim();
   if (!source) return null;
   return { html: renderMathSpan(display, source), next: close + 2 };
 }
 
-function inlineMath(text: string, index: number): InlineToken | null {
+function inlineMath(text: string, index: number, failedCache?: Set<string>): InlineToken | null {
   if (text.charAt(index) !== '$') return null;
   const display = text.charAt(index + 1) === '$';
   if (display && text.charAt(index + 2) === '$') return null;
   const delimiter = display ? '$$' : '$';
+  if (failedCache?.has(delimiter)) return null;
   const openEnd = index + delimiter.length;
   const close = findMathClose(text, openEnd, delimiter);
-  if (close === -1) return null;
+  if (close === -1) {
+    failedCache?.add(delimiter);
+    return null;
+  }
   const source = text.slice(openEnd, close);
   if (!source.trim().length) return null;
   if (!display && isInlineCurrencyMath(text, openEnd, close)) return null;
@@ -857,10 +893,11 @@ function inlineImage(
   index: number,
   ctx?: RenderContext,
   bracketMap?: Map<number, number>,
+  failedCache?: Set<string>,
 ): InlineToken | null {
   if (text.charAt(index) !== '!' || text.charAt(index + 1) !== '[') return null;
   const image =
-    parseLinkAt(text, index + 1, bracketMap) ||
+    parseLinkAt(text, index + 1, bracketMap, failedCache) ||
     (ctx ? parseRefLinkAt(text, index + 1, ctx.linkDefs, bracketMap) : null);
   if (!image) return null;
   const safeSrc = sanitizeImageUrl(image.href);
@@ -904,7 +941,8 @@ function inlineLink(
   const footnote = inlineFootnote(text, index, ctx);
   if (footnote) return footnote;
   if (ctx.inLink || failedBrackets?.has('[')) return null;
-  const link = parseLinkAt(text, index, bracketMap) || parseRefLinkAt(text, index, ctx.linkDefs, bracketMap);
+  const link =
+    parseLinkAt(text, index, bracketMap, failedBrackets) || parseRefLinkAt(text, index, ctx.linkDefs, bracketMap);
   if (!link) {
     if (!bracketMap && text.indexOf(']', index + 1) === -1) failedBrackets?.add('[');
     return null;
@@ -1018,9 +1056,9 @@ function inlineTokenAt(
 ): InlineToken | null {
   return (
     inlineEntity(text, index) ||
-    inlineMath(text, index) ||
+    inlineMath(text, index, failedCache) ||
     inlineCode(text, index) ||
-    inlineImage(text, index, ctx, bracketMap) ||
+    inlineImage(text, index, ctx, bracketMap, failedCache) ||
     inlineLink(text, index, ctx, failedCache, bracketMap) ||
     inlineAutoLink(text, index, ctx) ||
     inlineBareLink(text, index, ctx) ||
@@ -1033,7 +1071,7 @@ function renderInline(text: string, ctx: RenderContext): string {
   let buffer = '';
   let i = 0;
   const failedCache = new Set<string>();
-  const bracketMap = text.includes('[') ? buildBracketMatchMap(text) : undefined;
+  const bracketMap = text.includes('[') ? buildBracketMatchMap(text, failedCache) : undefined;
   function flush(): void {
     if (buffer) {
       out += escapeHtml(buffer);
@@ -1041,7 +1079,7 @@ function renderInline(text: string, ctx: RenderContext): string {
     }
   }
   while (i < text.length) {
-    const escaped = inlineTeXMath(text, i) || inlineEscape(text, i);
+    const escaped = inlineTeXMath(text, i, failedCache) || inlineEscape(text, i);
     if (escaped) {
       flush();
       out += escaped.html;
@@ -1198,8 +1236,7 @@ function isTableInterrupt(line: string): boolean {
     isScrollContainerStart(line) ||
     isEditorialContainerStart(line) ||
     isHr(line) ||
-    /^ {0,3}>/.test(line) ||
-    isListLine(line)
+    /^ {0,3}>/.test(line)
   );
 }
 
@@ -1325,14 +1362,11 @@ function stripLeadingColumns(line: string, count: number): string {
   return line.slice(i);
 }
 
-function listItemEndsInOpenParagraph(content: string[]): boolean {
-  let fence: FenceOpening | null = null;
-  let lastWasClosedFence = false;
-  for (let idx = 0; idx < content.length; idx++) {
-    const prevFence = fence;
-    fence = stepFenceState(fence, content[idx]);
-    lastWasClosedFence = Boolean(prevFence && !fence);
-  }
+function listItemEndsInOpenParagraph(
+  content: string[],
+  fence: FenceOpening | null,
+  lastWasClosedFence: boolean,
+): boolean {
   if (fence || lastWasClosedFence) return false;
   const last = content[content.length - 1] || '';
   if (!last.trim()) return false;
@@ -1340,6 +1374,18 @@ function listItemEndsInOpenParagraph(content: string[]): boolean {
   if (/^ {0,3}(?:\$\$|:::+|\\\])$/.test(last.trim())) return false;
   if (isHr(last)) return false;
   return true;
+}
+
+interface FenceTracker {
+  fence: FenceOpening | null;
+  lastClosed: boolean;
+}
+
+function pushTrackedLine(lines: string[], line: string, tracker: FenceTracker): void {
+  const prev = tracker.fence;
+  tracker.fence = stepFenceState(prev, line);
+  tracker.lastClosed = Boolean(prev && !tracker.fence);
+  lines.push(line);
 }
 
 function appendListContinuationLine(
@@ -1350,6 +1396,7 @@ function appendListContinuationLine(
   baseIndent: number,
   ordered: boolean,
   current: ListItem,
+  tracker: FenceTracker,
 ): boolean {
   const indent = leadingColumns(line);
   if (listMarkerMatches(line, match, baseIndent, !ordered)) return false;
@@ -1357,22 +1404,22 @@ function appendListContinuationLine(
   if (indent >= current.indent) {
     const stripCols =
       current.childStripIndent !== undefined ? Math.min(current.indent, current.childStripIndent) : current.indent;
-    current.lines.push(stripLeadingColumns(line, stripCols));
+    pushTrackedLine(current.lines, stripLeadingColumns(line, stripCols), tracker);
     return true;
   }
   if (indent > baseIndent && (Boolean(match) || !isBlockStart(line, lines, i))) {
     if (match && current.childStripIndent === undefined) current.childStripIndent = indent;
-    current.lines.push(stripLeadingColumns(line, indent));
+    pushTrackedLine(current.lines, stripLeadingColumns(line, indent), tracker);
     return true;
   }
   if (
     !match &&
     !isBlockStart(line, lines, i) &&
     !/^ {0,3}(?:=+|-+)[ \t]*$/.test(line) &&
-    listItemEndsInOpenParagraph(current.lines)
+    listItemEndsInOpenParagraph(current.lines, tracker.fence, tracker.lastClosed)
   ) {
     current.childStripIndent = undefined;
-    current.lines.push(line);
+    pushTrackedLine(current.lines, line, tracker);
     return true;
   }
   return false;
@@ -1387,21 +1434,25 @@ function parseList(lines: string[], start: number, ctx: RenderContext): BlockRes
   const startNumber = ordered ? parseInt(first[2], 10) : 1;
   const items: ListItem[] = [];
   let current: ListItem | null = null;
+  const tracker: FenceTracker = { fence: null, lastClosed: false };
   let loose = false;
   let i = start;
 
   while (i < lines.length) {
     const line = lines[i];
     const match = marker.exec(line);
-    if (listMarkerMatches(line, match, baseIndent, ordered)) {
+    if (!tracker.fence && listMarkerMatches(line, match, baseIndent, ordered)) {
       if (current) items.push(current);
       const itemMatch = match as RegExpExecArray;
       const task = ordered ? { text: itemMatch[3] || '', checked: null } : parseTaskLine(itemMatch[3] || '');
       current = {
-        lines: [task.text],
+        lines: [],
         checked: task.checked,
         indent: leadingColumns(itemMatch[1]) + itemMatch[2].length + 1,
       };
+      tracker.fence = null;
+      tracker.lastClosed = false;
+      pushTrackedLine(current.lines, task.text, tracker);
       i++;
       continue;
     }
@@ -1418,11 +1469,11 @@ function parseList(lines: string[], start: number, ctx: RenderContext): BlockRes
       const nextLine = lines[nextIndex];
       const nextMatch = marker.exec(nextLine);
       const nextIndent = leadingColumns(nextLine);
-      const sibling = listMarkerMatches(nextLine, nextMatch, baseIndent, ordered);
+      const sibling = !tracker.fence && listMarkerMatches(nextLine, nextMatch, baseIndent, ordered);
       const minChildIndent = current.childStripIndent ?? current.indent;
       if (sibling || nextIndent >= minChildIndent) {
-        current.lines.push('');
-        loose = true;
+        pushTrackedLine(current.lines, '', tracker);
+        if (!tracker.fence) loose = true;
         i = nextIndex;
         continue;
       }
@@ -1430,7 +1481,7 @@ function parseList(lines: string[], start: number, ctx: RenderContext): BlockRes
       break;
     }
 
-    if (appendListContinuationLine(line, lines, i, match, baseIndent, ordered, current)) {
+    if (appendListContinuationLine(line, lines, i, match, baseIndent, ordered, current, tracker)) {
       i++;
       continue;
     }
@@ -1470,14 +1521,7 @@ function parseFence(lines: string[], start: number): BlockResult {
 
 const ALERT_MARKER_RE = /^ {0,3}> ?\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\](?:\s|$)/i;
 
-function quoteEndsInOpenParagraph(content: string[]): boolean {
-  let fence: FenceOpening | null = null;
-  let lastWasClosedFence = false;
-  for (let idx = 0; idx < content.length; idx++) {
-    const prevFence = fence;
-    fence = stepFenceState(fence, content[idx]);
-    lastWasClosedFence = Boolean(prevFence && !fence);
-  }
+function quoteEndsInOpenParagraph(content: string[], fence: FenceOpening | null, lastWasClosedFence: boolean): boolean {
   if (fence || lastWasClosedFence) return false;
   const last = content[content.length - 1] || '';
   if (!last.trim()) return false;
@@ -1490,11 +1534,14 @@ function quoteEndsInOpenParagraph(content: string[]): boolean {
 function isQuoteLazyContinuation(
   isAlertBlock: boolean,
   content: string[],
+  tracker: FenceTracker,
   line: string,
   lines: string[],
   index: number,
 ): boolean {
-  if (isAlertBlock || !content.length || !quoteEndsInOpenParagraph(content)) return false;
+  if (isAlertBlock || !content.length || !quoteEndsInOpenParagraph(content, tracker.fence, tracker.lastClosed)) {
+    return false;
+  }
   if (/^ {0,3}(?:=+|-+)[ \t]*$/.test(line)) return false;
   return !isBlockStart(line, lines, index);
 }
@@ -1502,15 +1549,14 @@ function isQuoteLazyContinuation(
 function parseBlockquote(lines: string[], start: number, ctx: RenderContext): BlockResult {
   const content: string[] = [];
   const isAlertBlock = ALERT_MARKER_RE.test(lines[start] || '');
-  let fenceState: FenceOpening | null = null;
+  const tracker: FenceTracker = { fence: null, lastClosed: false };
   let i = start;
   while (i < lines.length) {
     const line = lines[i];
     if (/^ {0,3}>/.test(line)) {
-      if (!fenceState && i > start && ALERT_MARKER_RE.test(line)) break;
+      if (!tracker.fence && i > start && ALERT_MARKER_RE.test(line)) break;
       const stripped = line.replace(/^ {0,3}> ?/, '');
-      fenceState = stepFenceState(fenceState, stripped);
-      content.push(stripped);
+      pushTrackedLine(content, stripped, tracker);
       i++;
       continue;
     }
@@ -1523,16 +1569,15 @@ function parseBlockquote(lines: string[], start: number, ctx: RenderContext): Bl
         /^ {0,3}>/.test(lines[nextIndex]) &&
         !ALERT_MARKER_RE.test(lines[nextIndex])
       ) {
-        content.push('');
+        pushTrackedLine(content, '', tracker);
         i++;
         continue;
       }
       break;
     }
-    if (isQuoteLazyContinuation(isAlertBlock, content, line, lines, i)) {
+    if (isQuoteLazyContinuation(isAlertBlock, content, tracker, line, lines, i)) {
       const trimmed = line.replace(/^[ \t]+|[ \t]+$/g, '');
-      fenceState = stepFenceState(fenceState, trimmed);
-      content.push(trimmed);
+      pushTrackedLine(content, trimmed, tracker);
       i++;
       continue;
     }
@@ -1756,6 +1801,8 @@ function renderDisplayMathHtml(tex: string): string {
   );
 }
 
+const unclosedBlockMathCache = new WeakMap<string[], Set<string>>();
+
 function parseDelimitedMathBlock(
   lines: string[],
   start: number,
@@ -1773,6 +1820,8 @@ function parseDelimitedMathBlock(
   }
   const open = openRe.exec(lines[start]);
   if (!open || open[1].indexOf(closeToken) !== -1) return null;
+  let failed = unclosedBlockMathCache.get(lines);
+  if (failed?.has(closeToken)) return null;
   const body: string[] = open[1] ? [open[1]] : [];
   for (let i = start + 1; i < lines.length; i++) {
     const close = closeRe.exec(lines[i]);
@@ -1783,6 +1832,11 @@ function parseDelimitedMathBlock(
     }
     body.push(lines[i]);
   }
+  if (!failed) {
+    failed = new Set<string>();
+    unclosedBlockMathCache.set(lines, failed);
+  }
+  failed.add(closeToken);
   return null;
 }
 
@@ -2036,12 +2090,12 @@ function parseLinkRefDestination(raw: string): Destination | null {
 function stepMathBlockState(active: '$$' | '\\[' | null, line: string): '$$' | '\\[' | null {
   const trimmed = line.trim();
   if (!active) {
-    if (trimmed === '$$') return '$$';
-    if (trimmed === '\\[') return '\\[';
+    if (/^\$\$(?!.*\$\$[ \t]*$)/.test(trimmed)) return '$$';
+    if (/^\\\[(?!.*\\\][ \t]*$)/.test(trimmed)) return '\\[';
     return null;
   }
-  if (active === '$$' && trimmed === '$$') return null;
-  if (active === '\\[' && trimmed === '\\]') return null;
+  if (active === '$$' && /\$\$[ \t]*$/.test(trimmed)) return null;
+  if (active === '\\[' && /\\\][ \t]*$/.test(trimmed)) return null;
   return active;
 }
 
@@ -2129,6 +2183,7 @@ function buildFrontmatterMetaHtml(meta: Record<string, string>, rawBody: string,
   if (!category && !showReadingTime) return '';
   const plain = rawBody
     .replace(/```[\s\S]*?```/g, '')
+    .replace(/data:image\/[^\s)"']+/gi, '')
     .replace(/[#>*_`~[\]()!|-]/g, '')
     .replace(/\s+/g, '');
   const minutes = Math.max(1, Math.round(plain.length / 350));

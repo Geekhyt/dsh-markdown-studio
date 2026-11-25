@@ -107,9 +107,10 @@ const FOCUSABLE_SELECTOR =
 
 export function getFocusableElements(container: HTMLElement): HTMLElement[] {
   return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter((element) => {
-    if (element.getAttribute('aria-hidden') === 'true') return false;
+    if (element.getAttribute('aria-hidden') === 'true' || element.hasAttribute('hidden')) return false;
     let cur: HTMLElement | null = element;
     while (cur && cur !== container) {
+      if (cur.hasAttribute('hidden') || cur.hasAttribute('inert')) return false;
       const style = window.getComputedStyle(cur);
       if (style.display === 'none' || style.visibility === 'hidden') return false;
       cur = cur.parentElement;
@@ -118,24 +119,56 @@ export function getFocusableElements(container: HTMLElement): HTMLElement[] {
   });
 }
 
-export function trapModalTab(event: ReactNamespace.KeyboardEvent<HTMLElement>): void {
+export function trapContainerTab(
+  container: HTMLElement,
+  event: { key: string; shiftKey: boolean; preventDefault(): void; stopPropagation?: () => void },
+): void {
   if (event.key !== 'Tab') return;
-  const focusable = getFocusableElements(event.currentTarget);
+  const focusable = getFocusableElements(container);
   if (!focusable.length) {
     event.preventDefault();
-    event.currentTarget.focus();
+    event.stopPropagation?.();
+    container.focus();
     return;
   }
   const first = focusable[0];
   const last = focusable[focusable.length - 1];
-  const onContainer = document.activeElement === event.currentTarget;
-  if (event.shiftKey && (document.activeElement === first || onContainer)) {
+  const active = document.activeElement;
+  const inside = Boolean(active && container.contains(active));
+  const onContainer = active === container;
+  if (!inside || onContainer) {
     event.preventDefault();
+    event.stopPropagation?.();
+    (event.shiftKey ? last : first).focus();
+  } else if (event.shiftKey && active === first) {
+    event.preventDefault();
+    event.stopPropagation?.();
     last.focus();
-  } else if (!event.shiftKey && (document.activeElement === last || onContainer)) {
+  } else if (!event.shiftKey && active === last) {
     event.preventDefault();
+    event.stopPropagation?.();
     first.focus();
   }
+}
+
+export function trapModalTab(event: ReactNamespace.KeyboardEvent<HTMLElement>): void {
+  trapContainerTab(event.currentTarget, event);
+}
+
+function isPluginModalSurface(el: HTMLElement): boolean {
+  return Boolean(
+    el.closest('.mdstudio-modal') ||
+      el.querySelector('.mdstudio-modal-content, .mdstudio-skill-layout, .mdstudio-library-grid'),
+  );
+}
+
+function findTopPluginModal(): HTMLElement | null {
+  if (typeof document === 'undefined') return null;
+  const dialogs = Array.from(document.querySelectorAll<HTMLElement>('[aria-modal="true"], [role="dialog"]')).filter(
+    isElementVisible,
+  );
+  const top = dialogs[dialogs.length - 1];
+  return top && isPluginModalSurface(top) ? top : null;
 }
 
 export type BridgedToastProps = Omit<DshToastProps, 'tone'> & { tone?: 'success' | 'error' | 'info' };
@@ -487,10 +520,12 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
 
   function FallbackModal(props: DshModalProps): ReactNode {
     const [descId] = React.useState(() => 'mdstudio-modal-desc-' + Math.random().toString(36).slice(2, 8));
+    const dialogElRef = React.useRef<HTMLDivElement | null>(null);
     const focusedOnOpenRef = React.useRef(false);
     const previousFocusRef = React.useRef<HTMLElement | null>(null);
     const focusTimerRef = React.useRef<number | null>(null);
     const attachDialogRef = React.useCallback(function (el: HTMLDivElement | null): void {
+      dialogElRef.current = el;
       if (!el) {
         focusedOnOpenRef.current = false;
         if (focusTimerRef.current !== null) {
@@ -528,6 +563,12 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
           event.preventDefault();
           event.stopPropagation();
           props.onClose();
+          return;
+        }
+        if (event.key === 'Tab') {
+          const dialog = dialogElRef.current;
+          if (!dialog || findTopPluginModal() !== dialog) return;
+          if (!dialog.contains(document.activeElement)) trapContainerTab(dialog, event);
         }
       },
       props.open,
@@ -836,6 +877,7 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
         delayMs: props.delayMs ?? 0,
         disabled: props.disabled,
         maxWidth: props.maxWidth,
+        portal: props.portal ?? true,
         label: props.label,
         children: stripNativeTitle(props.children),
       });
@@ -874,6 +916,17 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
 
   function adaptModal(Native: ComponentType<DshModalProps>): ComponentType<DshModalProps> {
     return function DshModalWrap(props: DshModalProps) {
+      useDocumentEvent(
+        React,
+        'keydown',
+        function (event: KeyboardEvent) {
+          if (event.isComposing || event.keyCode === 229 || event.defaultPrevented || event.key !== 'Tab') return;
+          const top = findTopPluginModal();
+          if (top) trapContainerTab(top, event);
+        },
+        props.open,
+        true,
+      );
       return h(Native, {
         ...props,
         className: joinClass('mdstudio-modal', props.className),

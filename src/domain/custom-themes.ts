@@ -194,41 +194,108 @@ function parseRgbOrHslHex(value: string): string {
   return '';
 }
 
+const COMMON_NAMED_HEX: Record<string, string> = {
+  black: '#000000',
+  white: '#ffffff',
+  navy: '#000080',
+  midnightblue: '#191970',
+  darkslategray: '#2f4f4f',
+  darkslategrey: '#2f4f4f',
+  dimgray: '#696969',
+  dimgrey: '#696969',
+  gray: '#808080',
+  grey: '#808080',
+  darkgray: '#a9a9a9',
+  lightgray: '#d3d3d3',
+  silver: '#c0c0c0',
+  whitesmoke: '#f5f5f5',
+  ivory: '#fffff0',
+  linen: '#faf0e6',
+  beige: '#f5f5dc',
+  snow: '#fffafa',
+  red: '#ff0000',
+  blue: '#0000ff',
+  green: '#008000',
+  crimson: '#dc143c',
+  coral: '#ff7f50',
+  teal: '#008080',
+  indigo: '#4b0082',
+  purple: '#800080',
+  orange: '#ffa500',
+  gold: '#ffd700',
+  royalblue: '#4169e1',
+  steelblue: '#4682b4',
+  forestgreen: '#228b22',
+  maroon: '#800000',
+};
+
 function extractSolidHex(value: string): string {
   const raw = String(value || '');
-  // Remove parenthesized functions (e.g. `linear-gradient(...)`, `url(...)`) so gradient stops aren't mistaken for solid bg.
   const outsideParens = raw.replace(/\([^()]*\)/g, ' ').replace(/\([^()]*\)/g, ' ');
+  const hex8 = /(?:^|\s)#([0-9a-f]{6})([0-9a-f]{2})(?=$|[\s;!])/i.exec(outsideParens);
+  if (hex8 && parseInt(hex8[2], 16) > 25) return normalizeHexColor('#' + hex8[1]);
   const match = /(?:^|\s)(#[0-9a-f]{3}(?:[0-9a-f]{3})?)(?=$|[\s;!])/i.exec(outsideParens);
   if (match) return normalizeHexColor(match[1]);
-  return parseRgbOrHslHex(raw);
+  const rgbOrHsl = parseRgbOrHslHex(raw);
+  if (rgbOrHsl) return rgbOrHsl;
+  const word = /(?:^|\s)([a-z]+)(?=$|[\s;!])/i.exec(outsideParens);
+  return word ? COMMON_NAMED_HEX[word[1].toLowerCase()] || '' : '';
 }
 
-export function extractCustomThemePreview(css: string, fallbackAccent = '#3d57e6'): CustomThemePreview {
-  const rules = parseCssRules(css);
+function resolveSimpleCssVar(value: string, vars: Record<string, string>, depth = 0): string {
+  if (depth > 6 || !value.includes('var(')) return value;
+  return value.replace(/var\(\s*(--[^\s,)]+)(?:\s*,\s*([^)]+))?\s*\)/gi, (_, name: string, fallback?: string) => {
+    const raw = Object.hasOwn(vars, name) ? vars[name] : '';
+    if (raw) return resolveSimpleCssVar(raw, vars, depth + 1);
+    return fallback ? resolveSimpleCssVar(fallback.trim(), vars, depth + 1) : '';
+  });
+}
+
+const PREVIEW_VAR_NAMES = new Set(['--mdstudio-bg', '--mdstudio-accent', '--mdstudio-heading', '--mdstudio-text']);
+
+function collectThemeColorTokens(
+  rules: ReturnType<typeof parseCssRules>,
+  rawVarDefs: Record<string, string>,
+): {
+  rootVars: Record<string, string>;
+  anyVars: Record<string, string>;
+  rootBg: string;
+  rootColor: string;
+  anchorColor: string;
+} {
   const rootVars: Record<string, string> = {};
   const anyVars: Record<string, string> = {};
   let rootBg = '';
   let rootColor = '';
+  let anchorColor = '';
   for (const rule of rules) {
     const isRoot = rule.selectors.some(isRootThemeSelector);
+    const isAnchor = !isRoot && rule.selectors.some((sel) => /(?:^|[\s>+~])a(?:$|[\s.:#[>+~])/i.test(sel.trim()));
     for (const decl of rule.declarations) {
-      const hex = extractSolidHex(decl.value);
+      const hex = extractSolidHex(resolveSimpleCssVar(decl.value, rawVarDefs));
       if (!hex) continue;
-      if (
-        decl.prop === '--mdstudio-bg' ||
-        decl.prop === '--mdstudio-accent' ||
-        decl.prop === '--mdstudio-heading' ||
-        decl.prop === '--mdstudio-text'
-      ) {
-        if (isRoot) rootVars[decl.prop] = hex;
-        else anyVars[decl.prop] = hex;
+      if (PREVIEW_VAR_NAMES.has(decl.prop)) {
+        (isRoot ? rootVars : anyVars)[decl.prop] = hex;
       } else if (isRoot && (decl.prop === 'background-color' || decl.prop === 'background')) rootBg = hex;
       else if (isRoot && decl.prop === 'color') rootColor = hex;
+      else if (isAnchor && decl.prop === 'color' && !anchorColor) anchorColor = hex;
     }
   }
+  return { rootVars, anyVars, rootBg, rootColor, anchorColor };
+}
+
+export function extractCustomThemePreview(css: string, fallbackAccent = '#3d57e6'): CustomThemePreview {
+  const rules = parseCssRules(css);
+  const rawVarDefs: Record<string, string> = {};
+  for (const rule of rules) {
+    for (const decl of rule.declarations) {
+      if (decl.prop.startsWith('--')) rawVarDefs[decl.prop] = decl.value;
+    }
+  }
+  const { rootVars, anyVars, rootBg, rootColor, anchorColor } = collectThemeColorTokens(rules, rawVarDefs);
   const pickVar = (name: string): string => rootVars[name] || anyVars[name] || '';
   const bg = pickVar('--mdstudio-bg') || rootBg || '#ffffff';
-  const accent = pickVar('--mdstudio-accent') || normalizeHexColor(fallbackAccent) || '#3d57e6';
+  const accent = pickVar('--mdstudio-accent') || anchorColor || normalizeHexColor(fallbackAccent) || '#3d57e6';
   const dark = isDark(bg);
   const fg = pickVar('--mdstudio-heading') || pickVar('--mdstudio-text') || rootColor || (dark ? '#f3f4f6' : '#1f2328');
   return {

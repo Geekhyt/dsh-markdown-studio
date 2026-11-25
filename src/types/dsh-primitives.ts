@@ -69,6 +69,7 @@ export interface DshTooltipProps {
   delayMs?: number;
   disabled?: boolean;
   maxWidth?: number;
+  portal?: boolean;
   children: ReactElement;
 }
 
@@ -93,6 +94,7 @@ export interface DshModalProps {
   footer?: ReactNode;
   className?: string;
   contentClassName?: string;
+  onKeyDownCapture?: (event: import('react').KeyboardEvent<HTMLElement>) => void;
 }
 
 export interface DshMenuShortcut {

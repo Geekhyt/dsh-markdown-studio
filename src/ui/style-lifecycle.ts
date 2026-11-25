@@ -1,3 +1,9 @@
+import {
+  isPluginLifecycleMounted,
+  onPluginLifecycleUnmount,
+  setPluginLifecycleMounted,
+} from '../runtime/react-lifecycle';
+
 const PLUGIN_ID = 'dsh-markdown-studio';
 const REGISTRY_KEY = `__dshPluginCss__:${PLUGIN_ID}`;
 
@@ -16,12 +22,13 @@ export function getPluginStyleRegistry(): PluginStyleRegistry {
 }
 
 export function isPluginStylesMounted(): boolean {
-  return getPluginStyleRegistry().mounted;
+  return getPluginStyleRegistry().mounted || isPluginLifecycleMounted();
 }
 
 export function mountPluginStyles(): void {
   const reg = getPluginStyleRegistry();
   reg.mounted = true;
+  setPluginLifecycleMounted(true);
   if (typeof document === 'undefined' || !document.head) return;
   reg.sheets.forEach((css, tagId) => {
     const selector = `style[data-plugin-css=${JSON.stringify(tagId)}]`;
@@ -34,9 +41,14 @@ export function mountPluginStyles(): void {
   });
 }
 
+export function onPluginStylesUnmount(callback: () => void): () => void {
+  return onPluginLifecycleUnmount(callback);
+}
+
 export function unmountPluginStyles(): void {
   const reg = getPluginStyleRegistry();
   reg.mounted = false;
+  setPluginLifecycleMounted(false);
   if (typeof document === 'undefined') return;
   document.documentElement?.classList?.remove('data_color_scheme_dark');
   const styleNodes = document.querySelectorAll(`style[data-plugin=${JSON.stringify(PLUGIN_ID)}]`);

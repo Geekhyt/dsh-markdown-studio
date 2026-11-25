@@ -25,9 +25,40 @@ export interface LocalServerHandle {
   stop(): Promise<void>;
 }
 
-function cors(headers: Record<string, string> = {}): Record<string, string> {
+const LOCAL_CORS_LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
+const LOCAL_CORS_ELECTRON = new Set(['dsh-app:', 'dsh:', 'app:']);
+
+function allowedLocalCorsOrigin(originHeader: string): string {
+  const norm = originHeader.trim();
+  if (!norm) return '';
+  let parsed: URL;
+  try {
+    parsed = new URL(norm);
+  } catch {
+    return '';
+  }
+  if (parsed.username || parsed.password) return '';
+  if (LOCAL_CORS_ELECTRON.has(parsed.protocol)) {
+    if (parsed.search || parsed.hash || (parsed.pathname && parsed.pathname !== '/')) return '';
+    return parsed.hostname ? `${parsed.protocol}//${parsed.host}` : '';
+  }
+  if (
+    (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+    parsed.origin.toLowerCase() === norm.toLowerCase()
+  ) {
+    const host = parsed.hostname.toLowerCase();
+    if (LOCAL_CORS_LOOPBACK.has(host) || (parsed.protocol === 'https:' && host === 'mp.weixin.qq.com')) {
+      return parsed.origin;
+    }
+  }
+  return '';
+}
+
+function cors(originHeader: string, headers: Record<string, string> = {}): Record<string, string> {
+  const allowedOrigin = allowedLocalCorsOrigin(originHeader);
   return {
-    'access-control-allow-origin': '*',
+    vary: 'Origin',
+    ...(allowedOrigin ? { 'access-control-allow-origin': allowedOrigin } : {}),
     'access-control-allow-methods': 'GET, HEAD, OPTIONS',
     'access-control-allow-headers': 'content-type',
     'access-control-max-age': '86400',
@@ -35,9 +66,106 @@ function cors(headers: Record<string, string> = {}): Record<string, string> {
   };
 }
 
-function sendText(res: ServerResponse, status: number, text: string, headOnly = false): void {
-  res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+function canWriteResponse(res: ServerResponse): boolean {
+  return !res.headersSent && !res.destroyed && !res.closed && !res.writableEnded;
+}
+
+function sendText(
+  res: ServerResponse,
+  status: number,
+  text: string,
+  headOnly = false,
+  extraHeaders: Record<string, string> = {},
+): void {
+  if (!canWriteResponse(res)) return;
+  res.writeHead(status, {
+    'content-type': 'text/plain; charset=utf-8',
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
+    ...extraHeaders,
+  });
   res.end(headOnly ? undefined : text);
+}
+
+function parsePathname(rawUrl: string | undefined): string | null {
+  try {
+    return new URL(rawUrl || '/', 'http://127.0.0.1').pathname;
+  } catch {
+    return null;
+  }
+}
+
+async function handleUploadRequest(
+  service: LocalAssetReader,
+  res: ServerResponse,
+  pathname: string,
+  origin: string,
+  headOnly: boolean,
+): Promise<void> {
+  const asset = await service.readAsset(pathname.slice('/uploads/'.length));
+  if (!asset) {
+    sendText(res, 404, 'not found', headOnly);
+    return;
+  }
+  if (!canWriteResponse(res)) return;
+  res.writeHead(
+    200,
+    cors(origin, {
+      'content-type': asset.mime,
+      'content-length': String(asset.buffer.length),
+      'cache-control': 'public, max-age=31536000, immutable',
+      'x-content-type-options': 'nosniff',
+    }),
+  );
+  res.end(headOnly ? undefined : asset.buffer);
+}
+
+async function handleLocalRequest(
+  service: LocalAssetReader,
+  req: IncomingMessage,
+  res: ServerResponse,
+  headOnly: boolean,
+): Promise<void> {
+  if (!isLoopbackReq(req) || !isLoopbackHostHeader(headerValue(req.headers.host))) {
+    sendText(res, 403, 'loopback only', headOnly);
+    return;
+  }
+  const pathname = parsePathname(req.url);
+  if (!pathname) {
+    sendText(res, 400, 'bad request', headOnly);
+    return;
+  }
+  const origin = headerValue(req.headers.origin);
+  if (req.method === 'OPTIONS') {
+    if (canWriteResponse(res)) {
+      const headers =
+        pathname.indexOf('/uploads/') === 0
+          ? cors(origin, { 'x-content-type-options': 'nosniff' })
+          : { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
+      res.writeHead(204, headers);
+      res.end();
+    }
+    return;
+  }
+  if (req.method !== 'GET' && !headOnly) {
+    sendText(res, 405, 'method not allowed', false, { allow: 'GET, HEAD, OPTIONS' });
+    return;
+  }
+  if (pathname === '/health') {
+    if (!canWriteResponse(res)) return;
+    res.writeHead(200, {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    });
+    res.end(headOnly ? undefined : JSON.stringify({ ok: true, service: 'markdown-studio-images' }));
+    return;
+  }
+  if (pathname.indexOf('/uploads/') !== 0) {
+    sendText(res, 404, 'not found', headOnly);
+    return;
+  }
+  await handleUploadRequest(service, res, pathname, origin, headOnly);
 }
 
 export function createLocalImageServer(options: { service: LocalAssetReader }): http.Server {
@@ -45,57 +173,10 @@ export function createLocalImageServer(options: { service: LocalAssetReader }): 
   return http.createServer(async function (req: IncomingMessage, res: ServerResponse) {
     const headOnly = req.method === 'HEAD';
     try {
-      const host = headerValue(req.headers.host);
-      if (!isLoopbackReq(req) || !isLoopbackHostHeader(host)) {
-        sendText(res, 403, 'loopback only', headOnly);
-        return;
-      }
-      let pathname: string;
-      try {
-        pathname = new URL(req.url || '/', 'http://127.0.0.1').pathname;
-      } catch {
-        sendText(res, 400, 'bad request', headOnly);
-        return;
-      }
-      if (req.method === 'OPTIONS') {
-        res.writeHead(204, pathname.indexOf('/uploads/') === 0 ? cors() : { 'cache-control': 'no-store' });
-        res.end();
-        return;
-      }
-      if (req.method !== 'GET' && req.method !== 'HEAD') {
-        sendText(res, 405, 'method not allowed');
-        return;
-      }
-      if (pathname === '/health') {
-        const body = JSON.stringify({ ok: true, service: 'markdown-studio-images' });
-        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
-        res.end(headOnly ? undefined : body);
-        return;
-      }
-      if (pathname.indexOf('/uploads/') !== 0) {
-        sendText(res, 404, 'not found', headOnly);
-        return;
-      }
-      const filename = pathname.slice('/uploads/'.length);
-      const asset = await service.readAsset(filename);
-      if (!asset) {
-        sendText(res, 404, 'not found', headOnly);
-        return;
-      }
-      res.writeHead(
-        200,
-        cors({
-          'content-type': asset.mime,
-          'content-length': String(asset.buffer.length),
-          'cache-control': 'public, max-age=31536000, immutable',
-          'x-content-type-options': 'nosniff',
-        }),
-      );
-      if (headOnly) res.end();
-      else res.end(asset.buffer);
+      await handleLocalRequest(service, req, res, headOnly);
     } catch {
       if (!res.headersSent) sendText(res, 500, 'internal error', headOnly);
-      else res.end();
+      else if (!res.destroyed && !res.closed && !res.writableEnded) res.end();
     }
   });
 }
@@ -155,20 +236,40 @@ export function startLocalImageServer(options: {
     }
     const port = ports[index++];
     return new Promise(function (resolve) {
-      function onError(error: NodeJS.ErrnoException): void {
+      let settled = false;
+      function settle(value: { server: http.Server; info: LocalServerInfo } | null): void {
+        if (settled) return;
+        settled = true;
+        server.removeListener('error', onError);
         server.removeListener('listening', onListening);
+        server.removeListener('close', onClose);
+        signal?.removeEventListener('abort', onAttemptAbort);
+        resolve(value);
+      }
+      function onClose(): void {
+        settle(null);
+      }
+      function onAttemptAbort(): void {
+        closeServerImmediately();
+        settle(null);
+      }
+      function onError(error: NodeJS.ErrnoException): void {
+        if (settled) return;
+        server.removeListener('listening', onListening);
+        server.removeListener('close', onClose);
+        signal?.removeEventListener('abort', onAttemptAbort);
         if (isRetryableBindError(error, signal)) {
+          settled = true;
           void attempt().then(resolve);
           return;
         }
         recordBindFailure(service, error, signal);
-        resolve(null);
+        settle(null);
       }
       function onListening(): void {
-        server.removeListener('error', onError);
         if (signal?.aborted) {
           closeServerImmediately();
-          resolve(null);
+          settle(null);
           return;
         }
         server.on('error', function (runtimeError: Error) {
@@ -180,10 +281,12 @@ export function startLocalImageServer(options: {
         ownedInfo = info;
         service.localServerInfo = info;
         service.localServerError = '';
-        resolve({ server, info });
+        settle({ server, info });
       }
       server.once('error', onError);
       server.once('listening', onListening);
+      server.once('close', onClose);
+      signal?.addEventListener('abort', onAttemptAbort, { once: true });
       server.listen(port, '127.0.0.1');
     });
   }

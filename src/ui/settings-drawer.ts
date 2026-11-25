@@ -3,10 +3,10 @@ import type { ReactNode } from 'react';
 import { CODE_THEMES } from '../code-themes';
 import { MAX_CUSTOM_THEMES } from '../domain/custom-themes';
 import { resolveSafeFocusTarget } from '../runtime/dom-surfaces';
-import { useDebouncedKeyTask, useMountDisposable } from '../runtime/react-lifecycle';
+import { useDebouncedKeyTask, useDocumentEvent, useMountDisposable } from '../runtime/react-lifecycle';
 import type { CustomTheme, ThemeSettings } from '../themes';
 import * as themes from '../themes';
-import { trapModalTab } from './dsh-primitives';
+import { trapContainerTab } from './dsh-primitives';
 import type { IconName } from './icons';
 import { buildSlashHelpRows } from './shortcut-model';
 import { ACCENT_PRESETS, renderCustomThemeSwatch, renderThemeSwatch } from './theme-swatches';
@@ -388,6 +388,23 @@ function SettingsDrawerContent(props: SettingsDrawerProps): ReactNode {
     { id: 'help', label: t('drawer.tabHelp'), icon: 'help' },
   ];
 
+  useDocumentEvent(
+    props.React,
+    'keydown',
+    function (event: KeyboardEvent) {
+      if (event.isComposing || event.keyCode === 229 || event.defaultPrevented || event.key !== 'Tab') return;
+      const drawer = drawerRef.current;
+      if (!drawer) return;
+      const containerW =
+        drawer.closest<HTMLElement>('.mdstudio-root')?.clientWidth ||
+        (typeof window !== 'undefined' ? window.innerWidth : 1024);
+      if (!(props.fullscreen || containerW <= 720)) return;
+      if (Array.from(document.querySelectorAll('[aria-modal="true"]')).some((el) => el !== drawer)) return;
+      trapContainerTab(drawer, event);
+    },
+    true,
+  );
+
   return h(
     'aside',
     {
@@ -397,12 +414,6 @@ function SettingsDrawerContent(props: SettingsDrawerProps): ReactNode {
       'aria-modal': props.fullscreen ? 'true' : undefined,
       'aria-label': t('drawer.title'),
       'data-mdstudio-tab': tab,
-      onKeyDown: function (event: ReactNamespace.KeyboardEvent<HTMLElement>) {
-        const containerW =
-          drawerRef.current?.closest<HTMLElement>('.mdstudio-root')?.clientWidth ||
-          (typeof window !== 'undefined' ? window.innerWidth : 1024);
-        if (props.fullscreen || containerW <= 720) trapModalTab(event);
-      },
     },
     h(
       'div',
@@ -566,6 +577,7 @@ function SettingsDrawerContent(props: SettingsDrawerProps): ReactNode {
           ),
           h('input', {
             type: 'file',
+            hidden: true,
             ref: themeFileRef,
             className: 'mdstudio-hidden-input',
             tabIndex: -1,

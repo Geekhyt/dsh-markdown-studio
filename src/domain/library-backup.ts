@@ -1,6 +1,6 @@
 import type { Article, LibraryState } from './article';
 import { parseView } from './article';
-import { type CustomTheme, mergeCustomThemes } from './custom-themes';
+import { type CustomTheme, MAX_CUSTOM_THEMES } from './custom-themes';
 import { BACKUP_SCHEMA_VERSION, supportedSchemaVersion } from './schema';
 import { sanitizeSettings } from './settings';
 import { sanitizeWritingSkillState, type WritingSkillState } from './writing-skills';
@@ -85,17 +85,22 @@ function collectUnionCustomThemes(
   incoming: LibraryState,
   prefer: MergeDecision = 'incoming',
 ): CustomTheme[] {
-  const ordered =
-    prefer === 'current'
-      ? [...incoming.docs, ...(incoming.trash || []), ...current.docs, ...(current.trash || [])]
-      : [...current.docs, ...(current.trash || []), ...incoming.docs, ...(incoming.trash || [])];
-  let merged: CustomTheme[] = [];
-  for (const entry of ordered) {
-    if (entry.settings.customThemes?.length) {
-      merged = mergeCustomThemes(merged, entry.settings.customThemes);
+  const primary =
+    prefer === 'current' ? [...current.docs, ...(current.trash || [])] : [...incoming.docs, ...(incoming.trash || [])];
+  const secondary =
+    prefer === 'current' ? [...incoming.docs, ...(incoming.trash || [])] : [...current.docs, ...(current.trash || [])];
+  const map = new Map<string, CustomTheme>();
+  for (const entry of primary) {
+    for (const theme of entry.settings.customThemes || []) {
+      map.set(theme.id, theme);
     }
   }
-  return merged;
+  for (const entry of secondary) {
+    for (const theme of entry.settings.customThemes || []) {
+      if (!map.has(theme.id)) map.set(theme.id, theme);
+    }
+  }
+  return Array.from(map.values()).slice(0, MAX_CUSTOM_THEMES);
 }
 
 function attachSharedCustomThemes(docs: Article[], customThemes: CustomTheme[]): Article[] {
@@ -271,10 +276,30 @@ export function mergeWritingSkillStates(
   incoming: WritingSkillState,
   prefer: MergeDecision = 'incoming',
 ): WritingSkillState {
-  const map = new Map(current.customSkills.map((item) => [item.id, item] as const));
-  for (const item of incoming.customSkills) {
-    if (!map.has(item.id) || prefer === 'incoming') map.set(item.id, item);
+  const incomingById = new Map(incoming.customSkills.map((item) => [item.id, item] as const));
+  let ordered: WritingSkillState['customSkills'];
+  if (prefer === 'incoming') {
+    const updatedCurrent: WritingSkillState['customSkills'] = [];
+    const unchangedCurrent: WritingSkillState['customSkills'] = [];
+    const seen = new Set<string>();
+    for (const item of current.customSkills) {
+      const replacement = incomingById.get(item.id);
+      if (replacement) {
+        updatedCurrent.push(replacement);
+        seen.add(item.id);
+      } else {
+        unchangedCurrent.push(item);
+      }
+    }
+    const addedIncoming = incoming.customSkills.filter((item) => !seen.has(item.id));
+    ordered = [...updatedCurrent, ...addedIncoming, ...unchangedCurrent];
+  } else {
+    const map = new Map(current.customSkills.map((item) => [item.id, item] as const));
+    for (const item of incoming.customSkills) {
+      if (!map.has(item.id)) map.set(item.id, item);
+    }
+    ordered = Array.from(map.values());
   }
   const activeSkillId = prefer === 'incoming' ? incoming.activeSkillId : current.activeSkillId;
-  return sanitizeWritingSkillState({ activeSkillId, customSkills: Array.from(map.values()) });
+  return sanitizeWritingSkillState({ activeSkillId, customSkills: ordered });
 }

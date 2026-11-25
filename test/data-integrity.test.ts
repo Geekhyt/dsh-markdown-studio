@@ -88,15 +88,24 @@ const other = article('other', `![shared](assets/${filename})`);
 let snapshot = { activeId: 'active', docs: [article('active', ''), other], trash: [] as ReturnType<typeof article>[] };
 const deleted: string[] = [];
 const mermaidActive = new Set<string>([mermaidFile]);
+const oldStoredAt = new Date(Date.now() - 120_000).toISOString();
 const assetGc = createAssetGarbageCollector({
   hostClient: {
     listAssets: async () =>
       [
-        { filename, assetPath: `assets/${filename}`, url: '', bytes: 120, mime: 'image/png' },
-        { filename: mermaidFile, assetPath: `assets/${mermaidFile}`, url: '', bytes: 120, mime: 'image/png' },
+        { filename, assetPath: `assets/${filename}`, url: '', bytes: 120, mime: 'image/png', storedAt: oldStoredAt },
+        {
+          filename: mermaidFile,
+          assetPath: `assets/${mermaidFile}`,
+          url: '',
+          bytes: 120,
+          mime: 'image/png',
+          storedAt: oldStoredAt,
+        },
       ].filter((item) => !deleted.includes(item.filename)),
     deleteAsset: async (name: string) => {
       deleted.push(name);
+      return true;
     },
   } as unknown as HostClient,
   getSnapshot: () => snapshot,
@@ -131,6 +140,38 @@ assert.deepEqual(deleted, [filename], 'purging article from trash automatically 
 mermaidActive.clear();
 await assetGc.prune();
 assert.deepEqual(deleted, [filename, mermaidFile], 'stale mermaid asset is pruned once unreferenced');
+
+// Fail-closed AssetGC: missing or malformed storedAt must NOT be deleted when minAgeMs > 0
+const missingTsDeleted: string[] = [];
+const safeGc = createAssetGarbageCollector({
+  hostClient: {
+    listAssets: async () => [
+      {
+        filename: '111111111111111111111111.png',
+        assetPath: 'assets/111111111111111111111111.png',
+        url: '',
+        bytes: 10,
+        mime: 'image/png',
+      },
+      {
+        filename: '222222222222222222222222.png',
+        assetPath: 'assets/222222222222222222222222.png',
+        url: '',
+        bytes: 10,
+        mime: 'image/png',
+        storedAt: 'not-a-date',
+      },
+    ],
+    deleteAsset: async (name: string) => {
+      missingTsDeleted.push(name);
+      return true;
+    },
+  },
+  getSnapshot: () => ({ activeId: 'active', docs: [article('active', '')], trash: [] }),
+  minAgeMs: 60_000,
+});
+assert.deepEqual(await safeGc.prune(), [], 'AssetGC fails closed when storedAt is missing or malformed');
+assert.deepEqual(missingTsDeleted, [], 'deleteAsset is not invoked for assets with missing/malformed storedAt');
 
 let disk = 'original';
 let modified = 1;

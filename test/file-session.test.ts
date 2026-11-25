@@ -412,6 +412,39 @@ await unmount();
   );
   assert.ok(wsNotices.includes('workspace.exists'));
 
+  // Protected subtree (.git / node_modules) refuses copy+delete directory rename/move instead of wiping .git
+  ext4.rootNode.children.set('repo', {
+    kind: 'directory',
+    name: 'repo',
+    children: new Map([
+      ['doc.md', { kind: 'file', name: 'doc.md', content: '# Repo', id: nextId++ }],
+      [
+        '.git',
+        {
+          kind: 'directory',
+          name: '.git',
+          children: new Map([['HEAD', { kind: 'file', name: 'HEAD', content: 'ref: refs/heads/main', id: nextId++ }]]),
+          id: nextId++,
+        },
+      ],
+    ]),
+    id: nextId++,
+  });
+  await React.act(async () => {
+    await wsApi.refresh();
+  });
+  const repoEntry = wsApi.state.entries.find((e) => e.kind === 'directory' && e.name === 'repo')!;
+  wsNotices.length = 0;
+  await React.act(async () => {
+    if (repoEntry.kind === 'directory') await wsApi.renameDirectory(repoEntry, 'repo-renamed');
+  });
+  assert.ok(ext4.rootNode.children.has('repo'), 'source directory containing .git is preserved on blocked rename');
+  assert.equal(ext4.rootNode.children.has('repo-renamed'), false, 'partial target is never left behind');
+  assert.ok(
+    wsNotices.some((n) => n.includes('workspace.renameFailed')),
+    'blocking rename of directory with .git notifies user cleanly',
+  );
+
   await React.act(async () => {
     wsRoot.unmount();
   });

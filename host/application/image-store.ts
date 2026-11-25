@@ -179,11 +179,19 @@ async function readRegularFileNoFollow(filePath: string): Promise<string | null>
   }
 }
 
+function nextMonotonicStoredAt(previous: string | undefined): string {
+  const now = Date.now();
+  const prevMs = previous ? Date.parse(previous) : Number.NaN;
+  const nextMs = Number.isFinite(prevMs) && prevMs >= now ? prevMs + 1 : now;
+  return new Date(nextMs).toISOString();
+}
+
 export class ImageHostService {
   readonly storageDir: string;
   localServerInfo: LocalServerInfo | null = null;
   localServerError = '';
   private manifestCache: Manifest | null = null;
+  private manifestStatKey = '';
   private manifestQueue: Promise<void> = Promise.resolve();
 
   constructor(options: { storageDir: string }) {
@@ -199,20 +207,39 @@ export class ImageHostService {
     return path.join(this.storageDir, 'assets.json');
   }
 
+  private async readManifestStatKey(): Promise<string> {
+    try {
+      const info = await lstat(this.manifestPath());
+      if (info.isSymbolicLink() || !info.isFile()) return '';
+      return `${info.mtimeMs}:${info.size}:${info.ino}`;
+    } catch {
+      return '';
+    }
+  }
+
   private async loadManifest(): Promise<Manifest> {
-    if (this.manifestCache) return this.manifestCache;
+    const statKey = await this.readManifestStatKey();
+    if (this.manifestCache && statKey && statKey === this.manifestStatKey) return this.manifestCache;
+    if (!statKey) {
+      this.manifestCache = {};
+      this.manifestStatKey = '';
+      return this.manifestCache;
+    }
     const raw = await readRegularFileNoFollow(this.manifestPath());
     if (raw === null) {
       this.manifestCache = {};
+      this.manifestStatKey = '';
       return this.manifestCache;
     }
     try {
       const parsed: unknown = JSON.parse(raw);
       this.manifestCache = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Manifest) : {};
+      this.manifestStatKey = statKey;
     } catch {
       const backup = this.manifestPath() + '.corrupt.' + Date.now();
       await rename(this.manifestPath(), backup).catch(() => undefined);
       this.manifestCache = {};
+      this.manifestStatKey = '';
     }
     return this.manifestCache;
   }
@@ -225,6 +252,7 @@ export class ImageHostService {
       await writeFile(temp, JSON.stringify(manifest, null, 2) + '\n', { mode: 0o600 });
       await rename(temp, file);
       this.manifestCache = manifest;
+      this.manifestStatKey = await this.readManifestStatKey();
     } catch (error) {
       await unlink(temp).catch(() => undefined);
       throw error;
@@ -274,22 +302,20 @@ export class ImageHostService {
       }
       const manifest = await this.loadManifest();
       const existing = manifest[filename];
-      const existingAgeMs = existing ? Date.now() - Date.parse(existing.storedAt || '') : Number.POSITIVE_INFINITY;
-      if (!existing || !Number.isFinite(existingAgeMs) || existingAgeMs > 15_000) {
-        const next: Manifest = {
-          ...manifest,
-          [filename]: {
-            mime: image.mime,
-            bytes: image.buffer.length,
-            storedAt: new Date().toISOString(),
-          },
-        };
-        try {
-          await this.saveManifest(next);
-        } catch (error) {
-          if (!exists) await unlink(file).catch(() => undefined);
-          throw error;
-        }
+      // Advance storedAt strictly monotonically on every storeAsset call so AssetGC expectedStoredAt locks hold even within <15s/same-ms re-uploads.
+      const next: Manifest = {
+        ...manifest,
+        [filename]: {
+          mime: image.mime,
+          bytes: image.buffer.length,
+          storedAt: nextMonotonicStoredAt(existing?.storedAt),
+        },
+      };
+      try {
+        await this.saveManifest(next);
+      } catch (error) {
+        if (!exists) await unlink(file).catch(() => undefined);
+        throw error;
       }
     });
     const localUrl = this.localServerInfo ? `${this.localServerInfo.url}/uploads/${filename}` : '';
@@ -381,20 +407,25 @@ export class ImageHostService {
     await this.enqueueManifest(async () => {
       const manifest = await this.loadManifest();
       const current = manifest[filename];
-      if (expectedStoredAt && current && current.storedAt !== expectedStoredAt) {
+      if (expectedStoredAt && !current) {
         return;
       }
-      try {
-        await unlink(path.join(this.assetsDir(), filename));
-      } catch (error) {
-        if (!error || (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      if (expectedStoredAt && current && current.storedAt !== expectedStoredAt) {
+        return;
       }
       if (current) {
         const next: Manifest = { ...manifest };
         delete next[filename];
         await this.saveManifest(next);
       }
-      deleted = true;
+      let unlinked = false;
+      try {
+        await unlink(path.join(this.assetsDir(), filename));
+        unlinked = true;
+      } catch (error) {
+        if (!error || (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+      deleted = Boolean(current) || unlinked;
     });
     return { filename, deleted };
   }

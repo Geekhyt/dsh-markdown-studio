@@ -117,7 +117,6 @@ export function create(
   let activeDisposers: Array<() => void> = [];
   let cachedMain: ComponentType<Record<string, unknown>> | null = null;
   let cachedPlugin: ClientPlugin | null = null;
-  let inflight: Promise<ComponentType<Record<string, unknown>>> | null = null;
   let activeTranslate: ((key: string) => string) | null = null;
   let ctxGen = 0;
 
@@ -133,12 +132,14 @@ export function create(
     return SHELL_DICT_EN[key] || key;
   }
 
+  let chunkPromise: Promise<ClientPlugin> | null = null;
+
   function materializeMain(plugin: ClientPlugin, expectedGen: number): ComponentType<Record<string, unknown>> {
+    cachedPlugin = plugin;
     if (!activeCtx || expectedGen !== ctxGen) throw new Error('Markdown Studio context is inactive');
     if (cachedMain) return cachedMain;
     const main = bindStudioPluginToContext(plugin, activeCtx, activeDisposers);
     if (!main) throw new Error('Markdown Studio chunk did not register a main view');
-    cachedPlugin = plugin;
     cachedMain = main;
     return cachedMain;
   }
@@ -150,21 +151,22 @@ export function create(
       const plugin = cachedPlugin;
       return Promise.resolve().then(() => materializeMain(plugin, gen));
     }
-    if (!inflight) {
-      inflight = Promise.resolve()
+    if (!chunkPromise) {
+      chunkPromise = Promise.resolve()
         .then(() => loader())
         .then(
           (plugin) => {
-            inflight = null;
-            return materializeMain(plugin, gen);
+            cachedPlugin = plugin;
+            chunkPromise = null;
+            return plugin;
           },
           (err) => {
-            inflight = null;
+            chunkPromise = null;
             throw err;
           },
         );
     }
-    return inflight;
+    return chunkPromise.then((plugin) => materializeMain(plugin, gen));
   }
 
   function PanelIcon(props?: { size?: number; active?: boolean }) {

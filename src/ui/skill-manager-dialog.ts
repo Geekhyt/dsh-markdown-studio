@@ -160,6 +160,8 @@ function renderSkillTabItem(
       'aria-selected': selected,
       'aria-controls': 'mdstudio-skill-panel',
       tabIndex: selected ? 0 : -1,
+      autoFocus: selected || undefined,
+      'data-mdstudio-autofocus': selected ? '' : undefined,
       className: 'mdstudio-skill-item' + (selected ? ' is-active' : ''),
       title: item.name,
       onClick: function () {
@@ -387,6 +389,7 @@ function SkillManagerDialogContent(props: SkillManagerDialogProps): ReactNode {
         fileRef.current = el;
       },
       type: 'file',
+      hidden: true,
       accept: '.md,.txt,text/markdown',
       className: 'mdstudio-hidden-input',
       tabIndex: -1,

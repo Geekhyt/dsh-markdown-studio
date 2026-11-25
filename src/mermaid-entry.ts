@@ -8,6 +8,7 @@ declare global {
 }
 
 let initialized = false;
+const MERMAID_RENDER_TIMEOUT_MS = 10_000;
 
 const MERMAID_SECURE_KEYS = [
   'secure',
@@ -37,7 +38,16 @@ function ensureInitialized(): void {
 }
 
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
+const SVG_NS = 'http://www.w3.org/2000/svg';
 const SVG_PAINT_ATTRS = ['fill', 'stroke', 'filter', 'clip-path', 'mask'];
+
+/** In YAML, `'`/`"` starts a quoted scalar only at a token boundary, never mid-word (e.g. `it's fine`). */
+function isYamlQuoteStart(text: string, index: number, bound: number): boolean {
+  const ch = text[index];
+  if (ch !== '"' && ch !== "'") return false;
+  if (index <= bound) return true;
+  return /[\s:,{[\-?]/.test(text[index - 1]);
+}
 
 function scanQuotedEnd(text: string, openIndex: number): number {
   const quote = text[openIndex];
@@ -68,7 +78,7 @@ function findDirectiveBraceEnd(source: string, openBrace: number): number {
   let depth = 1;
   for (let i = openBrace + 1; i < source.length; i++) {
     const ch = source[i];
-    if (ch === '"' || ch === "'") {
+    if (isYamlQuoteStart(source, i, openBrace + 1)) {
       i = scanQuotedEnd(source, i);
       continue;
     }
@@ -89,8 +99,7 @@ function stripYamlComments(text: string): string {
   let out = '';
   let start = 0;
   for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (ch === '"' || ch === "'") {
+    if (isYamlQuoteStart(text, i, 0)) {
       i = scanQuotedEnd(text, i);
       continue;
     }
@@ -111,7 +120,7 @@ function splitDirectiveEntries(body: string): string[] {
   let depth = 0;
   for (let i = 0; i < clean.length; i++) {
     const ch = clean[i];
-    if (ch === '"' || ch === "'") {
+    if (isYamlQuoteStart(clean, i, start)) {
       i = scanQuotedEnd(clean, i);
       continue;
     }
@@ -143,7 +152,9 @@ function decodeYamlHexEscape(hex: string): string {
 }
 
 function decodeYamlDoubleQuoted(raw: string): string {
-  return raw.replace(
+  // YAML 1.2 escaped line breaks (`\` + newline + leading spaces) fold to empty string.
+  const folded = raw.replace(/\\\r?\n[ \t]*/g, '');
+  return folded.replace(
     /\\(?:x([0-9a-f]{2})|u([0-9a-f]{4})|U([0-9a-f]{8})|([\s\S]))/gi,
     function (_m, x2?: string, u4?: string, u8?: string, lit?: string) {
       const hex = x2 || u4 || u8;
@@ -163,32 +174,76 @@ function stripYamlNodeProps(text: string): string {
   return rest;
 }
 
-function parseYamlEntryKey(entry: string): { key: string; explicitOnly: boolean } {
+function decodeYamlScalar(raw: string): string {
+  const cleaned = stripYamlNodeProps(raw.trim());
+  if (!cleaned) return '';
+  if (cleaned[0] === '"') return decodeYamlDoubleQuoted(cleaned.slice(1, scanQuotedEnd(cleaned, 0)));
+  if (cleaned[0] === "'") return cleaned.slice(1, scanQuotedEnd(cleaned, 0)).replace(/''/g, "'");
+  return cleaned;
+}
+
+function collectYamlAnchors(entries: string[]): Map<string, string> {
+  const anchors = new Map<string, string>();
+  for (const entry of entries) {
+    const m = /&([^\s,{}[\]:]+)\s+([^\n,{}[\]]+)/.exec(entry);
+    if (m) anchors.set(m[1], decodeYamlScalar(m[2]));
+  }
+  return anchors;
+}
+
+function parseQuotedYamlKey(rest: string, explicit: boolean): { key: string; explicitOnly: boolean; aliased: boolean } {
+  const end = scanQuotedEnd(rest, 0);
+  const rawKey = rest.slice(1, end);
+  const after = rest.slice(end + 1).trimStart();
+  const decoded = rest[0] === '"' ? decodeYamlDoubleQuoted(rawKey) : rawKey.replace(/''/g, "'");
+  if (after.startsWith(':')) return { key: decoded, explicitOnly: false, aliased: false };
+  return { key: explicit ? decoded : '', explicitOnly: explicit && !after, aliased: false };
+}
+
+function parseYamlEntryKey(
+  entry: string,
+  anchors: ReadonlyMap<string, string>,
+): { key: string; explicitOnly: boolean; aliased: boolean } {
   let rest = entry.trim();
-  let explicit = false;
-  if (/^\?(?:\s|$)/.test(rest)) {
-    explicit = true;
-    rest = rest.slice(1).trimStart();
-  }
+  const explicit = /^\?(?:\s|$)/.test(rest);
+  if (explicit) rest = rest.slice(1).trimStart();
   rest = stripYamlNodeProps(rest);
-  if (!rest) return { key: '', explicitOnly: false };
-  if (rest[0] === '"' || rest[0] === "'") {
-    const end = scanQuotedEnd(rest, 0);
-    const rawKey = rest.slice(1, end);
-    const after = rest.slice(end + 1).trimStart();
-    const decoded = rest[0] === '"' ? decodeYamlDoubleQuoted(rawKey) : rawKey.replace(/''/g, "'");
-    if (after.startsWith(':')) return { key: decoded, explicitOnly: false };
-    return { key: explicit ? decoded : '', explicitOnly: explicit && !after };
-  }
+  if (!rest) return { key: '', explicitOnly: false, aliased: false };
+  if (rest[0] === '"' || rest[0] === "'") return parseQuotedYamlKey(rest, explicit);
   const colon = rest.indexOf(':');
-  if (colon > 0) return { key: rest.slice(0, colon).trim(), explicitOnly: false };
-  return { key: explicit ? rest : '', explicitOnly: explicit };
+  const rawKey = colon > 0 ? rest.slice(0, colon).trim() : explicit ? rest : '';
+  const explicitOnly = colon <= 0 && explicit;
+  if (rawKey.startsWith('*')) {
+    return { key: anchors.get(rawKey.slice(1).trim()) || rawKey, explicitOnly, aliased: true };
+  }
+  return { key: rawKey, explicitOnly, aliased: false };
+}
+
+function stripNestedFlowMappings(entry: string): string {
+  let out = '';
+  let cursor = 0;
+  for (let i = 0; i < entry.length; i++) {
+    if (isYamlQuoteStart(entry, i, 0)) {
+      i = scanQuotedEnd(entry, i);
+      continue;
+    }
+    if (entry[i] === '{') {
+      const end = findDirectiveBraceEnd(entry, i);
+      if (end > i) {
+        out += entry.slice(cursor, i + 1) + stripImgFromDirectiveBody(entry.slice(i + 1, end)) + '}';
+        i = end;
+        cursor = end + 1;
+      }
+    }
+  }
+  return cursor === 0 ? entry : out + entry.slice(cursor);
 }
 
 function stripImgFromDirectiveBody(body: string): string {
   const entries = splitDirectiveEntries(body)
     .map((entry) => entry.trim())
     .filter(Boolean);
+  const anchors = collectYamlAnchors(entries);
   const kept: string[] = [];
   let skipNextValue = false;
   for (const entry of entries) {
@@ -196,12 +251,18 @@ function stripImgFromDirectiveBody(body: string): string {
       skipNextValue = false;
       if (entry.startsWith(':')) continue;
     }
-    const parsed = parseYamlEntryKey(entry);
-    if (parsed.key.trim().toLowerCase() === 'img') {
+    const parsed = parseYamlEntryKey(entry, anchors);
+    const keyLower = parsed.key.trim().toLowerCase();
+    if (keyLower === 'img' || keyLower === '<<') {
       skipNextValue = parsed.explicitOnly;
       continue;
     }
-    kept.push(entry);
+    // Fail-closed: strip unresolved YAML alias keys whose value contains a URL scheme.
+    if (parsed.aliased && /(?:https?:|data:|\/\/)/i.test(entry)) {
+      skipNextValue = parsed.explicitOnly;
+      continue;
+    }
+    kept.push(stripNestedFlowMappings(entry));
   }
   if (!kept.length) return '';
   return body.includes('\n') ? '\n  ' + kept.join('\n  ') + '\n' : ' ' + kept.join(', ') + ' ';
@@ -226,6 +287,71 @@ export function stripMermaidImageDirectives(source: string): string {
     cursor = end + 1;
   }
   return out;
+}
+
+const MERMAID_STYLE_LINE_RE = /^([ \t]*(?:classDef|style|linkStyle)\s+\S+\s+)([\s\S]*)$/i;
+const MERMAID_SEQ_PROPS_RE = /^([ \t]*properties(?:\s+[^:{[\n]+)?\s*:?\s*)([{[][\s\S]*)$/i;
+const MERMAID_SEQ_DETAILS_RE = /^[ \t]*details(?:\s+[^:{[\n]+)?\s*[:{[]/i;
+const DANGEROUS_INLINE_HTML_RE =
+  /<\/?(?:img|iframe|script|object|embed|link|style|audio|video|source|base|meta)\b[^>]*>/gi;
+
+function scrubStyleDeclList(raw: string): string {
+  const parts = raw.split(',');
+  const kept: string[] = [];
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    if (hasExternalCssUrl(trimmed)) continue;
+    const clean = stripExternalCssUrls(trimmed).trim();
+    if (clean) kept.push(clean);
+  }
+  return kept.join(',');
+}
+
+function isUnsafeSequenceProp(key: string, val: unknown): boolean {
+  if (/^(?:icon|img|image|src|href|url|link)$/i.test(key)) return true;
+  return typeof val === 'string' && /(?:https?:|\/\/)/i.test(val);
+}
+
+function scrubSequencePropsJson(raw: string): string {
+  try {
+    const parsed: unknown = JSON.parse(raw.trim());
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return '{}';
+    const next: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(parsed)) {
+      if (!isUnsafeSequenceProp(key, val)) next[key] = val;
+    }
+    return JSON.stringify(next);
+  } catch {
+    return '{}';
+  }
+}
+
+/**
+ * Pre-render Mermaid source sanitizer: neutralizes all known pre-sanitization
+ * SSRF & DOM-read vectors across flowchart, sequenceDiagram, stateDiagram-v2,
+ * block-beta, and architecture-beta BEFORE `mermaid.render()` touches the DOM.
+ */
+export function sanitizeMermaidSource(source: string): string {
+  const withoutDirectives = stripMermaidImageDirectives(source);
+  const lines = withoutDirectives.split('\n');
+  const safeLines: string[] = [];
+  for (const line of lines) {
+    if (MERMAID_SEQ_DETAILS_RE.test(line)) continue;
+    const propsMatch = MERMAID_SEQ_PROPS_RE.exec(line);
+    if (propsMatch) {
+      safeLines.push(propsMatch[1] + scrubSequencePropsJson(propsMatch[2]));
+      continue;
+    }
+    const styleMatch = MERMAID_STYLE_LINE_RE.exec(line);
+    if (styleMatch) {
+      const scrubbed = scrubStyleDeclList(styleMatch[2]);
+      if (scrubbed) safeLines.push(styleMatch[1] + scrubbed);
+      continue;
+    }
+    safeLines.push(line.replace(DANGEROUS_INLINE_HTML_RE, ''));
+  }
+  return safeLines.join('\n');
 }
 
 function isLocalFragmentRef(value: string): boolean {
@@ -268,13 +394,41 @@ function sanitizeMermaidSvgNode(node: Element): void {
   stripUnsafeSvgLinks(node, tag);
 }
 
-/** DOM-sanitize Mermaid SVG output: drop `<script>`, `<image>`, `<foreignObject>`, external links/URLs, and scrub `<style>`. */
+function readSvgNumber(el: Element, attr: string): number {
+  const parsed = Number.parseFloat(el.getAttribute(attr) ?? '0');
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/**
+ * Convert plain-text `<foreignObject>` (used by Mermaid 11 `venn-beta` and
+ * `architecture-beta` even with `htmlLabels: false`) into pure SVG `<text>` so
+ * labels survive sanitization with zero `<foreignObject>` left in the SVG.
+ */
+function replaceForeignObjectWithText(fo: Element, doc: Document): void {
+  const text = (fo.textContent ?? '').replace(/\s+/g, ' ').trim();
+  if (!text || !fo.parentNode) {
+    fo.remove();
+    return;
+  }
+  const label = doc.createElementNS(SVG_NS, 'text');
+  label.setAttribute('x', String(readSvgNumber(fo, 'x') + readSvgNumber(fo, 'width') / 2));
+  label.setAttribute('y', String(readSvgNumber(fo, 'y') + readSvgNumber(fo, 'height') / 2));
+  label.setAttribute('text-anchor', 'middle');
+  label.setAttribute('dominant-baseline', 'central');
+  label.setAttribute('font-size', '14');
+  label.setAttribute('fill', 'currentColor');
+  label.textContent = text;
+  fo.parentNode.replaceChild(label, fo);
+}
+
+/** DOM-sanitize Mermaid SVG output: convert text `<foreignObject>` to `<text>`, drop `<script>`/`<image>`, external links/URLs, and scrub `<style>`. */
 export function sanitizeMermaidSvg(svg: string): string {
   if (typeof DOMParser !== 'undefined' && typeof XMLSerializer !== 'undefined') {
     const doc = new DOMParser().parseFromString(svg, 'image/svg+xml');
     const root = doc.documentElement;
     if (root && root.tagName.toLowerCase() === 'svg') {
-      for (const el of Array.from(root.querySelectorAll('script, image, foreignObject'))) el.remove();
+      for (const el of Array.from(root.querySelectorAll('script, image'))) el.remove();
+      for (const fo of Array.from(root.querySelectorAll('foreignObject'))) replaceForeignObjectWithText(fo, doc);
       Array.from(root.querySelectorAll('a')).forEach((link) => {
         while (link.firstChild) link.parentNode?.insertBefore(link.firstChild, link);
         link.remove();
@@ -310,11 +464,18 @@ async function renderSerialized(source: string, id?: string): Promise<string> {
   ensureInitialized();
   renderSeq += 1;
   const renderId = (id || 'mdstudio-mermaid') + '-r' + renderSeq;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const safeSource = stripMermaidImageDirectives(source);
-    const result = await mermaid.render(renderId, safeSource);
+    const safeSource = sanitizeMermaidSource(source);
+    const result = await Promise.race([
+      mermaid.render(renderId, safeSource),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Mermaid render timeout')), MERMAID_RENDER_TIMEOUT_MS);
+      }),
+    ]);
     return sanitizeMermaidSvg(result.svg);
   } finally {
+    if (timer) clearTimeout(timer);
     removeTempNodes(renderId);
   }
 }

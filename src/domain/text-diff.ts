@@ -23,10 +23,51 @@ export interface ComputedTextDiff {
 
 const DIFF_TOKEN_RE = /[A-Za-z0-9_]+|\s+|[^\sA-Za-z0-9_]/gu;
 const DIFF_CLAUSE_RE = /[^。！？!?；;，,\n]+[。！？!?；;，,\n]*|[。！？!?；;，,\n]+/gu;
-const MAX_LCS_CELLS = 250_000;
+const ASCII_WORD_RE = /^[A-Za-z0-9_]$/;
+const WS_CHAR_RE = /^\s+$/;
+const MAX_MYERS_D = 600;
+
+let cachedGraphemeSegmenter: Intl.Segmenter | null | undefined;
+
+function getGraphemeSegmenter(): Intl.Segmenter | null {
+  if (cachedGraphemeSegmenter === undefined) {
+    cachedGraphemeSegmenter =
+      typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function'
+        ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+        : null;
+  }
+  return cachedGraphemeSegmenter;
+}
 
 export function tokenizeDiff(text: string): string[] {
-  return text.match(DIFF_TOKEN_RE) ?? [];
+  if (!text) return [];
+  const segmenter = getGraphemeSegmenter();
+  if (!segmenter) return text.match(DIFF_TOKEN_RE) ?? [];
+  const tokens: string[] = [];
+  let buf = '';
+  let bufKind: '' | 'word' | 'ws' = '';
+  const flush = (): void => {
+    if (buf) {
+      tokens.push(buf);
+      buf = '';
+      bufKind = '';
+    }
+  };
+  for (const { segment } of segmenter.segment(text)) {
+    const kind = ASCII_WORD_RE.test(segment) ? 'word' : WS_CHAR_RE.test(segment) ? 'ws' : '';
+    if (kind && kind === bufKind) {
+      buf += segment;
+    } else if (kind) {
+      flush();
+      buf = segment;
+      bufKind = kind;
+    } else {
+      flush();
+      tokens.push(segment);
+    }
+  }
+  flush();
+  return tokens;
 }
 
 function splitDiffClauses(text: string): string[] {
@@ -40,37 +81,72 @@ function pushSegment(out: DiffSegment[], type: DiffSegment['type'], text: string
   else out.push({ type, text });
 }
 
-function buildLcsTable(a: readonly string[], b: readonly string[]): Uint32Array {
-  const cols = b.length + 1;
-  const dp = new Uint32Array((a.length + 1) * cols);
-  for (let i = a.length - 1; i >= 0; i--) {
-    for (let j = b.length - 1; j >= 0; j--) {
-      const idx = i * cols + j;
-      dp[idx] = a[i] === b[j] ? dp[(i + 1) * cols + j + 1] + 1 : Math.max(dp[(i + 1) * cols + j], dp[i * cols + j + 1]);
+function backtrackMyers(a: readonly string[], b: readonly string[], trace: readonly Int32Array[]): DiffSegment[] {
+  let x = a.length;
+  let y = b.length;
+  const ops: Array<{ type: DiffSegment['type']; text: string }> = [];
+  for (let d = trace.length - 1; d > 0; d--) {
+    const prev = trace[d - 1];
+    const k = x - y;
+    const prevOffset = d - 1;
+    const prevK = k === -d || (k !== d && prev[prevOffset + k - 1] < prev[prevOffset + k + 1]) ? k + 1 : k - 1;
+    const prevX = prev[prevOffset + prevK];
+    const prevY = prevX - prevK;
+    while (x > prevX && y > prevY) {
+      ops.push({ type: 'equal', text: a[x - 1] });
+      x--;
+      y--;
+    }
+    if (x === prevX) {
+      ops.push({ type: 'insert', text: b[y - 1] });
+      y--;
+    } else {
+      ops.push({ type: 'delete', text: a[x - 1] });
+      x--;
     }
   }
-  return dp;
+  while (x > 0 && y > 0) {
+    ops.push({ type: 'equal', text: a[x - 1] });
+    x--;
+    y--;
+  }
+  const out: DiffSegment[] = [];
+  for (let i = ops.length - 1; i >= 0; i--) {
+    pushSegment(out, ops[i].type, ops[i].text);
+  }
+  return out;
 }
 
-function backtrackLcs(a: readonly string[], b: readonly string[], dp: Uint32Array): DiffSegment[] {
-  const cols = b.length + 1;
-  const out: DiffSegment[] = [];
-  let i = 0;
-  let j = 0;
-  while (i < a.length && j < b.length) {
-    if (a[i] === b[j]) {
-      pushSegment(out, 'equal', a[i]);
-      i++;
-      j++;
-    } else if (dp[(i + 1) * cols + j] >= dp[i * cols + j + 1]) {
-      pushSegment(out, 'delete', a[i++]);
-    } else {
-      pushSegment(out, 'insert', b[j++]);
+function myersDiff(a: readonly string[], b: readonly string[], maxDLimit = MAX_MYERS_D): DiffSegment[] | null {
+  const n = a.length;
+  const m = b.length;
+  if (!n && !m) return [];
+  if (!n) return [{ type: 'insert', text: b.join('') }];
+  if (!m) return [{ type: 'delete', text: a.join('') }];
+  const maxD = Math.min(n + m, maxDLimit);
+  const offset = maxD;
+  const v = new Int32Array(2 * maxD + 1);
+  const trace: Int32Array[] = [];
+  for (let d = 0; d <= maxD; d++) {
+    const snap = new Int32Array(2 * d + 1);
+    for (let k = -d; k <= d; k += 2) {
+      let x =
+        k === -d || (k !== d && v[offset + k - 1] < v[offset + k + 1]) ? v[offset + k + 1] : v[offset + k - 1] + 1;
+      let y = x - k;
+      while (x < n && y < m && a[x] === b[y]) {
+        x++;
+        y++;
+      }
+      v[offset + k] = x;
+      snap[d + k] = x;
+      if (x === n && y === m) {
+        trace.push(snap);
+        return backtrackMyers(a, b, trace);
+      }
     }
+    trace.push(snap);
   }
-  while (i < a.length) pushSegment(out, 'delete', a[i++]);
-  while (j < b.length) pushSegment(out, 'insert', b[j++]);
-  return out;
+  return null;
 }
 
 function refineClauseHunk(delText: string, insText: string, out: DiffSegment[]): void {
@@ -85,10 +161,9 @@ function refineClauseHunk(delText: string, insText: string, out: DiffSegment[]):
 function diffByClauses(aText: string, bText: string): DiffSegment[] | null {
   const aClauses = splitDiffClauses(aText);
   const bClauses = splitDiffClauses(bText);
-  if ((aClauses.length <= 1 && bClauses.length <= 1) || aClauses.length * bClauses.length > MAX_LCS_CELLS) {
-    return null;
-  }
-  const coarse = backtrackLcs(aClauses, bClauses, buildLcsTable(aClauses, bClauses));
+  if (aClauses.length <= 1 && bClauses.length <= 1) return null;
+  const coarse = myersDiff(aClauses, bClauses, MAX_MYERS_D);
+  if (!coarse) return null;
   const out: DiffSegment[] = [];
   for (let i = 0; i < coarse.length; i++) {
     const cur = coarse[i];
@@ -110,19 +185,18 @@ function diffByClauses(aText: string, bText: string): DiffSegment[] | null {
 
 function diffTokenSlices(a: readonly string[], b: readonly string[], allowClauseSplit = true): DiffSegment[] {
   if (!a.length && !b.length) return [];
-  if (a.length * b.length > MAX_LCS_CELLS) {
-    const aText = a.join('');
-    const bText = b.join('');
-    if (allowClauseSplit) {
-      const refined = diffByClauses(aText, bText);
-      if (refined) return refined;
-    }
-    const fallback: DiffSegment[] = [];
-    pushSegment(fallback, 'delete', aText);
-    pushSegment(fallback, 'insert', bText);
-    return fallback;
+  const direct = myersDiff(a, b);
+  if (direct) return direct;
+  const aText = a.join('');
+  const bText = b.join('');
+  if (allowClauseSplit) {
+    const refined = diffByClauses(aText, bText);
+    if (refined) return refined;
   }
-  return backtrackLcs(a, b, buildLcsTable(a, b));
+  const fallback: DiffSegment[] = [];
+  pushSegment(fallback, 'delete', aText);
+  pushSegment(fallback, 'insert', bText);
+  return fallback;
 }
 
 function trimCommonEnds(

@@ -275,11 +275,24 @@ async function copyReferencedAssets(
   );
 }
 
+async function assertSafeDirectoryCopy(source: FileSystemDirectoryHandle, depth = 0): Promise<void> {
+  if (depth > MAX_DEPTH) throw new Error('directory depth limit exceeded');
+  for await (const entry of source.values()) {
+    if (entry.kind === 'directory') {
+      if (COPY_SKIP_DIRECTORIES.has(entry.name)) {
+        throw new Error('protected directory "' + entry.name + '" cannot be copied safely');
+      }
+      await assertSafeDirectoryCopy(entry as FileSystemDirectoryHandle, depth + 1);
+    }
+  }
+}
+
 async function copyDirectoryToName(
   parent: FileSystemDirectoryHandle,
   source: FileSystemDirectoryHandle,
   targetName: string,
 ): Promise<FileSystemDirectoryHandle> {
+  await assertSafeDirectoryCopy(source);
   const target = await parent.getDirectoryHandle(targetName, { create: true });
   try {
     await copyDirectory(source, target);
@@ -371,6 +384,7 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
 
   async function loadRoot(directory: FileSystemDirectoryHandle): Promise<void> {
     const gen = ++scanGenRef.current;
+    openGenRef.current++;
     const name = directory.name || '';
     rootRef.current = directory;
     dialogOpenRef.current = true;
@@ -703,6 +717,7 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
   }
 
   function close(): void {
+    openGenRef.current++;
     dialogOpenRef.current = false;
     setState(function (prev) {
       return Object.assign({}, prev, { open: false });

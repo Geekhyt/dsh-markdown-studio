@@ -27,7 +27,7 @@ const PATTERN_RULES: ReadonlyArray<
   ['style', /calc\(/i, 'css-calc', '复制 HTML 仍包含 calc()，微信可能丢弃'],
   [
     'html',
-    /src\s*=\s*["']https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?\//i,
+    /src\s*=\s*["'](?:https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?\/|data:image\/|assets\/)/i,
     'local-image',
     '复制 HTML 包含仅本机可访问的图片地址',
   ],
@@ -99,7 +99,9 @@ function hasDirectNestedList(html: string): boolean {
     const closing = Boolean(match[1]);
     const tag = match[2].toLowerCase();
     if (!closing) {
-      if ((tag === 'ul' || tag === 'ol') && stack[stack.length - 1] === 'li') return true;
+      const parent = stack[stack.length - 1];
+      if ((tag === 'ul' || tag === 'ol') && (parent === 'li' || parent === 'ol' || parent === 'ul')) return true;
+      if (tag === 'section' && (parent === 'ol' || parent === 'ul')) return true;
       stack.push(tag);
     } else {
       for (let i = stack.length - 1; i >= 0; i--) {

@@ -120,15 +120,23 @@ function ensureSvgNamespace(html: string): string {
   return /^<svg[^>]*\sxmlns=/.test(html) ? html : html.replace(/^<svg/, '<svg xmlns="http://www.w3.org/2000/svg"');
 }
 
+const MAX_MATH_SVG_CHARS = 250_000;
+
+function escapeText(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 export function render(texSource: unknown, displayMode?: boolean, labelPrefix = '公式：'): string {
   const source = String(texSource || '');
-  // Fresh TeX input instance per render prevents cross-formula `\label`, `\renewcommand`, and `\definecolor` contamination.
-  const tex = new TeX({ packages: SAFE_TEX_PACKAGES });
+  // Fresh TeX input instance with bounded macro/buffer limits prevents cross-formula leaks and macro-bomb DoS.
+  const tex = new TeX({ packages: SAFE_TEX_PACKAGES, maxMacros: 200, maxBuffer: 2048 });
   const doc = mathjax.document(document, { InputJax: tex, OutputJax: svg });
   const node = doc.convert(source, { display: Boolean(displayMode) });
   const svgNode = node.firstElementChild;
   decorateMathSvg(svgNode, source, labelPrefix);
-  return ensureSvgNamespace(adaptor.outerHTML(svgNode || node));
+  const html = ensureSvgNamespace(adaptor.outerHTML(svgNode || node));
+  if (html.length > MAX_MATH_SVG_CHARS) return escapeText(source);
+  return html;
 }
 
 if (typeof window !== 'undefined') {

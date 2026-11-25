@@ -92,14 +92,17 @@ function countMarkerRun(text: string, start: number, step: 1 | -1, ch: string): 
 function hasCleanInnerWrap(text: string, marker: string): boolean {
   const len = marker.length;
   if (text.length <= len * 2 || !text.startsWith(marker) || !text.endsWith(marker)) return false;
+  let coreInner = text.slice(len, text.length - len);
   if (len === 1) {
     const lead = countMarkerRun(text, 0, 1, marker);
     const trail = countMarkerRun(text, text.length - 1, -1, marker);
     if (lead % 2 === 0 || trail % 2 === 0) return false;
+    if (lead >= 3 && trail >= 3) {
+      const pairPad = Math.min(lead - 1, trail - 1);
+      coreInner = text.slice(len + pairPad, text.length - len - pairPad);
+    }
   }
-  const inner = text.slice(len, text.length - len);
-  if (len === 1) return !inner.includes(marker);
-  return !inner.includes(marker);
+  return !coreInner.includes(marker);
 }
 
 function hasCleanOuterWrap(value: string, start: number, end: number, marker: string): boolean {
@@ -114,16 +117,42 @@ function hasCleanOuterWrap(value: string, start: number, end: number, marker: st
   return true;
 }
 
-function toggleMultiParagraph(selected: string, before: string, after: string): string {
-  const segments = selected.split('\n').filter((line) => line.trim().length > 0);
+function splitLineBlockPrefix(segment: string): { prefix: string; core: string; trail: string } {
+  const m = LINE_PREFIX_STRIP_RE.exec(segment);
+  const prefix = m ? m[0] : '';
+  const rest = segment.slice(prefix.length);
+  const ws = /^([ \t]*)([\s\S]*?)([ \t]*)$/.exec(rest);
+  if (!ws || !ws[2]) return { prefix, core: '', trail: rest };
+  return { prefix: prefix + ws[1], core: ws[2], trail: ws[3] };
+}
+
+function toggleMultiLine(selected: string, before: string, after: string): string {
+  const parts = selected.split('\n').map(splitLineBlockPrefix);
+  const nonEmpty = parts.filter((item) => item.core.length > 0);
   const allWrapped =
-    before === after && segments.length > 0 && segments.every((segment) => hasCleanInnerWrap(segment, before));
-  return selected.replace(/([^\n]+)/g, function (segment) {
-    if (!segment.trim()) return segment;
-    if (allWrapped) return segment.slice(before.length, segment.length - after.length);
-    if (before === after && hasCleanInnerWrap(segment, before)) return segment;
-    return before + segment + after;
-  });
+    before === after && nonEmpty.length > 0 && nonEmpty.every((item) => hasCleanInnerWrap(item.core, before));
+  return parts
+    .map(function (item) {
+      if (!item.core) return item.prefix + item.trail;
+      if (allWrapped) return item.prefix + item.core.slice(before.length, item.core.length - after.length) + item.trail;
+      if (before === after && hasCleanInnerWrap(item.core, before)) return item.prefix + item.core + item.trail;
+      return item.prefix + before + item.core + after + item.trail;
+    })
+    .join('\n');
+}
+
+function safeBacktickFence(content: string, minLen = 3): string {
+  let maxRun = 0;
+  let cur = 0;
+  for (let i = 0; i < content.length; i++) {
+    if (content.charCodeAt(i) === 96) {
+      cur++;
+      if (cur > maxRun) maxRun = cur;
+    } else {
+      cur = 0;
+    }
+  }
+  return '`'.repeat(Math.max(minLen, maxRun + 1));
 }
 
 function transformPrefixLine(line: string, prefix: string, index: number, isOrdered: boolean): string {
@@ -139,39 +168,43 @@ export function createFormattingCommands(options: FormattingOptions): Formatting
     const value = options.editorValue();
     const range = options.selection();
     const selectedRaw = value.slice(range.start, range.end);
-    if (selectedRaw && before === after) {
+    if (selectedRaw && before === after && selectedRaw.includes('\n')) {
+      const toggled = toggleMultiLine(selectedRaw, before, after);
+      options.replaceRange(value, range.start, range.end, toggled, range.start, range.start + toggled.length);
+      return;
+    }
+    let effStart = range.start;
+    let effEnd = range.end;
+    let effSelected = selectedRaw;
+    if (selectedRaw) {
+      const ws = /^([ \t]*)([\s\S]*?)([ \t]*)$/.exec(selectedRaw);
+      if (ws && ws[2] && (ws[1] || ws[3])) {
+        effStart = range.start + ws[1].length;
+        effEnd = range.end - ws[3].length;
+        effSelected = ws[2];
+      }
+    }
+    if (effSelected && before === after) {
       const len = before.length;
-      if (hasCleanOuterWrap(value, range.start, range.end, before)) {
-        options.replaceRange(
-          value,
-          range.start - len,
-          range.end + len,
-          selectedRaw,
-          range.start - len,
-          range.end - len,
-        );
+      if (hasCleanOuterWrap(value, effStart, effEnd, before)) {
+        options.replaceRange(value, effStart - len, effEnd + len, effSelected, effStart - len, effEnd - len);
         return;
       }
-      if (/\n\s*\n/.test(selectedRaw)) {
-        const toggled = toggleMultiParagraph(selectedRaw, before, after);
-        options.replaceRange(value, range.start, range.end, toggled, range.start, range.start + toggled.length);
-        return;
-      }
-      if (hasCleanInnerWrap(selectedRaw, before)) {
-        const inner = selectedRaw.slice(len, selectedRaw.length - len);
-        options.replaceRange(value, range.start, range.end, inner, range.start, range.start + inner.length);
+      if (hasCleanInnerWrap(effSelected, before)) {
+        const inner = effSelected.slice(len, effSelected.length - len);
+        options.replaceRange(value, effStart, effEnd, inner, effStart, effStart + inner.length);
         return;
       }
     }
-    const selected = selectedRaw || placeholder || '';
+    const selected = effSelected || placeholder || '';
     const inserted = before + selected + after;
     options.replaceRange(
       value,
-      range.start,
-      range.end,
+      effStart,
+      effEnd,
       inserted,
-      range.start + before.length,
-      range.start + before.length + selected.length,
+      effStart + before.length,
+      effStart + before.length + selected.length,
     );
   }
 
@@ -273,7 +306,23 @@ export function createFormattingCommands(options: FormattingOptions): Formatting
     const range = options.selection();
     const selected = value.slice(range.start, range.end);
     if (selected.indexOf('\n') !== -1) {
-      insertBlock('```js\n' + selected + '\n```');
+      const fence = safeBacktickFence(selected, 3);
+      const header = fence + 'js\n';
+      insertBlock(header + selected + '\n' + fence, {
+        selectStart: header.length,
+        selectEnd: header.length + selected.length,
+      });
+    } else if (selected.includes('`')) {
+      const marker = safeBacktickFence(selected, 1);
+      const pad = selected.startsWith('`') || selected.endsWith('`') ? ' ' : '';
+      options.replaceRange(
+        value,
+        range.start,
+        range.end,
+        marker + pad + selected + pad + marker,
+        range.start + marker.length + pad.length,
+        range.start + marker.length + pad.length + selected.length,
+      );
     } else {
       wrapSelection('`', '`', options.t('toolbar.code'));
     }
@@ -303,7 +352,9 @@ export function createFormattingCommands(options: FormattingOptions): Formatting
   }
 
   function insertCodeBlock(): void {
-    insertFencedBlock('```');
+    const value = options.editorValue();
+    const range = options.selection();
+    insertFencedBlock(safeBacktickFence(value.slice(range.start, range.end), 3));
   }
 
   function insertMathBlock(): void {

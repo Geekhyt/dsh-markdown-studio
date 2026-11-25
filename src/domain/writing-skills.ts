@@ -118,10 +118,16 @@ export function createCustomSkillId(): string {
 
 export function nextCustomSkillName(list: readonly WritingSkill[], baseName: string): string {
   const taken = new Set(list.map((item) => item.name));
-  if (!taken.has(baseName)) return baseName;
+  const cleanBase = baseName.trim().slice(0, MAX_SKILL_NAME_CHARS) || baseName;
+  if (!taken.has(cleanBase)) return cleanBase;
   let seq = 2;
-  while (taken.has(`${baseName} ${seq}`)) seq++;
-  return `${baseName} ${seq}`;
+  while (true) {
+    const suffix = ` ${seq}`;
+    const stem = cleanBase.slice(0, Math.max(1, MAX_SKILL_NAME_CHARS - suffix.length)).trimEnd();
+    const candidate = `${stem}${suffix}`;
+    if (!taken.has(candidate)) return candidate;
+    seq++;
+  }
 }
 
 export function upsertCustomSkill(list: readonly WritingSkill[], next: WritingSkill): WritingSkill[] {
@@ -208,10 +214,12 @@ export function parseSkillMarkdown(
     .trim();
   let body = normalized;
   let meta: Record<string, string> = {};
+  let hasFrontmatter = false;
   const fmMatch = /^---[ \t]*\n([\s\S]*?)\n---[ \t]*(?:\n([\s\S]*))?$/.exec(normalized);
   if (fmMatch) {
     const parsedMeta = parseFrontmatterFields(fmMatch[1]);
     if (parsedMeta) {
+      hasFrontmatter = true;
       meta = parsedMeta;
       body = (fmMatch[2] || '').trim();
     }
@@ -221,7 +229,7 @@ export function parseSkillMarkdown(
   return {
     name: rawName.trim().slice(0, MAX_SKILL_NAME_CHARS) || fallbackName,
     description: (meta.description || '').slice(0, MAX_SKILL_DESC_CHARS),
-    instructions: (body || normalized).slice(0, MAX_SKILL_BODY_CHARS),
+    instructions: (hasFrontmatter ? body : body || normalized).slice(0, MAX_SKILL_BODY_CHARS),
   };
 }
 

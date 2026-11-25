@@ -576,6 +576,7 @@ function renderSlashMenu(props: EditorPaneProps): ReactNode {
       ? h(
           'div',
           {
+            id: 'mdstudio-slash-list',
             className: 'mdstudio-slash-list',
             role: 'listbox',
             'aria-labelledby': 'mdstudio-slash-title',
@@ -588,6 +589,7 @@ function renderSlashMenu(props: EditorPaneProps): ReactNode {
                 key: item.id,
                 id: 'mdstudio-slash-opt-' + item.id,
                 role: 'option',
+                tabIndex: -1,
                 'aria-selected': index === slash.selected,
                 className: 'mdstudio-slash-item mdstudio-drop-item' + (index === slash.selected ? ' is-active' : ''),
                 onMouseEnter: function () {
@@ -733,6 +735,9 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
     },
     outline.open && props.visible,
   );
+
+  const activeSlashItem = props.slash.open ? props.slash.items[props.slash.selected] : undefined;
+  const activeSlashId = activeSlashItem ? 'mdstudio-slash-opt-' + activeSlashItem.id : null;
 
   return h(
     'div',
@@ -960,6 +965,7 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
             config: {
               placeholder: content.placeholder,
               ariaLabel: t('editor.label'),
+              slashAria: { open: props.slash.open, activeId: activeSlashId },
             },
             inlineBlocks: props.ai?.inlineBlocks,
             diffTransition: props.ai?.diffTransition,
@@ -982,6 +988,9 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
             spellCheck: false,
             placeholder: content.placeholder,
             'aria-label': t('editor.label'),
+            'aria-controls': props.slash.open ? 'mdstudio-slash-list' : undefined,
+            'aria-expanded': props.slash.open ? 'true' : undefined,
+            'aria-activedescendant': activeSlashId || undefined,
             onChange: function (event: ReactNamespace.ChangeEvent<HTMLTextAreaElement>) {
               const native = event.nativeEvent as InputEvent;
               const inputType = native.inputType || '';

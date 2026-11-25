@@ -637,13 +637,18 @@ check('prepareClipboardDom unwraps section blocks nested inside paragraphs with 
       engine.inlineCss(box3, '#mdstudio h2::before { CONTENT: "§ "; COLOR: #112233; }');
       assert.equal(box3.querySelector('[data-mdstudio-pseudo="before"]')?.textContent, '§ ');
 
-      // F-25: multiple nested lists inside a single <li> preserve their order on WeChat clipboard normalization
+      // F-25: multiple nested lists inside a single <li> preserve their order as valid WeChat sibling blocks
       const listHost = document.createElement('section');
       listHost.innerHTML = '<ul><li>Parent<ul><li>First</li></ul><ol><li>Second</li></ol></li></ul>';
       prepareClipboardDom(listHost);
       const outer = listHost.querySelector('ul')!;
-      const tags = Array.from(outer.children).map((el) => el.tagName.toLowerCase());
-      assert.deepEqual(tags, ['li', 'ul', 'ol'], 'multiple nested lists keep original order after <li>');
+      assert.deepEqual(
+        Array.from(outer.children).map((el) => el.tagName.toLowerCase()),
+        ['li'],
+        'outer list contains only <li> children after hoisting nested lists',
+      );
+      const siblingTags = Array.from(listHost.children).map((el) => el.tagName.toLowerCase());
+      assert.deepEqual(siblingTags, ['ul', 'ul', 'ol'], 'multiple nested lists keep original order after parent list');
 
       // v0.1.8: @layer statement, case-insensitive VAR(), cyclic var(), and Billion Laughs cap
       const box4 = document.createElement('section');

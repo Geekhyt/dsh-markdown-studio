@@ -129,8 +129,15 @@ export function createDocumentCommands(options: DocumentActionsOptions): Documen
       const text = new TextDecoder().decode(markdownEntry.data);
       const mapping = new Map<string, string>();
       let failed = 0;
-      const assetEntries = entries
-        .map((entry) => ({ entry, match: /^assets\/([a-f0-9]{24}\.(png|jpg))$/i.exec(entry.name) }))
+      const slashIdx = markdownEntry.name.lastIndexOf('/');
+      const basePrefix = slashIdx >= 0 ? markdownEntry.name.slice(0, slashIdx + 1) : '';
+      const assetPrefix = basePrefix + 'assets/';
+      const assetEntries = cleanEntries
+        .map((entry) => {
+          const rel =
+            basePrefix && entry.name.startsWith(assetPrefix) ? entry.name.slice(basePrefix.length) : entry.name;
+          return { entry, match: /^assets\/([a-f0-9]{24}\.(png|jpg))$/i.exec(rel) };
+        })
         .filter((item): item is { entry: (typeof entries)[number]; match: RegExpExecArray } => Boolean(item.match));
       await Promise.all(
         assetEntries.map(async function ({ entry, match }) {

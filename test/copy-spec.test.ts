@@ -501,7 +501,9 @@ console.log('v2 editorial blocks (meta, tldr, pull, caption, sign) pass WeChat p
   assert.equal(svgRoot.querySelector('image, script'), null, 'drops <image> and <script> elements');
 
   // Mermaid 11 @{ img } directive stripping & DOM SVG sanitization + SVG absolute length parser
-  const { stripMermaidImageDirectives, sanitizeMermaidSvg } = await import('../src/mermaid-entry');
+  const { stripMermaidImageDirectives, sanitizeMermaidSource, sanitizeMermaidSvg } = await import(
+    '../src/mermaid-entry'
+  );
   const cleanedSrc = stripMermaidImageDirectives(
     'flowchart TD\nA@{ img: "https://evil.example/p.png", label: "Step 1, img: safe {a, b}" } --> B\nC@{\n  shape: rect\n  img: "https://evil.example/multiline.png"\n}',
   );
@@ -520,6 +522,16 @@ console.log('v2 editorial blocks (meta, tldr, pull, caption, sign) pass WeChat p
     ['single-quoted img key', "flowchart TD\nA@{ 'img': 'https://evil.example/sq.png', label: 'ok' }"],
     ['YAML-tagged img key', 'flowchart TD\nA@{ !!str img: "https://evil.example/tag.png", label: "ok" }'],
     ['commented brace before img', 'flowchart TD\nA@{\n  label: "a" # }\n  img: "https://evil.example/cmt.png"\n}'],
+    [
+      'apostrophe inside unquoted label',
+      'flowchart TD\nA@{ label: it\'s fine\n  img: "https://evil.example/apo.png" }',
+    ],
+    ['YAML key anchor/alias img bypass', 'flowchart TD\nA@{ a: &k img, *k: "https://evil.example/alias.png" }'],
+    [
+      'YAML explicit ? img bypass',
+      'flowchart TD\nA@{\n  ? "img"\n  : "https://evil.example/exp.png"\n  label: "ok"\n}',
+    ],
+    ['YAML merge-key nested img bypass', 'flowchart TD\nA@{ a: &m { img: "https://evil.example/merge.png" }, <<: *m }'],
   ] as const) {
     assert.equal(
       stripMermaidImageDirectives(src).includes('evil.example'),
@@ -527,6 +539,34 @@ console.log('v2 editorial blocks (meta, tldr, pull, caption, sign) pass WeChat p
       `stripMermaidImageDirectives strips ${label}`,
     );
   }
+  assert.equal(
+    /\bimg\s*:/i.test(stripMermaidImageDirectives('flowchart TD\nA@{ x: &u "https://evil.example/v.png", img: *u }')),
+    false,
+    'stripMermaidImageDirectives strips value-aliased img: *u key',
+  );
+  for (const [label, src] of [
+    [
+      'sequenceDiagram details',
+      'sequenceDiagram\nA->>B: hi\nproperties {"url": "https://evil.example/seq.png", "note": "ok", "x": "https://evil.example/v"}',
+    ],
+    [
+      'sequenceDiagram invalid json',
+      'sequenceDiagram\nA->>B: hi\nproperties {not-json}\ndetails {"url": "https://evil.example/d.png"}',
+    ],
+    ['sequenceDiagram array json', 'sequenceDiagram\nA->>B: hi\nproperties ["https://evil.example/arr.png"]'],
+    ['classDef CSS url()', 'flowchart TD\nclassDef bad fill:url(https://evil.example/bg.png)\nA:::bad'],
+    ['architecture-beta raw <img>', 'architecture-beta\nservice api[<img src="https://evil.example/a.png">API]'],
+  ] as const) {
+    assert.equal(sanitizeMermaidSource(src).includes('evil.example'), false, `sanitizeMermaidSource scrubs ${label}`);
+  }
+  const foSvg = sanitizeMermaidSvg(
+    '<svg xmlns="http://www.w3.org/2000/svg"><foreignObject x="10" y="20" width="80" height="30"><div xmlns="http://www.w3.org/1999/xhtml">Venn Label</div></foreignObject><foreignObject><div/></foreignObject></svg>',
+  );
+  assert.equal(foSvg.includes('<foreignObject'), false, 'sanitizeMermaidSvg removes all <foreignObject> nodes');
+  assert.ok(
+    foSvg.includes('<text') && foSvg.includes('Venn Label'),
+    'sanitizeMermaidSvg preserves text-only foreignObject labels',
+  );
   const { prependMermaidDirective } = await import('../src/application/use-mermaid-assets');
   const trailingSpaceFm = '---  \ntitle: Demo\n---  \nflowchart TD\nA-->B';
   assert.ok(

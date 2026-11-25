@@ -230,11 +230,11 @@ export function renderArticle(
     if (!forPreview && !settings.imagePlaceholders) return;
     localPlaceholder(img, src);
   });
-  if (options.forCopy) prepareClipboardDom(root);
   engine.inlineCss(root, css + (mathNodes.length && math ? '\n' + math.cssText : ''), {
     allowExternalCssResources: Boolean(settings.allowExternalCssResources),
   });
   if (options.forCopy) {
+    prepareClipboardDom(root);
     removeEmptyHeadingDecorations(root);
     removeEmptyZeroHeightContainers(root);
     stripFontFamilies(root);

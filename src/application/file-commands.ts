@@ -28,6 +28,7 @@ export interface FileActionsOptions {
   setDocumentRef: (ref: DocumentRef) => void;
   stampFile: (handle: FileSystemFileHandle, file: File, text?: string) => Promise<void>;
   flushBeforeSwitch?: () => Promise<boolean>;
+  cancelAutosave?: () => void;
   claimOpenTransition?: () => () => boolean;
   onSaved?: (writtenContent: string) => void;
   isPageAlive?: () => boolean;
@@ -143,6 +144,7 @@ export function createFileCommands(options: FileActionsOptions): FileActionsApi 
     const initialContent = String(options.markdownRef.current || '');
     const title = options.store.getActive().title || doc.title || t('untitled');
     try {
+      if (forceDialog) options.cancelAutosave?.();
       const handle = await chooseSaveHandle(forceDialog, title, initialContent);
       if (!handle || options.store.getActive().id !== articleId || options.fileContext.linkedFile() !== linkedBefore) {
         return;

@@ -290,7 +290,9 @@ function indentOrOutdentSelection(options: EditorShortcutsOptions, shiftKey: boo
   const range = options.selection();
   const { blockStart, blockEnd } = blockBoundsForSelection(value, range.start, range.end);
   const spansMultipleLines = range.end > range.start && value.slice(range.start, range.end).includes('\n');
-  const selectsWholeLine = range.end > range.start && range.start === blockStart && range.end === blockEnd;
+  const leadingWsLen = (value.slice(blockStart, blockEnd).match(/^[ \t]*/) || [''])[0].length;
+  const selectsWholeLine =
+    range.end > range.start && range.start <= blockStart + leadingWsLen && range.end === blockEnd;
   if (shiftKey) {
     const lines = value.slice(blockStart, blockEnd).split('\n');
     const out = outdentBlock(lines, range.start, range.end, blockStart);

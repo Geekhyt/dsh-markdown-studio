@@ -371,6 +371,31 @@ assert.equal(
   );
   assert.equal(rgbPreview.bg, '#101820', 'extractCustomThemePreview parses rgb() root background');
   assert.equal(rgbPreview.accent, '#0d7ff2', 'extractCustomThemePreview prioritizes root hsl() accent over descendant');
+
+  // Cluster B regressions: fail-closed var() inside image-set(), CSS Nesting {}, and var()/8-digit hex preview
+  const imageSetVar =
+    ':root { --u: "https://evil.example/track.png"; } p { background-image: image-set(var(--u) 1x); color: #111; }';
+  assert.equal(
+    hasExternalCssUrl(imageSetVar),
+    true,
+    'hasExternalCssUrl flags var() nested inside image-set() fail-closed',
+  );
+  assert.equal(
+    stripExternalCssUrls(imageSetVar).includes('image-set'),
+    false,
+    'stripExternalCssUrls strips image-set(var()) external vector while keeping safe declarations',
+  );
+  const nestedCss = '.mdstudio-content p { color: #222; & span { color: #999; } background-color: #fafafa; }';
+  assert.ok(
+    stripExternalCssUrls(nestedCss).includes('background-color: #fafafa'),
+    'CSS Nesting {} inside rule does not drop subsequent declarations',
+  );
+  const varThemePreview = extractCustomThemePreview(
+    ':root { --bg: #12161f; --fg: #e2e8f0ff; --acc: crimson; } .mdstudio-content { background-color: var(--bg); color: var(--fg); } a { color: var(--acc); }',
+  );
+  assert.equal(varThemePreview.bg, '#12161f', 'extractCustomThemePreview resolves var(--bg) custom property');
+  assert.equal(varThemePreview.fg, '#e2e8f0', 'extractCustomThemePreview resolves 8-digit hex #rrggbbaa');
+  assert.equal(varThemePreview.accent, '#dc143c', 'extractCustomThemePreview resolves named CSS color');
 }
 
 console.log('59 custom-css and custom-themes checks passed.');

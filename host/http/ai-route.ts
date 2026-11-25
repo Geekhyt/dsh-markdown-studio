@@ -1,109 +1,34 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { AiHostError, type AiHostService } from '../application/ai-service';
-import { headerValue, isAllowedOrigin, isLoopbackReq } from './routes';
+import {
+  checkHostAuthJson,
+  clampActionLabel,
+  headerValue,
+  type HostAuthChecker,
+  isAllowedOrigin,
+  isJsonContentType,
+  isLoopbackReq,
+  RequestBodyError,
+  readJsonObjectBody,
+  sendJson,
+} from './routes';
 
 export const AI_ROUTE_PATH = '/api/markdown-studio/ai';
-export const MAX_AI_BODY_BYTES = 512 * 1024;
-const AI_BODY_READ_TIMEOUT_MS = 30_000;
-
-/** Exact MIME essence check: `text/plain;x=application/json` must not pass as JSON. */
-function isJsonContentType(value: string): boolean {
-  return value.split(';')[0].trim().toLowerCase() === 'application/json';
-}
-
-function sendJson(res: ServerResponse, status: number, payload: unknown): void {
-  if (res.headersSent || res.destroyed || res.closed || res.writableEnded) return;
-  const body = JSON.stringify(payload);
-  res.statusCode = status;
-  res.setHeader('content-type', 'application/json; charset=utf-8');
-  res.setHeader('cache-control', 'no-store');
-  res.setHeader('content-length', Buffer.byteLength(body));
-  res.end(body);
-}
+export const MAX_AI_BODY_BYTES = 1024 * 1024;
 
 function writeNdjson(res: ServerResponse, event: Record<string, unknown>): void {
   if (res.writableEnded || res.destroyed || res.closed) return;
   res.write(JSON.stringify(event) + '\n');
 }
 
-async function readJsonObject(req: IncomingMessage, limit: number): Promise<Record<string, unknown>> {
-  const rawLen = headerValue(req.headers['content-length']).trim();
-  if (rawLen && Number.isFinite(Number(rawLen)) && Number(rawLen) > limit) {
-    throw new AiHostError('BODY_TOO_LARGE', '请求内容超出限制');
-  }
-  if (req.destroyed || req.aborted) {
-    throw new AiHostError('BAD_JSON', '请求连接已提前断开');
-  }
-  if (req.readableEnded) {
-    return {};
-  }
-  return await new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let size = 0;
-    let settled = false;
-    const timer = setTimeout(() => {
-      fail(new AiHostError('BAD_JSON', '读取请求超时'));
-    }, AI_BODY_READ_TIMEOUT_MS);
-    if (typeof timer.unref === 'function') timer.unref();
-    const cleanup = (): void => {
-      clearTimeout(timer);
-      req.removeListener('data', onData);
-      req.removeListener('end', onEnd);
-      req.removeListener('error', onError);
-      req.removeListener('aborted', onAborted);
-      req.removeListener('close', onClose);
-    };
-    const fail = (err: Error): void => {
-      if (settled) return;
-      settled = true;
-      chunks.length = 0;
-      cleanup();
-      reject(err);
-    };
-    const onData = (chunk: unknown): void => {
-      if (settled) return;
-      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
-      size += buf.length;
-      if (size > limit) {
-        fail(new AiHostError('BODY_TOO_LARGE', '请求内容超出限制'));
-        if (typeof req.pause === 'function') req.pause();
-        return;
-      }
-      chunks.push(buf);
-    };
-    const onEnd = (): void => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      try {
-        const raw = Buffer.concat(chunks).toString('utf8');
-        chunks.length = 0;
-        const parsed: unknown = raw ? JSON.parse(raw) : {};
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-          reject(new AiHostError('BAD_JSON', '请求体必须是 JSON 对象'));
-          return;
-        }
-        resolve(parsed as Record<string, unknown>);
-      } catch {
-        reject(new AiHostError('BAD_JSON', '请求 JSON 无法解析'));
-      }
-    };
-    const onError = (err: Error): void => fail(err);
-    const onAborted = (): void => fail(new AiHostError('BAD_JSON', '请求连接已提前断开'));
-    const onClose = (): void => {
-      if (!req.complete) fail(new AiHostError('BAD_JSON', '请求连接已提前断开'));
-    };
-    req.on('data', onData);
-    req.on('end', onEnd);
-    req.on('error', onError);
-    req.on('aborted', onAborted);
-    req.on('close', onClose);
-  });
-}
-
-function verifyRequestEnvelope(req: IncomingMessage, res: ServerResponse): boolean {
+function verifyRequestEnvelope(req: IncomingMessage, res: ServerResponse, checkAuth?: HostAuthChecker): boolean {
   if (req.method !== 'POST') {
-    sendJson(res, 405, { ok: false, error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed' } });
+    sendJson(
+      res,
+      405,
+      { ok: false, error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed' } },
+      { allow: 'POST' },
+    );
     return false;
   }
   if (!isLoopbackReq(req)) {
@@ -117,6 +42,7 @@ function verifyRequestEnvelope(req: IncomingMessage, res: ServerResponse): boole
     sendJson(res, 403, { ok: false, error: { code: 'ORIGIN_REJECTED', message: '请求来源不被允许' } });
     return false;
   }
+  if (!checkHostAuthJson(req, res, checkAuth)) return false;
   if (!isJsonContentType(headerValue(req.headers['content-type']))) {
     sendJson(res, 415, { ok: false, error: { code: 'CONTENT_TYPE_REQUIRED', message: '需要 application/json 请求' } });
     return false;
@@ -144,7 +70,9 @@ async function handleStreamAction(
   res.statusCode = 200;
   res.setHeader('content-type', 'application/x-ndjson; charset=utf-8');
   res.setHeader('cache-control', 'no-store');
+  res.setHeader('x-content-type-options', 'nosniff');
   res.setHeader('x-accel-buffering', 'no');
+  res.flushHeaders?.();
   try {
     const route = await service.stream(
       body,
@@ -158,11 +86,7 @@ async function handleStreamAction(
     if (error instanceof AiHostError) {
       writeNdjson(res, { type: 'error', code: error.code, message: error.message, hint: error.hint });
     } else {
-      writeNdjson(res, {
-        type: 'error',
-        code: 'INTERNAL',
-        message: 'AI 服务内部错误',
-      });
+      writeNdjson(res, { type: 'error', code: 'INTERNAL', message: 'AI 服务内部错误' });
     }
   } finally {
     res.removeListener('close', onClose);
@@ -175,6 +99,7 @@ export function createAiRoute(options: {
   service: AiHostService;
   maxBodyBytes?: number;
   signal?: AbortSignal;
+  checkAuth?: HostAuthChecker;
 }): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   const service = options.service;
   const maxBodyBytes = options.maxBodyBytes || MAX_AI_BODY_BYTES;
@@ -182,8 +107,8 @@ export function createAiRoute(options: {
 
   return async function aiRoute(req, res) {
     try {
-      if (!verifyRequestEnvelope(req, res)) return;
-      const body = await readJsonObject(req, maxBodyBytes);
+      if (!verifyRequestEnvelope(req, res, options.checkAuth)) return;
+      const body = await readJsonObjectBody(req, maxBodyBytes);
       const action = typeof body.action === 'string' ? body.action : '';
       if (action === 'ai.status') {
         sendJson(res, 200, { ok: true, ...(await service.status()) });
@@ -193,16 +118,25 @@ export function createAiRoute(options: {
         await handleStreamAction(service, body, res, teardownSignal);
         return;
       }
-      sendJson(res, 400, { ok: false, error: { code: 'UNKNOWN_ACTION', message: '未知操作: ' + action } });
+      sendJson(res, 400, {
+        ok: false,
+        error: { code: 'UNKNOWN_ACTION', message: '未知操作: ' + clampActionLabel(action) },
+      });
     } catch (error) {
+      if (error instanceof RequestBodyError) {
+        const closeHeaders: Record<string, string> =
+          error.code === 'BODY_TOO_LARGE' || error.code === 'REQUEST_TIMEOUT' ? { connection: 'close' } : {};
+        const status = error.code === 'BAD_JSON' ? 200 : error.status;
+        sendJson(
+          res,
+          status,
+          { ok: false, error: { code: error.code, message: error.message, hint: '' } },
+          closeHeaders,
+        );
+        return;
+      }
       if (error instanceof AiHostError) {
-        if (error.code === 'BODY_TOO_LARGE' && !res.headersSent) {
-          res.setHeader('connection', 'close');
-        }
-        sendJson(res, error.code === 'BODY_TOO_LARGE' ? 413 : 200, {
-          ok: false,
-          error: { code: error.code, message: error.message, hint: error.hint },
-        });
+        sendJson(res, 200, { ok: false, error: { code: error.code, message: error.message, hint: error.hint } });
         return;
       }
       sendJson(res, 500, { ok: false, error: { code: 'INTERNAL', message: 'AI 服务内部错误' } });

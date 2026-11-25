@@ -66,6 +66,7 @@ export type CustomThemeIntent = 'upsert' | 'delete';
 
 export interface MergeIntents {
   docIntents: ReadonlyMap<string, DocIntent>;
+  purgeRevs?: ReadonlyMap<string, number>;
   dirtyFields?: ReadonlyMap<string, ReadonlySet<ArticleField>>;
   localCustomThemes?: CustomTheme[] | null;
   themeIntents?: ReadonlyMap<string, CustomThemeIntent>;
@@ -132,6 +133,7 @@ function mergeDocLists(
   externalDocs: readonly Article[],
   intents: ReadonlyMap<string, DocIntent>,
   dirtyFields?: ReadonlyMap<string, ReadonlySet<ArticleField>>,
+  purgeRevs?: ReadonlyMap<string, number>,
 ): Article[] {
   const localById = new Map<string, Article>();
   for (const doc of localDocs) localById.set(doc.id, doc);
@@ -140,7 +142,14 @@ function mergeDocLists(
   for (const ext of externalDocs) {
     seen.add(ext.id);
     const intent = intents.get(ext.id);
-    if (intent === 'trashed' || intent === 'purged') continue;
+    if (intent === 'trashed') continue;
+    if (intent === 'purged') {
+      const baseRev = purgeRevs?.get(ext.id);
+      if (baseRev !== undefined && readRev(ext) > baseRev) {
+        merged.push(ext);
+      }
+      continue;
+    }
     const local = localById.get(ext.id);
     if (local && intent === 'live') {
       merged.push(mergeLiveArticle(local, ext, dirtyFields?.get(ext.id)));
@@ -196,7 +205,7 @@ function mergeSharedThemes(
 }
 
 export function mergeExternalLibrary(local: LibraryState, external: LibraryState, merge: MergeIntents): LibraryState {
-  const docs = mergeDocLists(local.docs, external.docs, merge.docIntents, merge.dirtyFields);
+  const docs = mergeDocLists(local.docs, external.docs, merge.docIntents, merge.dirtyFields, merge.purgeRevs);
   const liveIds = new Set(docs.map((entry) => entry.id));
   const activeId = liveIds.has(local.activeId)
     ? local.activeId
@@ -250,6 +259,7 @@ export class DocumentStore {
   private pendingCustomThemes = false;
   /** Single authoritative per-article local intent: an id can never be both live and purged. */
   private readonly pendingIntents = new Map<string, DocIntent>();
+  private readonly pendingPurgeRevs = new Map<string, number>();
   private readonly pendingFields = new Map<string, Set<ArticleField>>();
   private readonly pendingThemeIntents = new Map<string, CustomThemeIntent>();
   private readonly statusListeners = new Set<() => void>();
@@ -348,6 +358,7 @@ export class DocumentStore {
     if (patch.settings !== undefined) dirtyFields.push('settings');
     if (patch.view !== undefined) dirtyFields.push('view');
     this.pendingIntents.set(active.id, 'live');
+    this.pendingPurgeRevs.delete(active.id);
     if (dirtyFields.length) this.markFieldsDirty(active.id, dirtyFields);
     if (syncCustom) {
       this.pendingCustomThemes = true;
@@ -394,6 +405,7 @@ export class DocumentStore {
     const target = this.state.docs.find((entry) => entry.id === id);
     if (!target) return this.getActive();
     this.pendingIntents.set(id, 'trashed');
+    this.pendingPurgeRevs.delete(id);
     this.pendingFields.delete(id);
     const trash = [{ ...target, rev: bumpRev(target), deletedAt: this.now() }, ...(this.state.trash || [])];
     const remaining = this.state.docs.filter((entry) => entry.id !== id);
@@ -438,6 +450,7 @@ export class DocumentStore {
       this.recordThemeDiff(activeCustom, sharedCustom);
     }
     this.pendingIntents.set(restored.id, 'live');
+    this.pendingPurgeRevs.delete(restored.id);
     this.markFieldsDirty(restored.id, ['title', 'markdown', 'settings', 'view']);
     const trash = currentTrash.filter((entry) => entry !== item);
     const docs = [restored, ...this.state.docs.map((doc) => applySharedCustomThemes(doc, sharedCustom))];
@@ -446,7 +459,9 @@ export class DocumentStore {
   }
 
   purge(id: string): void {
+    const item = (this.state.trash || []).find((entry) => entry.id === id);
     this.pendingIntents.set(id, 'purged');
+    if (item) this.pendingPurgeRevs.set(id, readRev(item));
     this.pendingFields.delete(id);
     const trash = (this.state.trash || []).filter((entry) => entry.id !== id);
     this.commit({ activeId: this.state.activeId, docs: this.state.docs, trash });
@@ -455,6 +470,7 @@ export class DocumentStore {
   emptyTrash(): void {
     for (const item of this.state.trash || []) {
       this.pendingIntents.set(item.id, 'purged');
+      this.pendingPurgeRevs.set(item.id, readRev(item));
       this.pendingFields.delete(item.id);
     }
     this.commit({ activeId: this.state.activeId, docs: this.state.docs, trash: [] });
@@ -466,6 +482,7 @@ export class DocumentStore {
     this.pendingActiveSwitch = false;
     this.pendingCustomThemes = false;
     this.pendingIntents.clear();
+    this.pendingPurgeRevs.clear();
     this.pendingFields.clear();
     this.pendingThemeIntents.clear();
   }
@@ -477,6 +494,7 @@ export class DocumentStore {
   private buildMergeIntents(): MergeIntents {
     return {
       docIntents: this.pendingIntents,
+      purgeRevs: this.pendingPurgeRevs,
       dirtyFields: this.pendingFields,
       localCustomThemes: this.pendingCustomThemes ? this.getActive().settings.customThemes || [] : null,
       themeIntents: this.pendingThemeIntents,

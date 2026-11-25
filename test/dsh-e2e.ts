@@ -427,6 +427,31 @@ try {
   );
   if (process.env.DSH_E2E_IMMERSIVE_SCREENSHOT)
     await page.screenshot({ path: process.env.DSH_E2E_IMMERSIVE_SCREENSHOT });
+  // Hovering immersive Exit button in real DSH must render a portaled tooltip inside viewport without stretching the dock
+  const dockWidthBefore = await page
+    .locator('.mdstudio-immersive-dock')
+    .evaluate((el) => Math.round(el.getBoundingClientRect().width));
+  const exitBox = await page.locator('.mdstudio-immersive-exit').boundingBox();
+  assert.ok(exitBox, 'immersive Exit button is measurable');
+  await page.mouse.move(exitBox.x + exitBox.width / 2, exitBox.y + exitBox.height / 2);
+  await page.waitForTimeout(180);
+  const dockAfterHover = await page.evaluate(() => {
+    const dock = document.querySelector('.mdstudio-immersive-dock') as HTMLElement | null;
+    const tip = document.querySelector('[role="tooltip"]') as HTMLElement | null;
+    return {
+      dockWidth: dock ? Math.round(dock.getBoundingClientRect().width) : 0,
+      tipRight: tip ? Math.round(tip.getBoundingClientRect().right) : 0,
+      tipInsideDock: Boolean(dock && tip && dock.contains(tip)),
+      vw: window.innerWidth,
+    };
+  });
+  assert.ok(
+    Math.abs(dockAfterHover.dockWidth - dockWidthBefore) <= 4,
+    `immersive dock width stays stable on Exit hover (${dockWidthBefore} -> ${dockAfterHover.dockWidth})`,
+  );
+  assert.equal(dockAfterHover.tipInsideDock, false, 'real DSH immersive tooltip portals outside dock');
+  assert.ok(dockAfterHover.tipRight <= dockAfterHover.vw, 'real DSH immersive tooltip stays within viewport');
+  await page.mouse.move(20, 20);
   await page.locator('.mdstudio-immersive-mode', { hasText: '预览' }).click();
   await page.waitForTimeout(100);
   assert.equal(
@@ -565,6 +590,29 @@ try {
   assert.equal(hostAssetCheck.storeOk, true, 'real DSH host stores PNG asset');
   assert.match(hostAssetCheck.assetPath || '', /^assets\/[a-f0-9]{24}\.png$/, 'stored asset uses 24-hex SHA-256 path');
   assert.equal(hostAssetCheck.loopbackStatus, 200, 'read-only loopback server serves stored PNG with 200 OK');
+
+  // Unauthenticated external requests (no DSH auth cookie) must receive 401 across all 5 host HTTP routes
+  const origin = new URL(authenticatedUrl).origin;
+  const unauthWechat = await fetch(`${origin}/api/markdown-studio/wechat`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'health' }),
+  });
+  assert.equal(unauthWechat.status, 401, 'unauthenticated /api/markdown-studio/wechat returns 401');
+  const unauthAi = await fetch(`${origin}/api/markdown-studio/ai`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'ai.status' }),
+  });
+  assert.equal(unauthAi.status, 401, 'unauthenticated /api/markdown-studio/ai returns 401');
+  const unauthMath = await fetch(`${origin}/api/markdown-studio/math.js`);
+  assert.equal(unauthMath.status, 401, 'unauthenticated /api/markdown-studio/math.js returns 401');
+  const unauthMermaid = await fetch(`${origin}/api/markdown-studio/mermaid.js`);
+  assert.equal(unauthMermaid.status, 401, 'unauthenticated /api/markdown-studio/mermaid.js returns 401');
+  const unauthAsset = await fetch(
+    `${origin}/api/markdown-studio/assets/${(hostAssetCheck.assetPath || '').replace(/^assets\//, '')}`,
+  );
+  assert.equal(unauthAsset.status, 401, 'unauthenticated /api/markdown-studio/assets/<fn> returns 401');
 
   assert.equal(
     await page.locator('.mdstudio-focus-btn svg').getAttribute('data-icon'),

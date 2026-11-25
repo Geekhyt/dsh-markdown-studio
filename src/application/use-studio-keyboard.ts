@@ -28,6 +28,7 @@ export interface StudioKeyboardState {
   outlineOpen: boolean;
   searchOpen: boolean;
   hasAiSession: boolean;
+  bubbleVisible?: boolean;
   immersive: SurfaceImmersiveMode;
   containerWidth: number;
 }
@@ -44,6 +45,7 @@ export interface StudioKeyboardActions {
   onCloseOutline: () => void;
   onCloseSearch: () => void;
   onCancelAi: () => void;
+  onClearBubble?: () => void;
 }
 
 export interface UseStudioKeyboardOptions {
@@ -141,7 +143,17 @@ function runEscapeAction(
   else if (action === 'close-slash') actions.onCloseSlash();
   else if (action === 'close-search') actions.onCloseSearch();
   else if (action === 'cancel-ai') actions.onCancelAi();
-  else if (action === 'close-outline') {
+  else if (action === 'clear-bubble') {
+    const focusInBubble = isFocusInside('.mdstudio-skill-split');
+    actions.onClearBubble?.();
+    if (focusInBubble) {
+      root
+        ?.querySelector<HTMLElement>(
+          '.mdstudio-editor-pane:not(.mdstudio-css-workbench) .cm-content, textarea.mdstudio-editor',
+        )
+        ?.focus();
+    }
+  } else if (action === 'close-outline') {
     const focusInOutline = isFocusInside('.mdstudio-outline');
     actions.onCloseOutline();
     if (focusInOutline) root?.querySelector<HTMLElement>('.mdstudio-outline-anchor button')?.focus();
@@ -187,6 +199,7 @@ export function useStudioKeyboard(options: UseStudioKeyboardOptions): void {
         outlineOpen: state.outlineOpen,
         searchOpen: state.searchOpen,
         hasAiSession: state.hasAiSession,
+        bubbleVisible: Boolean(state.bubbleVisible),
         immersive: state.immersive,
       });
       runEscapeAction(action, event, root, actions);

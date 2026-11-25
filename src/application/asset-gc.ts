@@ -12,7 +12,9 @@ const BUILTIN_SAMPLE_ASSETS = new Set([
 const DEFAULT_MIN_ASSET_AGE_MS = 60_000;
 
 export interface AssetGarbageCollectorOptions {
-  hostClient: Pick<HostClient, 'listAssets' | 'deleteAsset'>;
+  hostClient: Pick<HostClient, 'listAssets'> & {
+    deleteAsset: (filename: string, expectedStoredAt?: string) => Promise<boolean | void>;
+  };
   getSnapshot: () => LibraryState;
   mermaidFilenames?: () => ReadonlySet<string>;
   extraFilenames?: () => Iterable<string>;
@@ -29,9 +31,10 @@ export interface AssetGarbageCollector {
 }
 
 function isWithinGraceWindow(storedAt: string | undefined, minAgeMs: number, now: number): boolean {
-  if (!storedAt || minAgeMs <= 0) return false;
+  if (minAgeMs <= 0) return false;
+  if (!storedAt) return true;
   const parsed = Date.parse(storedAt);
-  return Number.isFinite(parsed) && now - parsed < minAgeMs;
+  return !Number.isFinite(parsed) || now - parsed < minAgeMs;
 }
 
 export function createAssetGarbageCollector(options: AssetGarbageCollectorOptions): AssetGarbageCollector {
@@ -78,9 +81,10 @@ export function createAssetGarbageCollector(options: AssetGarbageCollectorOption
     const removed: string[] = [];
     await Promise.all(
       orphans.map(async function (item) {
+        if (liveReferences().has(item.filename)) return;
         try {
-          await options.hostClient.deleteAsset(item.filename, item.storedAt);
-          removed.push(item.filename);
+          const deleted = await options.hostClient.deleteAsset(item.filename, item.storedAt);
+          if (deleted !== false) removed.push(item.filename);
         } catch {
           /* best-effort cleanup when host is offline */
         }

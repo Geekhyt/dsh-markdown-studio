@@ -447,6 +447,73 @@ press('e', 'insertMathBlock', { altKey: true, shiftKey: true, code: 'KeyE' });
   sel = { start: 0, end: 0 };
   fmt.insertList();
   assert.equal(val, '- todo', 'bullet list converts task item to regular bullet instead of stripping');
+
+  // Cluster D5 regressions: whitespace-trimmed wrap, ***Hello*** inner italic toggle, multi-line list wrap, dynamic backtick fence
+  val = 'word next';
+  sel = { start: 0, end: 5 }; // "word "
+  fmt.wrapSelection('**', '**');
+  assert.equal(val, '**word** next', 'trailing space stays outside bold markers');
+
+  val = '***Hello***';
+  sel = { start: 0, end: val.length };
+  fmt.wrapSelection('*', '*');
+  assert.equal(val, '**Hello**', 'selecting ***Hello*** and toggling italic unwraps to **Hello**');
+
+  val = '- Item A\n- Item B';
+  sel = { start: 0, end: val.length };
+  fmt.wrapSelection('**', '**');
+  assert.equal(
+    val,
+    '- **Item A**\n- **Item B**',
+    'multi-line list bold wraps each item body preserving bullet markers',
+  );
+
+  val = 'a\n```js\nb\n```';
+  sel = { start: 0, end: val.length };
+  fmt.insertCode();
+  assert.ok(
+    val.startsWith('````js\n') && val.endsWith('\n````\n'),
+    'insertCode uses 4-backtick fence when selection contains ```',
+  );
+
+  // Double-Tab on single-line whole selection indents twice instead of deleting text
+  const { createEditorShortcuts } = await import('../src/application/editor-shortcuts');
+  let tabVal = 'Hello';
+  let tabSel = { start: 0, end: 5 };
+  const onShortcut = createEditorShortcuts({
+    t: (k) => k,
+    notify: () => {},
+    editorValue: () => tabVal,
+    selection: () => tabSel,
+    replaceRange: (_cur, start, end, text, nextStart, nextEnd) => {
+      tabVal = tabVal.slice(0, start) + text + tabVal.slice(end);
+      tabSel = { start: nextStart ?? start + text.length, end: nextEnd ?? start + text.length };
+    },
+    undo: () => {},
+    redo: () => {},
+    copyArticle: () => {},
+    linkedFile: () => null,
+    saveLocalFile: async () => {},
+    persistNow: () => true,
+    wrapSelection: () => {},
+    setLinePrefix: () => {},
+    applyHeadingLevel: () => {},
+    insertMathBlock: () => {},
+    insertCodeBlock: () => {},
+    insertScrollBox: () => {},
+    insertScrollXBox: () => {},
+    insertTable: () => {},
+    insertHr: () => {},
+    openImagePicker: () => {},
+    toggleLinkFootnotes: () => {},
+    openSearch: () => {},
+  });
+  const tabEvent = () =>
+    ({ key: 'Tab', shiftKey: false, ctrlKey: false, metaKey: false, altKey: false, preventDefault() {} }) as never;
+  onShortcut(tabEvent());
+  assert.equal(tabVal, '  Hello');
+  onShortcut(tabEvent());
+  assert.equal(tabVal, '    Hello', 'second Tab on single-line selection keeps indenting instead of replacing text');
 }
 
 console.log('ok - Notion-aligned, conflict-free formatting, document, multi-line Tab, and macOS Option shortcuts pass');

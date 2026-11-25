@@ -77,8 +77,9 @@ function cascadeOrder(a: [string, StyleValue], b: [string, StyleValue]): number 
 export function parseDeclarations(body: string): Declaration[] {
   const decls: Declaration[] = [];
   splitCssTopLevel(body, ';').forEach(function (part) {
-    if (!part.trim()) return;
-    const split = /^\s*([^:]+?)\s*:\s*([\s\S]*)$/.exec(part);
+    const trimmed = part.trim();
+    if (!trimmed || trimmed.includes('{') || trimmed.includes('}')) return;
+    const split = /^\s*([^:]+?)\s*:\s*([\s\S]*)$/.exec(trimmed);
     if (!split) return;
     const rawProp = split[1].trim();
     const prop = rawProp.indexOf('--') === 0 ? rawProp : rawProp.toLowerCase();
@@ -428,6 +429,7 @@ function resolveVarsChecked(
     const comma = findTopLevelComma(inner);
     const name = (comma === -1 ? inner : inner.slice(0, comma)).trim();
     const fallback = comma === -1 ? '' : inner.slice(comma + 1).trim();
+    const hasFallback = comma !== -1;
     const raw = Object.hasOwn(vars, name) ? vars[name] : undefined;
     if (raw != null && raw !== '' && !visiting.has(name)) {
       visiting.add(name);
@@ -435,14 +437,14 @@ function resolveVarsChecked(
       visiting.delete(name);
       if (nested.valid && nested.value !== '') {
         out += nested.value;
-      } else if (fallback) {
+      } else if (hasFallback) {
         const fb = resolveVarsChecked(fallback, vars, level + 1, visiting, budget);
         if (!fb.valid) return { value: '', valid: false };
         out += fb.value;
       } else {
         return { value: '', valid: false };
       }
-    } else if (fallback) {
+    } else if (hasFallback) {
       const fb = resolveVarsChecked(fallback, vars, level + 1, visiting, budget);
       if (!fb.valid) return { value: '', valid: false };
       out += fb.value;
@@ -472,7 +474,6 @@ function decodeContentValue(value: string): string {
         return '';
       }
     }
-    if (escaped === 'n') return '\n';
     return escaped || '';
   });
 }
@@ -617,6 +618,10 @@ function matchesElement(element: HTMLElement, selector: string): boolean {
   }
 }
 
+function isSvgInterior(element: Element): boolean {
+  return element.tagName.toLowerCase() !== 'svg' && Boolean(element.closest('svg'));
+}
+
 function queryAll(root: HTMLElement, selector: string): HTMLElement[] {
   const found: HTMLElement[] = [];
   if (matchesElement(root, selector)) found.push(root);
@@ -626,7 +631,10 @@ function queryAll(root: HTMLElement, selector: string): HTMLElement[] {
   } catch {
     return found;
   }
-  for (let i = 0; i < list.length; i++) found.push(list[i] as HTMLElement);
+  for (let i = 0; i < list.length; i++) {
+    const el = list[i];
+    if (!isSvgInterior(el)) found.push(el as HTMLElement);
+  }
   return found;
 }
 
@@ -654,7 +662,7 @@ function buildElementVars(
     const decl = own!.get(name);
     if (!decl) return;
     status.set(name, 'visiting');
-    const depRe = /var\(\s*(--[\w-]+)/gi;
+    const depRe = /var\(\s*(--[^\s,)]+)/gi;
     let depMatch: RegExpExecArray | null;
     while ((depMatch = depRe.exec(decl.value)) !== null) {
       const dep = depMatch[1];
@@ -831,12 +839,20 @@ export function inlineCss<T extends HTMLElement>(root: T, css: string, options?:
     const elementVars = buildElementVars(element, root, varMap, varCache);
     Object.keys(record).forEach(function (pseudo) {
       const props = record[pseudo];
+      const pseudoVars: Record<string, string> = { ...elementVars };
+      props.forEach(function (list, prop) {
+        if (prop.indexOf('--') !== 0) return;
+        const winner = winningCandidate(list);
+        if (!winner) return;
+        const checked = resolveVarsChecked(winner.value, pseudoVars, 0, new Set<string>(), { steps: 0 });
+        if (checked.valid && checked.value) pseudoVars[prop] = checked.value;
+      });
       const contentList = props.get('content');
       if (!contentList || !contentList.length) return;
       const orderedContent = contentList.map((decl): [string, StyleValue] => ['content', decl]).sort(cascadeOrder);
       let rawContent = '';
       for (let idx = orderedContent.length - 1; idx >= 0; idx--) {
-        const checked = resolveVarsChecked(orderedContent[idx][1].value, elementVars, 0, new Set<string>(), {
+        const checked = resolveVarsChecked(orderedContent[idx][1].value, pseudoVars, 0, new Set<string>(), {
           steps: 0,
         });
         if (checked.valid) {
@@ -856,7 +872,7 @@ export function inlineCss<T extends HTMLElement>(root: T, css: string, options?:
       orderedPseudo.sort(cascadeOrder).forEach(function (pair) {
         const prop = pair[0];
         const decl = pair[1];
-        const checked = resolveVarsChecked(decl.value, elementVars, 0, new Set<string>(), { steps: 0 });
+        const checked = resolveVarsChecked(decl.value, pseudoVars, 0, new Set<string>(), { steps: 0 });
         if (!checked.valid) return;
         if (!allowExternal && hasExternalCssUrl(checked.value)) return;
         try {

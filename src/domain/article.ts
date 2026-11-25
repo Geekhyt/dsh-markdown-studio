@@ -43,7 +43,7 @@ export function parseView(value: unknown): ViewMode {
   return value === 'edit' || value === 'preview' ? value : 'split';
 }
 
-const FRONTMATTER_BLOCK_RE = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
+const FRONTMATTER_BLOCK_RE = /^\uFEFF?---[ \t]*\r?\n(?:([\s\S]*?)\r?\n)?---[ \t]*(?:\r?\n|$)/;
 
 function consumeYamlBlockScalar(lines: string[], startIndex: number, folded: boolean): { value: string; next: number } {
   const collected: string[] = [];
@@ -69,13 +69,28 @@ function consumeYamlBlockScalar(lines: string[], startIndex: number, folded: boo
   return { value, next: j - 1 };
 }
 
-/** Parse validated leading YAML frontmatter (`key: value`, block scalars, list items, comments; never leading `---` HR). */
+function consumeFlowBracket(lines: string[], startIndex: number, firstValue: string): { value: string; next: number } {
+  const parts = [firstValue];
+  let j = startIndex;
+  while (!parts[parts.length - 1].trim().endsWith(']') && j + 1 < lines.length) {
+    j++;
+    parts.push(lines[j].trim());
+  }
+  const joined = parts
+    .join(' ')
+    .replace(/^\[|\]$/g, '')
+    .trim();
+  return { value: joined, next: j };
+}
+
+/** Parse validated leading YAML frontmatter (`key: value`, block scalars, list items, empty blocks, flow arrays, comments; never leading `---` HR). */
 export function parseFrontmatterBlock(
   text: string,
 ): { meta: Record<string, string>; body: string; offset: number } | null {
   const match = FRONTMATTER_BLOCK_RE.exec(text);
   if (!match) return null;
-  const lines = match[1].split(/\r?\n/);
+  const rawBlock = match[1] ?? '';
+  const lines = rawBlock ? rawBlock.split(/\r?\n/) : [];
   const meta: Record<string, string> = Object.create(null) as Record<string, string>;
   let lastKey = '';
   for (let i = 0; i < lines.length; i++) {
@@ -87,7 +102,7 @@ export function parseFrontmatterBlock(
       meta[lastKey] = meta[lastKey] ? meta[lastKey] + ', ' + item : item;
       continue;
     }
-    const pair = /^([A-Za-z_][\w-]*)\s*:\s*(.*)$/.exec(line);
+    const pair = /^([A-Za-z_][\w.-]*)\s*:\s*(.*)$/.exec(line);
     if (!pair) return null;
     let value = pair[2].trim();
     if (/^[|>][+-]?$/.test(value)) {
@@ -95,6 +110,13 @@ export function parseFrontmatterBlock(
       lastKey = pair[1];
       meta[lastKey] = block.value;
       i = block.next;
+      continue;
+    }
+    if (value.startsWith('[') && !value.endsWith(']')) {
+      const flow = consumeFlowBracket(lines, i, value);
+      lastKey = pair[1];
+      meta[lastKey] = flow.value;
+      i = flow.next;
       continue;
     }
     if (

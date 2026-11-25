@@ -233,3 +233,45 @@ export function useLazyChunkReady(
     },
   };
 }
+
+const PLUGIN_LIFECYCLE_KEY = '__dshPluginLifecycle__:dsh-markdown-studio';
+
+interface PluginLifecycleBus {
+  mounted: boolean;
+  onUnmount: Set<() => void>;
+}
+
+function getPluginLifecycleBus(): PluginLifecycleBus {
+  const host = globalThis as Record<string, unknown>;
+  const existing = host[PLUGIN_LIFECYCLE_KEY] as PluginLifecycleBus | undefined;
+  if (existing) return existing;
+  const created: PluginLifecycleBus = { mounted: true, onUnmount: new Set() };
+  host[PLUGIN_LIFECYCLE_KEY] = created;
+  return created;
+}
+
+export function isPluginLifecycleMounted(): boolean {
+  return getPluginLifecycleBus().mounted;
+}
+
+export function setPluginLifecycleMounted(mounted: boolean): void {
+  const bus = getPluginLifecycleBus();
+  bus.mounted = mounted;
+  if (!mounted) {
+    bus.onUnmount.forEach((cb) => {
+      try {
+        cb();
+      } catch {
+        /* ignore */
+      }
+    });
+  }
+}
+
+export function onPluginLifecycleUnmount(callback: () => void): () => void {
+  const bus = getPluginLifecycleBus();
+  bus.onUnmount.add(callback);
+  return () => {
+    bus.onUnmount.delete(callback);
+  };
+}

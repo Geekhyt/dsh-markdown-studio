@@ -64,6 +64,7 @@ import { sanitizeSettings } from './domain/settings';
 import { canStartAutosave } from './domain/file-session.machine';
 import {
   canFocusMarkdownEditor,
+  canOpenSlashMenu,
   canShowSelectionBubble,
   computePaneVisibility,
   initialStudioShellState,
@@ -314,6 +315,7 @@ export function createClientPlugin(
     const suppressAutosaveRef = React.useRef(false);
     const cancelAutosaveRef = React.useRef<() => void>(() => {});
     const focusTimerRef = React.useRef<number | null>(null);
+    const pendingRangeRafRef = React.useRef<number | null>(null);
     const [surfaceWidth, setSurfaceWidth] = React.useState(() =>
       typeof window !== 'undefined' ? window.innerWidth : 1024,
     );
@@ -374,6 +376,9 @@ export function createClientPlugin(
       React,
       initialMarkdown: doc.markdown,
       onApply: (markdown, title) => {
+        if (codeMirrorApiRef.current && codeMirrorApiRef.current.getValue() !== markdown) {
+          codeMirrorApiRef.current.setValue(markdown, true);
+        }
         store.updateActive({ markdown, ...(title !== undefined ? { title } : {}) });
       },
       getSelection: selection,
@@ -381,11 +386,25 @@ export function createClientPlugin(
     });
     const { markdownRef, lastSelectionRef, setMarkdown } = docHistory;
 
+    function cancelRangeRaf(): void {
+      if (pendingRangeRafRef.current !== null) {
+        window.cancelAnimationFrame(pendingRangeRafRef.current);
+        pendingRangeRafRef.current = null;
+      }
+    }
+
     function revealRange(start: number, end: number): void {
       lastSelectionRef.current = { start, end };
       selectionBubble.clear();
       selectionBubble.clearPointer();
-      window.requestAnimationFrame(() => {
+      cancelRangeRaf();
+      if (codeMirrorApiRef.current?.revealRange && codeMirrorApiRef.current.getValue() === markdownRef.current) {
+        codeMirrorApiRef.current.revealRange(start, end);
+        return;
+      }
+      pendingRangeRafRef.current = window.requestAnimationFrame(() => {
+        pendingRangeRafRef.current = null;
+        if (!pageAliveRef.current) return;
         if (codeMirrorApiRef.current?.revealRange) {
           codeMirrorApiRef.current.revealRange(start, end);
           return;
@@ -403,17 +422,28 @@ export function createClientPlugin(
     function focusRange(start: number, end: number): void {
       selectionBubble.clear();
       selectionBubble.clearPointer();
-      window.requestAnimationFrame(() => {
+      cancelRangeRaf();
+      const applyFocusNow = (): boolean => {
         if (!canFocusEditorRef.current()) {
           lastSelectionRef.current = { start, end };
           codeMirrorApiRef.current?.revealRange?.(start, end);
-          return;
+          return true;
         }
         if (codeMirrorApiRef.current) {
           codeMirrorApiRef.current.focusRange(start, end);
           lastSelectionRef.current = { start, end };
-          return;
+          return true;
         }
+        return false;
+      };
+      if (codeMirrorApiRef.current && codeMirrorApiRef.current.getValue() === markdownRef.current) {
+        applyFocusNow();
+        return;
+      }
+      pendingRangeRafRef.current = window.requestAnimationFrame(() => {
+        pendingRangeRafRef.current = null;
+        if (!pageAliveRef.current) return;
+        if (applyFocusNow()) return;
         const ta = textareaRef.current;
         if (!ta) return;
         ta.focus();
@@ -546,6 +576,7 @@ export function createClientPlugin(
                 try {
                   setMarkdown(imported.text, {
                     boundary: true,
+                    resetHistory: true,
                     title: deriveTitleWithFallback(imported.text),
                     prevSelection: selection(),
                   });
@@ -781,6 +812,7 @@ export function createClientPlugin(
           try {
             setMarkdown(imported.text, {
               boundary: true,
+              resetHistory: true,
               title: deriveTitleWithFallback(imported.text),
               prevSelection: selection(),
             });
@@ -831,6 +863,7 @@ export function createClientPlugin(
       setDocumentRef: fileContext.applyDocumentRef,
       stampFile: fileContext.stampFile,
       flushBeforeSwitch: flushLinkedFileBeforeSwitch,
+      cancelAutosave: () => cancelAutosaveRef.current(),
       claimOpenTransition,
       onSaved: (writtenContent) => {
         cancelAutosaveRef.current();
@@ -957,12 +990,20 @@ export function createClientPlugin(
       selectEnd?: number | null,
     ): void {
       const next = value.slice(0, start) + text + value.slice(end);
+      const s = selectStart == null ? start + text.length : selectStart;
+      const e = selectEnd == null ? start + text.length : selectEnd;
       slashMenu.close();
       setMarkdown(next, { boundary: true, prevSelection: { start, end } });
-      focusRange(
-        selectStart == null ? start + text.length : selectStart,
-        selectEnd == null ? start + text.length : selectEnd,
-      );
+      if (codeMirrorApiRef.current) {
+        cancelRangeRaf();
+        selectionBubble.clear();
+        selectionBubble.clearPointer();
+        codeMirrorApiRef.current.setValue(next, true, { anchor: s, head: e });
+        lastSelectionRef.current = { start: s, end: e };
+        if (canFocusEditorRef.current()) codeMirrorApiRef.current.focus();
+        return;
+      }
+      focusRange(s, e);
     }
 
     const formatting = createFormattingCommands({
@@ -1003,6 +1044,8 @@ export function createClientPlugin(
     function closeSearchPanel(): void {
       setSearchPanel((prev) => (prev.open ? { ...prev, open: false } : prev));
       focusEditor();
+      selectionBubble.clear();
+      selectionBubble.clearPointer();
     }
 
     function dismissEditorEscape(): 'handled' | 'defer' | false {
@@ -1130,6 +1173,7 @@ export function createClientPlugin(
           openTransitionSeqRef.current++;
           // Detach any linked local file before the autosave subscriber runs so Tab B's markdown never overwrites Tab A's disk file.
           if (fileContext.linkedFile()) detachFileContext();
+          dismissEditorTransients(true);
           docHistory.reset(nextActive.markdown);
         }
         if (nextActive.view !== prevActive.view) {
@@ -1279,6 +1323,7 @@ export function createClientPlugin(
         alive = false;
         pageAliveRef.current = false;
         cancelFocusTimer();
+        cancelRangeRaf();
         store.flush();
         window.clearTimeout(migrateTimer);
         clearAutosaveTimer();
@@ -1373,6 +1418,17 @@ export function createClientPlugin(
       notify(t(saved ? 'toast.saved' : 'storage.saveFailed'), saved ? 'success' : 'error');
     }
 
+    const selectionBubbleVisible =
+      canShowSelectionBubble({
+        showMarkdownEditor: panes.showMarkdownEditor,
+        hasModal: hasActiveModal(),
+        hasAiSession: Boolean(writingSkills.session),
+        outlineOpen,
+        slashOpen: slashMenu.open,
+        menuOpen,
+        fullscreenDrawer: isFullscreenDrawer(drawerOpen, containerWidth()),
+      }) && Boolean(selectionBubble.pos);
+
     useStudioKeyboard({
       React,
       rootRef,
@@ -1385,6 +1441,7 @@ export function createClientPlugin(
         outlineOpen,
         searchOpen: searchPanel.open,
         hasAiSession: Boolean(writingSkills.session),
+        bubbleVisible: selectionBubbleVisible,
         immersive,
         containerWidth: surfaceWidth,
       },
@@ -1410,6 +1467,10 @@ export function createClientPlugin(
         },
         onCloseSearch: closeSearchPanel,
         onCancelAi: writingSkills.cancelSession,
+        onClearBubble: () => {
+          selectionBubble.clear();
+          selectionBubble.clearPointer();
+        },
       },
     });
 
@@ -1589,13 +1650,25 @@ export function createClientPlugin(
             dismissTransientOverlays({ keepSearch: true, keepDrawer: true });
             void workspaceTools.openFolder();
           },
-          onOpenFile: fileActions.openLocalFile,
-          onSave: () => void fileActions.saveLocalFile(false),
-          onSaveAs: () => void fileActions.saveLocalFile(true),
+          onOpenFile: () => {
+            captureDialogTriggerFocus();
+            void fileActions.openLocalFile();
+          },
+          onSave: () => {
+            captureDialogTriggerFocus();
+            void fileActions.saveLocalFile(false);
+          },
+          onSaveAs: () => {
+            captureDialogTriggerFocus();
+            void fileActions.saveLocalFile(true);
+          },
           onExportHtml: () => void articleExport.exportHtml(),
           onExportMarkdown: articleExport.exportMarkdown,
           onExportBundle: () => void articleExport.exportBundle(),
-          onImport: docCommands.handleImportClick,
+          onImport: () => {
+            captureDialogTriggerFocus();
+            docCommands.handleImportClick();
+          },
           onManageSkills: () => {
             captureDialogTriggerFocus();
             dismissTransientOverlays({ keepSearch: true, keepDrawer: true });
@@ -1607,10 +1680,12 @@ export function createClientPlugin(
             dispatchShell({ type: 'OPEN_DRAWER_TAB', tab: 'help' });
           },
           onSample: () => {
+            captureDialogTriggerFocus();
             setMenuOpen(false);
             void docCommands.loadSample(false);
           },
           onClear: () => {
+            captureDialogTriggerFocus();
             setMenuOpen(false);
             void docCommands.clearArticle();
           },
@@ -1643,7 +1718,9 @@ export function createClientPlugin(
             overlayEpoch,
             onAuthorize: () => {
               void fileContext.requestPermission().then((granted) => {
-                if (granted) notify(t('file.authorized'));
+                if (!granted) return;
+                notify(t('file.authorized'));
+                if (needsLinkedFileFlush()) void flushLinkedFileBeforeSwitch();
               });
             },
             onUndo: undo,
@@ -1749,21 +1826,33 @@ export function createClientPlugin(
                 prevSelection: lastSelectionRef.current,
               });
               lastSelectionRef.current = nextSelection;
-              if (!nextSelection.composing) slashMenu.syncAtCaret(value, nextSelection.end);
+              const allowSlash = canOpenSlashMenu({
+                showMarkdownEditor: panes.showMarkdownEditor,
+                hasModal: hasActiveModal(),
+                hasAiSession: Boolean(writingSkills.session),
+                fullscreenDrawer: isFullscreenDrawer(drawerOpen, containerWidth()),
+                hasDiffTransition: Boolean(writingSkills.diffTransition),
+              });
+              if (!nextSelection.composing && allowSlash) slashMenu.syncAtCaret(value, nextSelection.end);
+              else if (!allowSlash) slashMenu.close();
               selectionBubble.sync(value, nextSelection);
             },
             onSelection: (nextSelection: EditorSelection) => {
               lastSelectionRef.current = nextSelection;
               if (nextSelection.programmatic) selectionBubble.clear();
               else selectionBubble.sync(editorValue(), nextSelection);
+              const allowSlash = canOpenSlashMenu({
+                showMarkdownEditor: panes.showMarkdownEditor,
+                hasModal: hasActiveModal(),
+                hasAiSession: Boolean(writingSkills.session),
+                fullscreenDrawer: isFullscreenDrawer(drawerOpen, containerWidth()),
+                hasDiffTransition: Boolean(writingSkills.diffTransition),
+              });
               if (
                 nextSelection.programmatic ||
                 nextSelection.composing ||
-                !panes.showMarkdownEditor ||
-                hasActiveModal() ||
-                nextSelection.start !== nextSelection.end ||
-                writingSkills.session ||
-                writingSkills.diffTransition
+                !allowSlash ||
+                nextSelection.start !== nextSelection.end
               ) {
                 slashMenu.close();
               } else {
@@ -1778,7 +1867,15 @@ export function createClientPlugin(
               const nextRange = { start: selectionStart, end: selectionEnd };
               setMarkdown(value, { boundary, composing: Boolean(composing), prevSelection: lastSelectionRef.current });
               lastSelectionRef.current = nextRange;
-              if (!composing) slashMenu.syncAtCaret(value, selectionStart);
+              const allowSlash = canOpenSlashMenu({
+                showMarkdownEditor: panes.showMarkdownEditor,
+                hasModal: hasActiveModal(),
+                hasAiSession: Boolean(writingSkills.session),
+                fullscreenDrawer: isFullscreenDrawer(drawerOpen, containerWidth()),
+                hasDiffTransition: Boolean(writingSkills.diffTransition),
+              });
+              if (!composing && allowSlash) slashMenu.syncAtCaret(value, selectionStart);
+              else if (!allowSlash) slashMenu.close();
               selectionBubble.sync(value, nextRange);
             },
             onTextareaSelect: (selectionStart, selectionEnd) => {
@@ -1793,28 +1890,14 @@ export function createClientPlugin(
             },
             onRefreshSlash: slashMenu.refreshFromCaret,
           },
-          ai: buildEditorAiModel(
-            writingSkills,
-            canShowSelectionBubble({
-              showMarkdownEditor: panes.showMarkdownEditor,
-              hasModal: hasActiveModal(),
-              hasAiSession: Boolean(writingSkills.session),
-              outlineOpen,
-              slashOpen: slashMenu.open,
-              menuOpen,
-              fullscreenDrawer: isFullscreenDrawer(drawerOpen, containerWidth()),
-            })
-              ? selectionBubble.pos
-              : null,
-            () => {
-              captureDialogTriggerFocus(true);
-              selectionBubble.clear();
-              setMenuOpen(false);
-              slashMenu.close();
-              setOutlineOpen(false);
-              writingSkills.openManager(null);
-            },
-          ),
+          ai: buildEditorAiModel(writingSkills, selectionBubbleVisible ? selectionBubble.pos : null, () => {
+            captureDialogTriggerFocus(true);
+            selectionBubble.clear();
+            setMenuOpen(false);
+            slashMenu.close();
+            setOutlineOpen(false);
+            writingSkills.openManager(null);
+          }),
         }),
 
         h(CssWorkbenchPane, {
@@ -1907,7 +1990,10 @@ export function createClientPlugin(
             restoreDialogTriggerFocus();
           },
           actions: {
-            onNew: docLibrary.newDocument,
+            onNew: () => {
+              dialogReturnFocusRef.current = null;
+              docLibrary.newDocument();
+            },
             onSwitch: (id) => {
               const sameDoc = id === library.activeId;
               const pending = docLibrary.switchDocument(id);
@@ -1916,9 +2002,9 @@ export function createClientPlugin(
                 return;
               }
               void Promise.resolve(pending).then(() => {
-                if (store.getActive().id === id && store.getActive().view === 'preview') {
-                  restoreDialogTriggerFocus();
-                }
+                if (store.getActive().id !== id) return;
+                if (store.getActive().view === 'preview') restoreDialogTriggerFocus();
+                else dialogReturnFocusRef.current = null;
               });
             },
             onDelete: (id) => void docLibrary.deleteDocument(id),
@@ -1981,7 +2067,9 @@ export function createClientPlugin(
             onPrompt: dialogHost.prompt,
             onOpen: (entry) => {
               void workspaceTools.openEntry(entry).then((opened) => {
-                if (opened && store.getActive().view === 'preview') restoreDialogTriggerFocus();
+                if (!opened) return;
+                if (store.getActive().view === 'preview') restoreDialogTriggerFocus();
+                else dialogReturnFocusRef.current = null;
               });
             },
             onPickFolder: workspaceTools.pickFolder,
@@ -2054,6 +2142,7 @@ export function createClientPlugin(
 
       h('input', {
         type: 'file',
+        hidden: true,
         ref: fileRef,
         className: 'mdstudio-hidden-input',
         tabIndex: -1,
@@ -2063,6 +2152,7 @@ export function createClientPlugin(
       }),
       h('input', {
         type: 'file',
+        hidden: true,
         ref: imageRef,
         className: 'mdstudio-hidden-input',
         tabIndex: -1,

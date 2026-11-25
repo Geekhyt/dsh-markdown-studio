@@ -63,7 +63,7 @@ export interface EditorCoords {
 
 export interface EditorApi {
   getValue(): string;
-  setValue(value: string, silent?: boolean): void;
+  setValue(value: string, silent?: boolean, selection?: { anchor: number; head?: number }): void;
   getSelection(): EditorSelection;
   getScrollInfo(): EditorScrollInfo;
   scrollToRatio(ratio: number): void;
@@ -74,6 +74,7 @@ export interface EditorApi {
   destroy(): void;
   setDark(dark: boolean): void;
   setPlaceholder?(placeholder: string, ariaLabel?: string): void;
+  setSlashAria?(open: boolean, activeDescendantId: string | null): void;
   coordsAtPos?(pos: number): EditorCoords | null;
   setInlineBlocks?(blocks: readonly EditorInlineBlock[]): void;
   setDiffTransition?(transition: EditorDiffTransition | null): void;

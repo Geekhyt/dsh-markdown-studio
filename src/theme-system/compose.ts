@@ -103,6 +103,7 @@ function clampPair(fg: string, bg: string, minRatio: number): string {
 function clampPaletteContrast(p: Palette): void {
   p.text = clampPair(p.text, p.bg, 4.5);
   p.heading = clampPair(p.heading, p.bg, 4.5);
+  p.quoteText = clampPair(p.quoteText, p.quoteBg, 4.5);
   p.accentDeep = clampPair(p.accentDeep, p.bg, 4.5);
   p.accentDeep = clampPair(p.accentDeep, p.accentSoft, 4.5);
   p.accentDeep = clampPair(p.accentDeep, p.tldrBg, 4.5);

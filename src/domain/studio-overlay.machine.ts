@@ -11,6 +11,7 @@ export type UnifiedEscapeAction =
   | 'close-outline'
   | 'close-search'
   | 'cancel-ai'
+  | 'clear-bubble'
   | 'exit-immersive';
 export type EditorEscapeOutcome = 'close-search' | 'cancel-ai' | 'defer' | false;
 
@@ -241,6 +242,22 @@ export function shouldRestoreSplitOnResize(cssOpen: boolean, view: string, conta
   return cssOpen && view !== 'split' && containerWidth > NARROW_CONTAINER_PX;
 }
 
+export function canOpenSlashMenu(flags: {
+  showMarkdownEditor: boolean;
+  hasModal: boolean;
+  hasAiSession: boolean;
+  fullscreenDrawer?: boolean;
+  hasDiffTransition?: boolean;
+}): boolean {
+  return (
+    flags.showMarkdownEditor &&
+    !flags.hasModal &&
+    !flags.hasAiSession &&
+    !flags.fullscreenDrawer &&
+    !flags.hasDiffTransition
+  );
+}
+
 export function canShowSelectionBubble(flags: {
   showMarkdownEditor: boolean;
   hasModal: boolean;
@@ -310,6 +327,7 @@ export interface UnifiedEscapeFlags {
   outlineOpen: boolean;
   searchOpen: boolean;
   hasAiSession: boolean;
+  bubbleVisible?: boolean;
   immersive: SurfaceImmersiveMode;
 }
 
@@ -327,6 +345,7 @@ export function resolveStudioEscape(flags: UnifiedEscapeFlags): UnifiedEscapeAct
     if (flags.outlineOpen) return 'close-outline';
     if (flags.searchOpen) return 'close-search';
     if (flags.hasAiSession) return 'cancel-ai';
+    if (flags.bubbleVisible) return 'clear-bubble';
   }
   if (flags.drawerOpen && !flags.inEditor) return 'close-drawer';
   if (flags.immersive && canHandleImmersiveShortcutPolicy(flags, 'exit')) return 'exit-immersive';
@@ -403,6 +422,7 @@ function applyEscape(state: StudioSurfaceState, target: 'editor' | 'drawer' | 'd
     outlineOpen: state.outlineOpen,
     searchOpen: state.searchOpen,
     hasAiSession: state.aiSession !== 'none',
+    bubbleVisible: effectiveBubbleVisible(state),
     immersive: state.immersive,
   });
   switch (action) {
@@ -418,6 +438,8 @@ function applyEscape(state: StudioSurfaceState, target: 'editor' | 'drawer' | 'd
       return { ...state, searchOpen: false };
     case 'cancel-ai':
       return { ...state, aiSession: 'none' };
+    case 'clear-bubble':
+      return { ...state, bubbleVisible: false };
     case 'exit-immersive':
       return { ...dismissTransient(state, { keepSearch: state.view !== 'preview' }), immersive: null };
     default:
@@ -456,10 +478,12 @@ function stepOverlayEvent(state: StudioSurfaceState, event: StudioSurfaceEvent):
       return { ...dismissTransient(state, { keepSearch: true, keepDrawer: true }), drawerOpen: !state.drawerOpen };
     case 'OPEN_SLASH':
       if (
-        !panes.showMarkdownEditor ||
-        hasSurfaceModal(state) ||
-        state.aiSession !== 'none' ||
-        isFullscreenDrawer(state.drawerOpen, state.narrow ? 640 : 1024)
+        !canOpenSlashMenu({
+          showMarkdownEditor: panes.showMarkdownEditor,
+          hasModal: hasSurfaceModal(state),
+          hasAiSession: state.aiSession !== 'none',
+          fullscreenDrawer: isFullscreenDrawer(state.drawerOpen, state.narrow ? 640 : 1024),
+        })
       )
         return state;
       return { ...state, slashOpen: true, outlineOpen: false };

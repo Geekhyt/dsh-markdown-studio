@@ -48,10 +48,17 @@ export interface HostWebServer {
   }): () => void;
 }
 
+export interface HostConnectionService {
+  requestRejection?: (request: {
+    readonly headers: import('node:http').IncomingMessage['headers'];
+  }) => 401 | 403 | undefined;
+}
+
 export interface HostContext {
   webServer: HostWebServer;
+  connection?: HostConnectionService;
   llm?: unknown;
   agentDefaultModel?: unknown;
   get?: <T>(service: string) => T | undefined;
-  effect(effect: () => void | (() => void)): void;
+  effect(effect: () => void | (() => void | Promise<void>)): void;
 }

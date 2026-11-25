@@ -1,5 +1,6 @@
 import type * as ReactNamespace from 'react';
 import type { HostClient } from '../adapters/host-client';
+import { IMPORT_RECOVERY_KEY } from '../adapters/storage';
 import {
   assertZipBudget,
   createZipStreamWriter,
@@ -33,8 +34,6 @@ import { ARCHIVE_SCHEMA_VERSION, supportedSchemaVersion } from '../domain/schema
 import type { WritingSkillState } from '../domain/writing-skills';
 import { useLatest, useMountDisposable } from '../runtime/react-lifecycle';
 import type { DocumentStore } from './document-store';
-
-const IMPORT_RECOVERY_KEY = 'dsh.markdown-studio.library.import-recovery.v1';
 
 export function collectImportRecoveryAssets(): string[] {
   try {

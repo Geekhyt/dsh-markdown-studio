@@ -123,6 +123,7 @@ export function useSelectionBubble(options: SelectionBubbleOptions): SelectionBu
   const pointerPointRef = React.useRef<PointerPoint | null>(null);
   const pointerCleanupRef = React.useRef<(() => void) | null>(null);
   const rafIdRef = React.useRef<number | null>(null);
+  const suppressSyncRef = React.useRef(false);
 
   function cancelPendingRaf(): void {
     if (rafIdRef.current !== null && typeof window !== 'undefined') {
@@ -151,6 +152,10 @@ export function useSelectionBubble(options: SelectionBubbleOptions): SelectionBu
 
   function clear(): void {
     cancelPendingRaf();
+    suppressSyncRef.current = true;
+    Promise.resolve().then(function () {
+      suppressSyncRef.current = false;
+    });
     setPos(null);
   }
 
@@ -162,6 +167,7 @@ export function useSelectionBubble(options: SelectionBubbleOptions): SelectionBu
   }
 
   function sync(markdown: string, nextSelection: SelectionRange & { head?: number; programmatic?: boolean }): void {
+    if (suppressSyncRef.current) return;
     if (pointerSelectingRef.current || nextSelection.programmatic) {
       setPos(null);
       return;

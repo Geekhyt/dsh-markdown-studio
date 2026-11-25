@@ -9,6 +9,7 @@ export interface EditorConfig {
   placeholder?: string;
   ariaLabel?: string;
   enableHistory?: boolean;
+  slashAria?: { open: boolean; activeId: string | null };
 }
 
 export interface EditorProps {
@@ -40,6 +41,7 @@ export function CodeMirrorEditor(props: EditorProps) {
     dark,
     placeholder: props.config?.placeholder,
     ariaLabel: props.config?.ariaLabel,
+    slashAria: props.config?.slashAria,
     inlineBlocks: props.inlineBlocks,
     diffTransition: props.diffTransition,
     onReady: props.onReady,

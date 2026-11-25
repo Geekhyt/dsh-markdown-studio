@@ -57,6 +57,9 @@ const AI_ERROR_CODE_KEYS: Record<string, string> = {
 };
 
 const AUTH_ERROR_CODES = new Set([
+  'AUTH',
+  'MISSING_CREDENTIAL',
+  'INVALID_CREDENTIAL',
   'API_KEY_MISSING',
   'INVALID_API_KEY',
   'UNAUTHORIZED',
@@ -64,7 +67,7 @@ const AUTH_ERROR_CODES = new Set([
   'HTTP_401',
 ]);
 
-const RATE_LIMIT_CODES = new Set(['RATE_LIMIT', 'RATE_LIMITED', 'QUOTA_EXCEEDED', 'HTTP_429']);
+const RATE_LIMIT_CODES = new Set(['QUOTA', 'RATE_LIMIT', 'RATE_LIMITED', 'QUOTA_EXCEEDED', 'HTTP_429']);
 
 const GENERIC_UPSTREAM_CODES = new Set(['', 'AI_ERROR', 'LLM_ERROR', 'INTERNAL']);
 
@@ -190,11 +193,16 @@ async function readStreamLines(
   response: Response,
   acc: StreamAccumulator,
   onDelta?: (delta: string) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const reader = response.body && typeof response.body.getReader === 'function' ? response.body.getReader() : null;
   if (!reader) {
+    if (signal?.aborted) throw new AiClientError('ABORTED', '已取消');
     const fullText = await response.text();
-    for (const line of fullText.split('\n')) consumeNdjsonLine(line, acc, onDelta);
+    for (const line of fullText.split('\n')) {
+      if (signal?.aborted) throw new AiClientError('ABORTED', '已取消');
+      consumeNdjsonLine(line, acc, onDelta);
+    }
     return;
   }
   const decoder = new TextDecoder();
@@ -202,16 +210,19 @@ async function readStreamLines(
   let failed = false;
   try {
     for (;;) {
+      if (signal?.aborted) throw new AiClientError('ABORTED', '已取消');
       const step = await reader.read();
       if (step.done) break;
       buffer += decoder.decode(step.value, { stream: true });
       let nl = buffer.indexOf('\n');
       while (nl >= 0) {
+        if (signal?.aborted) throw new AiClientError('ABORTED', '已取消');
         consumeNdjsonLine(buffer.slice(0, nl), acc, onDelta);
         buffer = buffer.slice(nl + 1);
         nl = buffer.indexOf('\n');
       }
     }
+    if (signal?.aborted) throw new AiClientError('ABORTED', '已取消');
     buffer += decoder.decode();
     if (buffer.trim()) consumeNdjsonLine(buffer, acc, onDelta);
   } catch (error) {
@@ -333,7 +344,7 @@ export class AiClient {
     }
     const acc: StreamAccumulator = { text: '', provider: '', model: '' };
     try {
-      await readStreamLines(response, acc, request.onDelta);
+      await readStreamLines(response, acc, request.onDelta, request.signal);
     } catch (error) {
       if (error instanceof DeltaCallbackError) throw error.cause;
       if (error instanceof AiClientError) throw error;

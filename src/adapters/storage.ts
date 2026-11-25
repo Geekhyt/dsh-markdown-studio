@@ -12,7 +12,7 @@ export const LIBRARY_KEY_V2 = 'dsh.markdown-studio.library.v2';
 export const LIBRARY_BACKUP_KEY = 'dsh.markdown-studio.library.backup.v2';
 export const LIBRARY_UNREADABLE_KEY = 'dsh.markdown-studio.library.unreadable.v2';
 export const WRITING_SKILLS_KEY = 'dsh.markdown-studio.skills.v1';
-const IMPORT_RECOVERY_STORAGE_KEY = 'dsh.markdown-studio.import-recovery.v1';
+export const IMPORT_RECOVERY_KEY = 'dsh.markdown-studio.library.import-recovery.v1';
 
 export class LibraryStorageError extends Error {
   constructor(readonly reason: 'unsupported' | 'corrupt') {
@@ -31,10 +31,9 @@ function safeStorageGet(key: string): string | null {
 export function rawLibrarySnapshot(): string {
   return JSON.stringify(
     Object.fromEntries(
-      [LIBRARY_KEY_V2, LIBRARY_BACKUP_KEY, LIBRARY_UNREADABLE_KEY, WRITING_SKILLS_KEY].map((key) => [
-        key,
-        safeStorageGet(key),
-      ]),
+      [LIBRARY_KEY_V2, LIBRARY_BACKUP_KEY, LIBRARY_UNREADABLE_KEY, WRITING_SKILLS_KEY, IMPORT_RECOVERY_KEY].map(
+        (key) => [key, safeStorageGet(key)],
+      ),
     ),
     null,
     2,
@@ -176,7 +175,7 @@ function writePrimaryWithQuotaRetry(payload: string): void {
     // Snapshot backup/unreadable/import-recovery keys before eviction so a still-failing retry does not destroy recovery data.
     const prevBackup = safeStorageGet(LIBRARY_BACKUP_KEY);
     const prevUnreadable = safeStorageGet(LIBRARY_UNREADABLE_KEY);
-    const prevRecovery = safeStorageGet(IMPORT_RECOVERY_STORAGE_KEY);
+    const prevRecovery = safeStorageGet(IMPORT_RECOVERY_KEY);
     try {
       window.localStorage.removeItem(LIBRARY_BACKUP_KEY);
       window.localStorage.removeItem(LIBRARY_UNREADABLE_KEY);
@@ -188,13 +187,13 @@ function writePrimaryWithQuotaRetry(payload: string): void {
       return;
     } catch {
       try {
-        window.localStorage.removeItem(IMPORT_RECOVERY_STORAGE_KEY);
+        window.localStorage.removeItem(IMPORT_RECOVERY_KEY);
         window.localStorage.setItem(LIBRARY_KEY_V2, payload);
         return;
       } catch (retryError) {
         restoreStorageKey(LIBRARY_BACKUP_KEY, prevBackup);
         restoreStorageKey(LIBRARY_UNREADABLE_KEY, prevUnreadable);
-        restoreStorageKey(IMPORT_RECOVERY_STORAGE_KEY, prevRecovery);
+        restoreStorageKey(IMPORT_RECOVERY_KEY, prevRecovery);
         throw retryError;
       }
     }

@@ -515,7 +515,7 @@ const h = React.createElement;
       return h('span', null);
     },
     Tooltip: (props: DshTooltipProps) => {
-      calls.push('Tooltip:' + String(props.side));
+      calls.push('Tooltip:' + String(props.side) + ':portal=' + String(props.portal));
       return props.children;
     },
     Toast: (props: DshToastProps) => {
@@ -599,7 +599,7 @@ const h = React.createElement;
     'React.forwardRef Input resolves to native DSH Input',
   );
   assert.ok(calls.includes('Checkbox:Merge'));
-  assert.ok(calls.includes('Tooltip:bottom'));
+  assert.ok(calls.includes('Tooltip:bottom:portal=true'), 'adaptTooltip defaults native DSH Tooltip portal=true');
   assert.equal(
     container.querySelector('#native-tip-target')?.getAttribute('title'),
     null,

@@ -94,13 +94,46 @@ function appendProviderModels(out: HostLlmModelEntry[], provider: string, entrie
   }
 }
 
-async function collectCatalogModels(llm: HostLlmRuntime): Promise<HostLlmModelEntry[]> {
+const MODEL_LOOKUP_TIMEOUT_MS = 8_000;
+
+async function raceWithAbort<T>(
+  promise: Promise<T>,
+  signal?: AbortSignal,
+  timeoutMs = MODEL_LOOKUP_TIMEOUT_MS,
+): Promise<T> {
+  if (signal?.aborted) throw new AiHostError('ABORTED', '已停止生成');
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        onAbort = () => reject(new AiHostError('ABORTED', '已停止生成'));
+        signal?.addEventListener('abort', onAbort, { once: true });
+        timer = setTimeout(() => reject(new AiHostError('STREAM_INTERRUPTED', '模型列表查询超时')), timeoutMs);
+        if (typeof timer.unref === 'function') timer.unref();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
+  }
+}
+
+async function listActiveProviderIds(llm: HostLlmRuntime, signal?: AbortSignal): Promise<string[] | null> {
+  if (typeof llm.listProviders !== 'function') return null;
+  const rawProviders = await raceWithAbort(Promise.resolve(llm.listProviders()), signal);
+  if (!Array.isArray(rawProviders)) return null;
+  return rawProviders.map(providerIdOf).filter(Boolean);
+}
+
+async function collectCatalogModels(llm: HostLlmRuntime, signal?: AbortSignal): Promise<HostLlmModelEntry[]> {
   if (typeof llm.listProviders !== 'function' || typeof llm.listModels !== 'function') return [];
-  const rawProviders = await llm.listProviders();
-  if (!Array.isArray(rawProviders)) return [];
-  const providers = rawProviders.map(providerIdOf).filter(Boolean);
-  const settled = await Promise.allSettled(
-    providers.map(async (provider) => ({ provider, entries: await llm.listModels!(provider) })),
+  const providers = await listActiveProviderIds(llm, signal);
+  if (!providers || !providers.length) return [];
+  const settled = await raceWithAbort(
+    Promise.allSettled(providers.map(async (provider) => ({ provider, entries: await llm.listModels!(provider) }))),
+    signal,
   );
   const out: HostLlmModelEntry[] = [];
   for (const item of settled) {
@@ -140,18 +173,48 @@ function validateStreamTexts(systemRaw: unknown, promptRaw: unknown): { system: 
 }
 
 const AUTH_STREAM_ERR_RE =
-  /(?:(?:http|status)[\s:]*40[13]\b|\b(?:api[_ -]?key|unauthori[sz]ed|invalid[_ -]?key|authentication)\b)/i;
-const RATE_STREAM_ERR_RE = /(?:(?:http|status)[\s:]*429\b|\b(?:rate[_ -]?limit|too many requests|quota)\b)/i;
+  /(?:(?:http|status)[\s:]*40[13]\b|\b(?:api[_ -]?key|unauthori[sz]ed|invalid[_ -]?(?:key|token)|authentication)\b)/i;
+const RATE_STREAM_ERR_RE =
+  /(?:(?:http|status)[\s:]*429\b|\b(?:rate[_ -]?limit|too many requests|quota|insufficient[_ -]?balance)\b)/i;
 
 const SAFE_AUTH_CODES = new Set([
+  'AUTH',
+  'MISSING_CREDENTIAL',
+  'INVALID_CREDENTIAL',
   'API_KEY_MISSING',
   'INVALID_API_KEY',
   'UNAUTHORIZED',
   'AUTHENTICATION_ERROR',
   'HTTP_401',
 ]);
-const SAFE_RATE_CODES = new Set(['RATE_LIMIT', 'RATE_LIMITED', 'QUOTA_EXCEEDED', 'HTTP_429']);
+const DSH_AUTH_ALIASES = new Set(['AUTH', 'MISSING_CREDENTIAL', 'INVALID_CREDENTIAL']);
+const SAFE_RATE_CODES = new Set(['QUOTA', 'RATE_LIMIT', 'RATE_LIMITED', 'QUOTA_EXCEEDED', 'HTTP_429']);
 const SAFE_OTHER_CODES = new Set(['OUTPUT_TRUNCATED', 'ABORTED', 'LLM_ERROR', 'MODEL_UNCONFIGURED']);
+
+function classifyLlmFailure(rawCode: string, rawMsg: string): AiHostError | null {
+  if (SAFE_AUTH_CODES.has(rawCode) || AUTH_STREAM_ERR_RE.test(rawMsg)) {
+    const mapped = SAFE_AUTH_CODES.has(rawCode) && !DSH_AUTH_ALIASES.has(rawCode) ? rawCode : 'API_KEY_MISSING';
+    return new AiHostError(mapped, '模型鉴权失败或未配置 API Key', '请检查 DeepSeek Harness 模型设置。');
+  }
+  if (SAFE_RATE_CODES.has(rawCode) || RATE_STREAM_ERR_RE.test(rawMsg)) {
+    const mapped = rawCode === 'QUOTA' || !SAFE_RATE_CODES.has(rawCode) ? 'RATE_LIMITED' : rawCode;
+    return new AiHostError(mapped, '模型请求受限或额度不足，请稍后重试');
+  }
+  if (rawCode === 'CONTEXT_WINDOW_EXCEEDED') {
+    return new AiHostError('INPUT_TOO_LARGE', '待处理的文本超出模型上下文上限', '请缩短选中范围后重试。');
+  }
+  if (rawCode === 'NO_ADAPTER' || rawCode === 'UNKNOWN_MODEL') {
+    return new AiHostError(
+      'MODEL_UNCONFIGURED',
+      '当前模型未配置或已被禁用',
+      '请在 DeepSeek Harness 设置中重新选择模型。',
+    );
+  }
+  if (rawCode === 'TIMEOUT' || rawCode === 'EMPTY_RESPONSE' || rawCode === 'TRANSPORT') {
+    return new AiHostError('STREAM_INTERRUPTED', '模型响应超时或连接中断，请重试');
+  }
+  return null;
+}
 
 function checkTerminalChunk(reason: { kind: string; failure?: { code?: string; message?: string } }): void {
   if (reason.kind === 'stop') return;
@@ -164,16 +227,8 @@ function checkTerminalChunk(reason: { kind: string; failure?: { code?: string; m
   }
   const rawCode = trimString(reason.failure?.code);
   const rawMsg = trimString(reason.failure?.message);
-  if (SAFE_AUTH_CODES.has(rawCode) || AUTH_STREAM_ERR_RE.test(rawMsg)) {
-    throw new AiHostError(
-      SAFE_AUTH_CODES.has(rawCode) ? rawCode : 'API_KEY_MISSING',
-      '模型鉴权失败或未配置 API Key',
-      '请检查 DeepSeek Harness 模型设置。',
-    );
-  }
-  if (SAFE_RATE_CODES.has(rawCode) || RATE_STREAM_ERR_RE.test(rawMsg)) {
-    throw new AiHostError(SAFE_RATE_CODES.has(rawCode) ? rawCode : 'RATE_LIMITED', '模型请求过于频繁，请稍后重试');
-  }
+  const classified = classifyLlmFailure(rawCode, rawMsg);
+  if (classified) throw classified;
   const safeCode = SAFE_OTHER_CODES.has(rawCode) ? rawCode : 'LLM_ERROR';
   throw new AiHostError(safeCode, '宿主模型返回错误');
 }
@@ -183,13 +238,10 @@ function rethrowStreamFailure(error: unknown, signal?: AbortSignal): never {
   if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
     throw new AiHostError('ABORTED', '已停止生成');
   }
+  const rawCode = error && typeof error === 'object' ? trimString((error as { code?: unknown }).code) : '';
   const rawMsg = error instanceof Error ? error.message : String(error || '');
-  if (AUTH_STREAM_ERR_RE.test(rawMsg)) {
-    throw new AiHostError('API_KEY_MISSING', '模型鉴权失败或未配置 API Key', '请检查 DeepSeek Harness 模型设置。');
-  }
-  if (RATE_STREAM_ERR_RE.test(rawMsg)) {
-    throw new AiHostError('RATE_LIMITED', '模型请求过于频繁，请稍后重试');
-  }
+  const classified = classifyLlmFailure(rawCode, rawMsg);
+  if (classified) throw classified;
   throw error;
 }
 
@@ -205,13 +257,16 @@ export class AiHostService {
     this.getDefaultModel = options.getDefaultModel;
   }
 
-  async status(): Promise<AiHostStatus> {
+  async status(signal?: AbortSignal): Promise<AiHostStatus> {
     const llm = this.getLlm();
     if (!llm) return { available: false, provider: '', model: '', models: [] };
+    let activeProviders: string[] | null = null;
     let models: HostLlmModelEntry[] = [];
     try {
-      models = await collectCatalogModels(llm);
-    } catch {
+      activeProviders = await listActiveProviderIds(llm, signal);
+      models = await collectCatalogModels(llm, signal);
+    } catch (error) {
+      if (signal?.aborted || (error instanceof AiHostError && error.code === 'ABORTED')) throw error;
       models = [];
     }
     let def: HostDefaultModelSelection | undefined;
@@ -222,10 +277,12 @@ export class AiHostService {
     }
     const defProvider = trimString(def?.provider);
     const defModel = trimString(def?.model);
+    const defProviderActive =
+      Boolean(defProvider) && (activeProviders === null || activeProviders.includes(defProvider));
     const matched =
-      defProvider && defModel
+      defProviderActive && defModel
         ? { provider: defProvider, model: defModel }
-        : defProvider
+        : defProviderActive
           ? (() => {
               const first = models.find((item) => item.provider === defProvider) || models[0];
               return first ? { provider: first.provider, model: first.id } : { provider: '', model: '' };
@@ -243,23 +300,42 @@ export class AiHostService {
     };
   }
 
-  private async resolveRoute(reqProvider: unknown, reqModel: unknown): Promise<{ provider: string; model: string }> {
+  private async resolveRoute(
+    reqProvider: unknown,
+    reqModel: unknown,
+    signal?: AbortSignal,
+  ): Promise<{ provider: string; model: string }> {
     const explicitProvider = trimString(reqProvider);
     const explicitModel = trimString(reqModel);
     if (explicitProvider && explicitModel) {
       return { provider: explicitProvider, model: explicitModel };
     }
-    try {
-      const def = this.getDefaultModel()?.currentSelection();
-      const defProvider = trimString(def?.provider);
-      const defModel = trimString(def?.model);
-      if (defProvider && defModel) {
-        return { provider: defProvider, model: defModel };
+    const llm = this.getLlm();
+    let activeProviders: string[] | null = null;
+    if (llm) {
+      try {
+        activeProviders = await listActiveProviderIds(llm, signal);
+      } catch (error) {
+        if (signal?.aborted || (error instanceof AiHostError && error.code === 'ABORTED')) throw error;
       }
-    } catch {
-      /* fallback to full catalog discovery */
     }
-    const current = await this.status();
+    if (!explicitProvider) {
+      try {
+        const def = this.getDefaultModel()?.currentSelection();
+        const defProvider = trimString(def?.provider);
+        const defModel = trimString(def?.model);
+        if (defProvider && defModel && (activeProviders === null || activeProviders.includes(defProvider))) {
+          return { provider: defProvider, model: defModel };
+        }
+      } catch {
+        /* fallback to full catalog discovery */
+      }
+    }
+    const current = await this.status(signal);
+    if (explicitProvider) {
+      const match = current.models.find((item) => item.provider === explicitProvider);
+      if (match) return { provider: match.provider, model: match.id };
+    }
     if (!current.provider || !current.model) {
       throw new AiHostError('MODEL_UNCONFIGURED', '未检测到可用模型', '请先在 DeepSeek Harness 设置中配置默认模型。');
     }
@@ -277,7 +353,7 @@ export class AiHostService {
     }
     if (signal?.aborted) throw new AiHostError('ABORTED', '已停止生成');
     const { system, prompt } = validateStreamTexts(input.system, input.prompt);
-    const route = await this.resolveRoute(input.provider, input.model);
+    const route = await this.resolveRoute(input.provider, input.model, signal);
     const reasoningEffort = await resolveFastReasoningEffort(llm, route.provider, route.model, signal);
     if (signal?.aborted) throw new AiHostError('ABORTED', '已停止生成');
     const message: HostLlmMessage = {

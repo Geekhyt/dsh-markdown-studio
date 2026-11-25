@@ -574,6 +574,38 @@ assert.equal(customStore.getActive().settings.theme, 'classic', 'deleting custom
     assert.equal(fieldStore.getActive().view, 'preview', 'local view change survives field-level merge');
     const mergedIds = (fieldStore.getActive().settings.customThemes || []).map((t) => t.id).sort();
     assert.deepEqual(mergedIds, ['custom:a', 'custom:b'], 'concurrent custom theme additions merge without loss');
+
+    // (e) Concurrent restore-vs-purge: Tab B restores & bumps rev past Tab A's purged trash rev -> restored live doc wins
+    let rvpDisk: LibraryState = {
+      activeId: 'keep',
+      docs: [{ ...article('keep', '# Keep'), rev: 1 }],
+      trash: [{ ...article('target', '# Important'), rev: 2, deletedAt: 100 }],
+    };
+    const tabA = new DocumentStore(
+      structuredClone(rvpDisk),
+      (next) => {
+        rvpDisk = structuredClone(next);
+        return true;
+      },
+      () => structuredClone(rvpDisk),
+    );
+    const tabB = new DocumentStore(
+      structuredClone(rvpDisk),
+      (next) => {
+        rvpDisk = structuredClone(next);
+        return true;
+      },
+      () => structuredClone(rvpDisk),
+    );
+    tabB.restore('target');
+    assert.equal(tabB.flush(), true);
+    tabA.purge('target');
+    assert.equal(tabA.flush(), true);
+    assert.equal(
+      tabA.getSnapshot().docs.some((d) => d.id === 'target' && d.markdown === '# Important'),
+      true,
+      'stale Tab A purge does not delete article concurrently restored by Tab B',
+    );
     unsub();
   }
 

@@ -431,9 +431,10 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
     if (abortRef.current) abortRef.current.abort();
     clearTransitionTimer();
     setDiffTransition(null);
-    const skill = overrideSkill || resolveActiveSkill(skillStateRef.current);
-    if (overrideSkill && overrideSkill.id !== skillStateRef.current.activeSkillId) {
-      commitSkillState({ ...skillStateRef.current, activeSkillId: overrideSkill.id });
+    const resolvedOverride = overrideSkill ? findWritingSkill(skillStateRef.current, overrideSkill.id) : null;
+    const skill = resolvedOverride || resolveActiveSkill(skillStateRef.current);
+    if (resolvedOverride && resolvedOverride.id !== skillStateRef.current.activeSkillId) {
+      commitSkillState({ ...skillStateRef.current, activeSkillId: resolvedOverride.id });
     }
     const controller = new AbortController();
     abortRef.current = controller;
@@ -492,7 +493,9 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
     if (session.patches.length === 0) {
       return [
         buildSelectionStreamingBlock(session, t, cancelSession, () => {
-          void runSkill(session.skill, session.selectionRange);
+          const liveSkill =
+            findWritingSkill(skillStateRef.current, session.skill.id) || resolveActiveSkill(skillStateRef.current);
+          void runSkill(liveSkill, session.selectionRange);
         }),
       ];
     }

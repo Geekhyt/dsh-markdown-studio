@@ -159,14 +159,16 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
     const generation = generationRef.current;
     try {
       const file = await handle.getFile();
-      const fingerprint = await fileFingerprint(await file.text());
+      const diskText = await file.text();
+      const fingerprint = await fileFingerprint(diskText);
       if (generation !== generationRef.current) return true;
       const stamp = stampRef.current;
       if (stamp && stamp.handle === handle && fingerprint === stamp.fingerprint) return false;
       if (!stamp) {
-        const expected = await fileFingerprint(optionsRef.current.getDocument().markdown);
+        const normalizedDisk = await fileFingerprint(normalizeLineEndings(diskText));
+        const expected = await fileFingerprint(normalizeLineEndings(optionsRef.current.getDocument().markdown));
         if (generation !== generationRef.current) return true;
-        if (fingerprint === expected) {
+        if (normalizedDisk === expected) {
           rememberFile(handle, file, fingerprint);
           return false;
         }

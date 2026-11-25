@@ -17,23 +17,38 @@ export function prepareClipboardDom(root: HTMLElement): void {
 
 const TASK_BLOCK_CHILD = 'p,pre,blockquote,ul,ol,table,section,div,hr,h1,h2,h3,h4,h5,h6';
 
+function copyStyleAttr(source: Element, target: HTMLElement): void {
+  const style = source.getAttribute('style');
+  if (style) target.setAttribute('style', style);
+}
+
 function taskItemToNode(child: Element, doc: Document): Element {
   if (child.tagName.toLowerCase() !== 'li') return child;
   const tag = child.querySelector(TASK_BLOCK_CHILD) ? 'section' : 'p';
   const row = doc.createElement(tag);
   row.className = (child as HTMLElement).className;
+  copyStyleAttr(child, row);
   while (child.firstChild) row.appendChild(child.firstChild);
   return row;
 }
 
-function appendTaskRun(doc: Document, parent: DocumentFragment, className: string, items: Element[]): void {
+function appendTaskRun(
+  doc: Document,
+  parent: DocumentFragment,
+  className: string,
+  items: Element[],
+  sourceList?: HTMLElement,
+): void {
   const section = doc.createElement('section');
   section.className = className || 'mdstudio-task-list';
+  if (sourceList) copyStyleAttr(sourceList, section);
+  section.style.listStyle = 'none';
+  if (!section.style.paddingLeft) section.style.paddingLeft = '0';
   for (const child of items) section.appendChild(taskItemToNode(child, doc));
   parent.appendChild(section);
 }
 
-function appendRegularRun(doc: Document, parent: DocumentFragment, items: Element[]): void {
+function appendRegularRun(doc: Document, parent: DocumentFragment, items: Element[], sourceList?: HTMLElement): void {
   let ul: HTMLUListElement | null = null;
   for (const child of items) {
     const tag = child.tagName.toLowerCase();
@@ -43,6 +58,7 @@ function appendRegularRun(doc: Document, parent: DocumentFragment, items: Elemen
     } else {
       if (!ul) {
         ul = doc.createElement('ul');
+        if (sourceList) copyStyleAttr(sourceList, ul);
         parent.appendChild(ul);
       }
       ul.appendChild(child);
@@ -58,7 +74,7 @@ function convertTaskListToSection(list: HTMLElement): void {
   );
   const frag = doc.createDocumentFragment();
   if (!hasRegular) {
-    appendTaskRun(doc, frag, list.className || 'mdstudio-task-list', children);
+    appendTaskRun(doc, frag, list.className || 'mdstudio-task-list', children, list);
     list.replaceWith(frag);
     return;
   }
@@ -66,8 +82,8 @@ function convertTaskListToSection(list: HTMLElement): void {
   let bucket: Element[] = [];
   const flush = (): void => {
     if (!bucket.length) return;
-    if (runKind === 'task') appendTaskRun(doc, frag, 'mdstudio-task-list', bucket);
-    else appendRegularRun(doc, frag, bucket);
+    if (runKind === 'task') appendTaskRun(doc, frag, 'mdstudio-task-list', bucket, list);
+    else appendRegularRun(doc, frag, bucket, list);
     bucket = [];
   };
   for (const child of children) {
@@ -89,26 +105,40 @@ function convertTaskListToSection(list: HTMLElement): void {
   list.replaceWith(frag);
 }
 
-function splitListAroundTaskSections(root: HTMLElement): void {
-  const selector = 'ul > section.mdstudio-task-list, ol > section.mdstudio-task-list';
-  for (let pass = 0; pass < 200; pass++) {
-    const section = root.querySelector<HTMLElement>(selector);
-    if (!section) break;
-    const parentList = section.parentElement as HTMLElement | null;
+/**
+ * Split `<ol>` / `<ul>` around any hoisted non-`<li>` child (`ul`, `ol`,
+ * `section.mdstudio-task-list`, `section.mdstudio-list-continuation`) so WeChat
+ * never resets ordered-list numbering at invalid direct children.
+ */
+function splitListsAroundHoistedBlocks(root: HTMLElement): void {
+  const selector =
+    'ul > section.mdstudio-task-list, ol > section.mdstudio-task-list, ol > ul, ol > ol, ol > section.mdstudio-list-continuation, ul > ul, ul > ol, ul > section.mdstudio-list-continuation';
+  for (let pass = 0; pass < 300; pass++) {
+    const block = root.querySelector<HTMLElement>(selector);
+    if (!block) break;
+    const parentList = block.parentElement as HTMLElement | null;
     if (!parentList || !parentList.parentNode) break;
     const doc = parentList.ownerDocument;
     const tag = parentList.tagName.toLowerCase();
     const after = doc.createElement(tag);
-    while (section.nextSibling) after.appendChild(section.nextSibling);
+    copyStyleAttr(parentList, after);
+    while (block.nextSibling) after.appendChild(block.nextSibling);
     if (tag === 'ol' && after.children.length) {
       const parsedStart = parseInt(parentList.getAttribute('start') || '1', 10);
       const baseStart = Number.isFinite(parsedStart) ? parsedStart : 1;
       const beforeItems = Array.from(parentList.children).filter((el) => el.tagName.toLowerCase() === 'li').length;
       if (baseStart + beforeItems !== 1) after.setAttribute('start', String(baseStart + beforeItems));
     }
-    if (!section.style.paddingLeft) section.style.paddingLeft = '1.4em';
-    parentList.parentNode.insertBefore(section, parentList.nextSibling);
-    if (after.children.length) parentList.parentNode.insertBefore(after, section.nextSibling);
+    if (block.classList.contains('mdstudio-task-list') && !block.style.paddingLeft) {
+      block.style.paddingLeft = '1.4em';
+    }
+    if (block.classList.contains('mdstudio-list-continuation')) {
+      if (!block.style.paddingLeft) block.style.paddingLeft = '1.6em';
+      if (!block.style.marginTop) block.style.marginTop = '0.35em';
+      if (!block.style.marginBottom) block.style.marginBottom = '0.45em';
+    }
+    parentList.parentNode.insertBefore(block, parentList.nextSibling);
+    if (after.children.length) parentList.parentNode.insertBefore(after, block.nextSibling);
     if (!parentList.children.length) parentList.remove();
   }
 }
@@ -120,7 +150,7 @@ function normalizeTaskLists(root: HTMLElement): void {
     if (!isTask) return;
     convertTaskListToSection(list);
   });
-  splitListAroundTaskSections(root);
+  splitListsAroundHoistedBlocks(root);
 }
 
 function markHorizontalScrollExemptions(root: HTMLElement): void {
@@ -301,39 +331,40 @@ function stripUnsafeSvgPaintAttrs(element: Element): void {
   });
 }
 
+function sanitizeSingleMathSvg(svg: SVGSVGElement, display: boolean): void {
+  Array.from(svg.querySelectorAll('foreignObject')).forEach(function (fo) {
+    fo.remove();
+  });
+  stripUnsafeSvgPaintAttrs(svg);
+  if (hasCssUrlRef(svg.getAttribute('style') || '')) svg.removeAttribute('style');
+  const width = svg.getAttribute('width');
+  const height = svg.getAttribute('height');
+  if (width) {
+    svg.removeAttribute('width');
+    svg.style.width = width;
+  }
+  if (height) {
+    svg.removeAttribute('height');
+    svg.style.height = height;
+  }
+  svg.style.maxWidth = display ? '300%' : '100%';
+  Array.from(svg.querySelectorAll<SVGElement>('*')).forEach(function (element) {
+    stripUnsafeSvgPaintAttrs(element);
+    if (element.tagName.toLowerCase() === 'path') sanitizeSvgPathElement(element, svg);
+    if (element.tagName.toLowerCase() !== 'svg') element.removeAttribute('style');
+  });
+}
+
 function sanitizeMathSvgs(root: HTMLElement): void {
   Array.from(root.querySelectorAll<HTMLElement>('.mdstudio-math')).forEach(function (node) {
     const display = node.getAttribute('data-mdstudio-display') === '1';
-    const svg = node.querySelector('svg');
-    if (svg) {
-      Array.from(svg.querySelectorAll('foreignObject')).forEach(function (fo) {
-        fo.remove();
-      });
-      stripUnsafeSvgPaintAttrs(svg);
-      if (hasCssUrlRef(svg.getAttribute('style') || '')) svg.removeAttribute('style');
-      const width = svg.getAttribute('width');
-      const height = svg.getAttribute('height');
-      if (width) {
-        svg.removeAttribute('width');
-        svg.style.width = width;
-      }
-      if (height) {
-        svg.removeAttribute('height');
-        svg.style.height = height;
-      }
-      svg.style.maxWidth = display ? '300%' : '100%';
-      // Some editor sanitizers drop MathJax bookkeeping attributes and inline
-      // styles on SVG children, which can leave only <rect> rules visible.
-      // Keep the geometry and paint, but remove attributes we do not need.
-      Array.from(svg.querySelectorAll<SVGElement>('*')).forEach(function (element) {
-        stripUnsafeSvgPaintAttrs(element);
-        if (element.tagName.toLowerCase() === 'path') sanitizeSvgPathElement(element, svg);
-        if (element.tagName.toLowerCase() !== 'svg') element.removeAttribute('style');
-      });
-    }
+    Array.from(node.querySelectorAll('svg')).forEach(function (svg) {
+      sanitizeSingleMathSvg(svg, display);
+    });
     const insideHeading = Boolean(node.closest('h1, h2, h3, h4, h5, h6'));
     const replacement = node.ownerDocument.createElement(display && !insideHeading ? 'section' : 'span');
     replacement.className = display ? 'mdstudio-math-block' : 'mdstudio-math-inline';
+    copyStyleAttr(node, replacement);
     if (display && insideHeading) replacement.style.display = 'inline-block';
     replacement.setAttribute('data-mdstudio-math', 'true');
     while (node.firstChild) replacement.appendChild(node.firstChild);

@@ -314,9 +314,10 @@ export function usePreviewHtmlSurface(
 
 export interface ImperativeEditorHandle<TBlock, TTransition> {
   getValue(): string;
-  setValue(value: string, silent?: boolean): void;
+  setValue(value: string, silent?: boolean, selection?: { anchor: number; head?: number }): void;
   setDark(dark: boolean): void;
   setPlaceholder?(placeholder: string, ariaLabel?: string): void;
+  setSlashAria?(open: boolean, activeDescendantId: string | null): void;
   setInlineBlocks?(blocks: readonly TBlock[]): void;
   setDiffTransition?(transition: TTransition | null): void;
   destroy(): void;
@@ -331,6 +332,7 @@ export interface ImperativeEditorMountSpec<
   dark: boolean;
   placeholder?: string;
   ariaLabel?: string;
+  slashAria?: { open: boolean; activeId: string | null };
   inlineBlocks?: readonly TBlock[];
   diffTransition?: TTransition | null;
   mount: (parent: HTMLDivElement, initialDark: boolean) => TApi;
@@ -432,5 +434,13 @@ export function useImperativeEditor<TApi extends ImperativeEditorHandle<TBlock, 
       if (api?.setDiffTransition) api.setDiffTransition(spec.diffTransition || null);
     },
     [spec.diffTransition],
+  );
+
+  React.useEffect(
+    function () {
+      const api = apiRef.current;
+      if (api?.setSlashAria) api.setSlashAria(Boolean(spec.slashAria?.open), spec.slashAria?.activeId || null);
+    },
+    [spec.slashAria?.open, spec.slashAria?.activeId],
   );
 }

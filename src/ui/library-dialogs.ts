@@ -267,21 +267,43 @@ function useModalMenuState(React: typeof ReactNamespace, open: boolean, closeMod
     if (!open && rawMenuOpen) setRawMenuOpen(false);
   }
   const menuOpen = open && rawMenuOpen;
+  const clearPointerTimerRef = React.useRef<number | null>(null);
+  const cancelPointerTimer = function (): void {
+    if (clearPointerTimerRef.current !== null) {
+      window.clearTimeout(clearPointerTimerRef.current);
+      clearPointerTimerRef.current = null;
+    }
+  };
+  const schedulePointerClear = function (): void {
+    cancelPointerTimer();
+    clearPointerTimerRef.current = window.setTimeout(function () {
+      clearPointerTimerRef.current = null;
+      if (dismissSuppressRef.current === 'pointer') dismissSuppressRef.current = null;
+    }, 0);
+  };
   const updateMenuOpen = function (next: boolean, fromAction = false): void {
     setRawMenuOpen(next);
     if (!next) {
       if (fromAction || insideMenuRef.current) {
+        cancelPointerTimer();
         dismissSuppressRef.current = null;
       } else if (dismissSuppressRef.current !== 'escape') {
+        // Keep backdrop suppression armed across real human press durations (>50ms) until pointerup/click finishes.
+        cancelPointerTimer();
         dismissSuppressRef.current = 'pointer';
-        window.setTimeout(function () {
+        clearPointerTimerRef.current = window.setTimeout(function () {
+          clearPointerTimerRef.current = null;
           if (dismissSuppressRef.current === 'pointer') dismissSuppressRef.current = null;
-        }, 0);
+        }, 600);
       }
       insideMenuRef.current = false;
     } else {
+      cancelPointerTimer();
       dismissSuppressRef.current = null;
     }
+  };
+  const onPointerFinish = function (): void {
+    if (dismissSuppressRef.current === 'pointer') schedulePointerClear();
   };
   const markInsideMenu = function (event: Event): void {
     const target = event.target as Element | null;
@@ -301,6 +323,8 @@ function useModalMenuState(React: typeof ReactNamespace, open: boolean, closeMod
   useDocumentEvent(React, 'pointerdown', markInsideMenu, menuOpen, true);
   useDocumentEvent(React, 'mousedown', markInsideMenu, menuOpen, true);
   useDocumentEvent(React, 'keydown', markEscapeWhileMenuOpen, menuOpen, true);
+  useDocumentEvent(React, 'pointerup', onPointerFinish, open, true);
+  useDocumentEvent(React, 'pointercancel', onPointerFinish, open, true);
   const onModalClose = function (): void {
     if (!open) return;
     if (menuOpen) {
@@ -478,6 +502,7 @@ export function LibraryDialog(props: LibraryDialogProps): ReactNode {
       }),
       h('input', {
         type: 'file',
+        hidden: true,
         ref: fileRef,
         className: 'mdstudio-hidden-input',
         tabIndex: -1,
