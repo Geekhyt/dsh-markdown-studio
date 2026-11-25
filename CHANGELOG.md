@@ -2,6 +2,38 @@
 
 All notable changes to `dsh-markdown-studio` are documented in this file.
 
+## [0.1.20] - 2026-11-25
+
+### Fixed
+- **Real DeepSeek Harness Auth Boundary, Strict CORS, ETag 304 & Host Reliability (`Cluster A`, P0)**:
+  - Wired real DSH host `connection.requestRejection` browser-session authentication across all 5 plugin HTTP routes in `index.ts`, `host/http/routes.ts`, `host/http/ai-route.ts`, and unified `host/http/static-bundle-route.ts` (`math.js` / `mermaid.js`), blocking unauthenticated local access (`HTTP 200 → 401`) while keeping authenticated DSH browser sessions at `200 OK` and adding weak `ETag` / `304 Not Modified` caching.
+  - Replaced wildcard `Access-Control-Allow-Origin: *` in `host/local-server.ts` with allowlisted origin reflection + unconditional `Vary: Origin`, and fixed immediate/same-tick `AbortSignal` settlement during `startLocalImageServer`.
+  - Upgraded `host/application/image-store.ts` with strictly monotonic `nextMonotonicStoredAt` (preserving `expectedStoredAt` optimistic concurrency across `<15s` re-uploads), `stat`-based cross-process manifest cache invalidation, and honest `deleted: false` responses for missing files.
+  - Aligned `host/application/ai-service.ts` error classification with real DSH `LlmFailure.code` taxonomy (`RATE_LIMITED`, `API_KEY_MISSING`, `INPUT_TOO_LARGE`, `MODEL_UNCONFIGURED`), validated stale default providers with automatic fallback, and added abortable model catalog lookup.
+- **Pre-Render Mermaid/CSS Lexical Security, WeChat Copy Parity, Dark Preview & Linear-Time Parser (`Cluster B`, P0)**:
+  - Added `sanitizeMermaidSource` in `src/mermaid-entry.ts` (blocking apostrophe-broken quotes, YAML anchor/alias/merge-key `img` directives, `sequenceDiagram` `properties`/`details` URLs, `classDef`/`style`/`linkStyle` external URLs, and raw inline HTML tags before `mermaid.render()` runs, eliminating `8 → 0` SSRF hits in Chromium), converted text-only `<foreignObject>` nodes (e.g. `venn-beta`) into pure SVG `<text>`, and added a 10s render timeout.
+  - Hardened `src/domain/custom-css.ts` to block dynamic `var()`/`env()`/`attr()` inside `image-set()`/`cross-fade()`/`src()` fail-closed and track CSS Nesting `{}` depth; upgraded `src/domain/custom-themes.ts` (`extractCustomThemePreview`) to resolve `var()`, `#rrggbbaa`, named colors, and anchor fallbacks so dark custom theme swatches render accurately (`#12161f` instead of white).
+  - Inverted the copy pipeline in `src/adapters/render-article.ts` to inline CSS before `prepareClipboardDom` and added `splitListsAroundHoistedBlocks` in `src/adapters/wechat-clipboard-dom.ts`, restoring pixel-for-pixel custom CSS parity (task highlights, inline/block math borders), eliminating invalid `<ol>` child nesting (`2 → 0`) and SVG `box-sizing` bloat (`39 → 0`).
+  - Closed the `[0.25, 0.45]` mid-luminance contrast dead zone (`1.72:1 → 4.84:1`) and skipped `alpha <= 0.01` transparent unchecked task markers in `src/adapters/dark-preview.ts`.
+  - Eliminated 5 `O(N²)` parser hotspots in `src/markdown-parser.ts` (30KB pathological TeX `1169.6ms → 5.5ms`, Link `539.3ms → 5.3ms`, Block Math `337.7ms → 9.7ms`, Blockquote `120.4ms → 6.0ms`) and fixed prose bracket links (`[Note](see section 2)`, `f[x](a + b)`), `$HOME/$PATH`, code-span `$`, GFM table rows starting with `- |`/`1. |`, and reading-time / empty-frontmatter handling.
+- **Real DSH Primitives, Document-Level Focus Traps, Touch Clearance & Atomic Editor Sync (`Cluster C`)**:
+  - Enabled `portal: props.portal ?? true` in `adaptTooltip` (`src/ui/dsh-primitives.ts`) so real DSH immersive dock tooltips float cleanly inside the viewport (`dockΔ 128px → 0px`).
+  - Added native `hidden: true` to all `.mdstudio-hidden-input` file inputs and capture-phase document `trapContainerTab` focus traps across `adaptModal`, `FallbackModal`, and fullscreen `SettingsDrawer`, preventing `Shift+Tab` / post-unmount `Tab` focus escape onto background pages in real DSH and standalone Chromium.
+  - Replaced the 50ms timer in `useModalMenuState` (`src/ui/library-dialogs.ts`) with pointer-press lifecycle tracking so normal 70ms clicks dismissing the More menu never close `LibraryDialog`.
+  - Wired `clear-bubble` into `src/domain/studio-overlay.machine.ts` and `src/ui/selection-bubble.ts` (WCAG 1.4.13 `Escape` dismissal without React `onSelect` resurrection), cleared stale `dialogReturnFocusRef` handles, synced CodeMirror updates atomically via `setValue(value, silent, selection)`, and fixed `pointer: coarse` immersive Dock/SearchBar clearance (`54px` overlap → `12px` clearance) & WCAG 2.5.8 touch target sizing.
+- **Data Integrity, Workspace `.git` Protection, Multi-Tab Sync, Editing Ergonomics & Grapheme Myers Diff (`Cluster D`, P0)**:
+  - Unified `IMPORT_RECOVERY_KEY` in `src/adapters/storage.ts` so quota eviction and recovery snapshots operate on the same key.
+  - Added `assertSafeDirectoryCopy` in `src/application/use-workspace.ts` to refuse destructive copy+delete directory renames/moves when `.git` or `node_modules` subtrees are present, preventing silent repository data loss.
+  - Added `pendingPurgeRevs` + revision bumping on `restore()` in `src/application/document-store.ts` so concurrently restored live articles survive stale sibling-tab purges, and made `AssetGC` (`src/application/asset-gc.ts`) fail closed on missing/malformed `storedAt` timestamps.
+  - Fixed double-`Tab` single-line indentation deletion (`src/application/editor-shortcuts.ts`), line-start `/` SlashMenu word-eating (`src/application/use-slash-menu.ts`), `***BoldItalic***` / trailing-space / multi-line list formatting & dynamic backtick fences (`src/application/editor-formatting.ts`), folder-wrapped ZIP `assets/` resolution (`src/application/document-commands.ts`), `prefer='incoming'` theme merge prioritization (`src/domain/library-backup.ts`), `SKILL.md` bounds (`src/domain/writing-skills.ts`), and `Intl.Segmenter` grapheme-atomic Myers `O((N+M)D)` diff (`src/domain/text-diff.ts`, preserving flag/composite emoji clusters).
+
+### Changed & Permanent Regression Gates (`Cluster E`)
+- Upgraded `test/architecture.test.ts` to strip comments using the TypeScript lexical scanner (`ts.createScanner`) and enforce AST gates for `.mdstudio-hidden-input` `hidden: true`, `adaptTooltip` `portal: true`, single storage-key ownership (`src/adapters/storage.ts`), full `host/http/*.ts` boundary delegation, and `index.ts` `requestRejection` / `checkAuth` wiring.
+- Added `SIGINT`/`SIGTERM` source-restore traps, runner error/timeout failure checks, and 9 new security/concurrency/UI mutations in `scripts/mutation-smoke.ts` (`51/51` killed).
+
+### Verification & Regression Gates
+- All release gates passed locally on final code: `format` / `lint` / `typecheck` (171 files, 0 issues), `check:host-api` (verified against real `/Applications/DeepSeek Harness.app/Contents/Resources/app.asar`), `test` (33/33 suites), `verify:models` (52,220 Overlay + 525,000 FileSession transitions + Multi-Tab + 128-state AssetGC), `quality` (`94.36%` statements / `88.97%` branches / `95.99%` functions; `2,668` AST functions `100% <= CRAP 30`; 5/5 raw+gzip budgets with `dist/client.js` `6.1 / 2.7 KiB`), `mutation` (`51/51` killed), `licenses:check` (81 packages), `test:browser`, and `test:dsh`.
+
 ## [0.1.19] - 2026-11-25
 
 ### Fixed
