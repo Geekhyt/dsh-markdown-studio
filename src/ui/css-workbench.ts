@@ -371,6 +371,7 @@ function CssWorkbenchContent(props: CssWorkbenchProps): ReactNode {
       'data-mdstudio-wb-seq': String(props.requestSeq),
       role: 'region',
       'aria-label': t('drawer.tabCss'),
+      onKeyDown: onEditorKeyDown,
     },
     h(
       'div',

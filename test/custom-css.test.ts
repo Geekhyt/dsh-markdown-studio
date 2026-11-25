@@ -20,7 +20,7 @@ import {
   sanitizeCustomThemes,
   upsertCustomTheme,
 } from '../src/domain/custom-themes';
-import { exampleCss, formatCssSource } from '../src/themes';
+import { buildCss, DEFAULT_SETTINGS, exampleCss, formatCssSource } from '../src/themes';
 
 assert.equal(
   stripExternalCssUrls('#mdstudio { background: url(https://example.com/a.png); }'),
@@ -315,6 +315,62 @@ assert.equal(
   ]);
   assert.equal(sanitized.length, 2, 'earlier invalid ID does not shadow explicit custom:theme-1');
   assert.ok(sanitized.some((item) => item.id === 'custom:theme-1' && item.name === 'Explicit One'));
+
+  // CSS Syntax L3 comment-token boundaries, escaped-quote @import desync, unclosed /* + codeTheme, and rgb/hsl preview
+  assert.equal(
+    hasExternalCssUrl('p { background: red/**/url(https://evil.example/a.png); }'),
+    true,
+    'hasExternalCssUrl detects url() separated from preceding token by /**/',
+  );
+  assert.equal(
+    stripExternalCssUrls('p { background: red/**/url(https://evil.example/a.png); }').includes('evil.example'),
+    false,
+    'stripExternalCssUrls strips red/**/url(...) external URL',
+  );
+  assert.equal(
+    stripExternalCssUrls('p { background: u/*x*/rl(https://evil.example/a.png); }').includes('evil.example'),
+    false,
+    'stripExternalCssUrls strips comment-split u/*x*/rl(...) external URL',
+  );
+  assert.equal(
+    hasExternalCssUrl('p { content: "\\\\"; } @import url(https://evil.example/a.css);'),
+    true,
+    'hasExternalCssUrl detects @import after escaped-backslash closed string',
+  );
+  assert.equal(
+    stripExternalCssUrls('p { content: "\\\\"; } @import url(https://evil.example/a.css);').includes('evil.example'),
+    false,
+    'stripExternalCssUrls strips @import after escaped-backslash closed string',
+  );
+  assert.equal(
+    stripExternalCssUrls(':root { --u: u/*x*/rl(https://evil.example/v.png); } p { background: var(--u); }').includes(
+      'evil.example',
+    ),
+    false,
+    'stripExternalCssUrls blocks comment-smuggled var() external URLs',
+  );
+  const formattedComment = formatCssSource('/* } ; { */ p { color: #111; }');
+  assert.equal(formattedComment.includes('} ; {'), false, 'formatCssSource strips comment delimiters safely');
+  assert.ok(
+    formattedComment.includes('p {\n  color: #111;\n}'),
+    'formatCssSource keeps declarations after comment with braces',
+  );
+  const builtUnclosed = buildCss({
+    ...DEFAULT_SETTINGS,
+    theme: 'custom:unclosed',
+    codeTheme: 'github-dark',
+    allowExternalCssResources: true,
+    customThemes: [{ id: 'custom:unclosed', name: 'Unclosed', css: '/* unclosed comment\np { color: red; }' }],
+  });
+  assert.ok(
+    builtUnclosed.includes('#0d1117') && !builtUnclosed.includes('/* unclosed'),
+    'unclosed custom CSS comment never swallows appended codeTheme CSS',
+  );
+  const rgbPreview = extractCustomThemePreview(
+    'p { --mdstudio-accent: #111111; } :root { --mdstudio-bg: rgb(16, 24, 32); --mdstudio-accent: hsl(210, 90%, 50%); }',
+  );
+  assert.equal(rgbPreview.bg, '#101820', 'extractCustomThemePreview parses rgb() root background');
+  assert.equal(rgbPreview.accent, '#0d7ff2', 'extractCustomThemePreview prioritizes root hsl() accent over descendant');
 }
 
 console.log('59 custom-css and custom-themes checks passed.');

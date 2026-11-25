@@ -1,7 +1,7 @@
 import type { HostClient } from '../adapters/host-client';
 import { prepareImageForWechat } from '../adapters/image-encode';
 import { bytesToBase64 } from '../domain/base64';
-import { assetFilesInMarkdown } from '../domain/images';
+import { assetFilesInMarkdown, replaceLocalImages } from '../domain/images';
 
 export async function importFolderAssets(
   dirHandle: FileSystemDirectoryHandle,
@@ -35,16 +35,17 @@ export async function importFolderAssets(
             tracked.push(stored.filename);
           }
           const assetPath = stored.assetPath || 'assets/' + stored.filename;
-          if (assetPath !== 'assets/' + filename) mapping.set('assets/' + filename.toLowerCase(), assetPath);
+          if (assetPath !== 'assets/' + filename) {
+            mapping.set('assets/' + filename, assetPath);
+            mapping.set('assets/' + filename.toLowerCase(), assetPath);
+          }
           imported++;
         } catch {
           /* skip missing or unsupported assets */
         }
       }),
     );
-    const next = text.replace(/assets\/[a-f0-9]{24}\.(?:png|jpg)/gi, function (path: string) {
-      return mapping.get(path.toLowerCase()) || path;
-    });
+    const next = mapping.size ? replaceLocalImages(text, mapping) : text;
     return { text: next, imported };
   } finally {
     for (const filename of tracked) onTrackInFlight?.(filename, false);

@@ -169,6 +169,7 @@ export interface StudioSurfaceState {
 
 export type StudioSurfaceEvent =
   | { type: 'SET_VIEW'; view: SurfaceViewMode }
+  | { type: 'EXTERNAL_VIEW_CHANGE'; view: SurfaceViewMode }
   | { type: 'RESIZE'; narrow: boolean }
   | { type: 'OPEN_CSS_WORKBENCH' }
   | { type: 'CLOSE_CSS_WORKBENCH' }
@@ -262,13 +263,14 @@ export function canShowSelectionBubble(flags: {
 
 export function resolveEditorEscapeOutcome(flags: {
   menuOpen: boolean;
+  hasDomMenu?: boolean;
   outlineOpen: boolean;
   showMarkdownEditor: boolean;
   searchOpen: boolean;
   hasAiSession: boolean;
   fullscreenDrawer?: boolean;
 }): EditorEscapeOutcome {
-  if (flags.menuOpen || flags.outlineOpen || flags.fullscreenDrawer) return 'defer';
+  if (flags.menuOpen || flags.hasDomMenu || flags.outlineOpen || flags.fullscreenDrawer) return 'defer';
   if (!flags.showMarkdownEditor) return false;
   if (flags.searchOpen) return 'close-search';
   if (flags.hasAiSession) return 'cancel-ai';
@@ -505,6 +507,19 @@ function stepViewOrWorkbenchEvent(state: StudioSurfaceState, event: StudioSurfac
         ...dismissTransient(state, {
           keepSearch: event.view !== 'preview',
           keepDrawer: shouldKeepDrawerOnNavigation(width),
+        }),
+        view: event.view,
+        cssWorkbenchOpen: keepWorkbench ? state.cssWorkbenchOpen : false,
+      };
+    }
+    case 'EXTERNAL_VIEW_CHANGE': {
+      const width = state.narrow ? 640 : 1024;
+      const keepWorkbench = shouldKeepCssWorkbenchOnViewChange(state.cssWorkbenchOpen, width, event.view);
+      return {
+        ...dismissTransient(state, {
+          keepSearch: event.view !== 'preview' && state.immersive !== 'preview',
+          keepDrawer: state.immersive ? false : shouldKeepDrawerOnNavigation(width),
+          keepMenu: !state.immersive && state.menuOpen,
         }),
         view: event.view,
         cssWorkbenchOpen: keepWorkbench ? state.cssWorkbenchOpen : false,

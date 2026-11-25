@@ -120,7 +120,9 @@ function toggleMultiParagraph(selected: string, before: string, after: string): 
     before === after && segments.length > 0 && segments.every((segment) => hasCleanInnerWrap(segment, before));
   return selected.replace(/([^\n]+)/g, function (segment) {
     if (!segment.trim()) return segment;
-    return allWrapped ? segment.slice(before.length, segment.length - after.length) : before + segment + after;
+    if (allWrapped) return segment.slice(before.length, segment.length - after.length);
+    if (before === after && hasCleanInnerWrap(segment, before)) return segment;
+    return before + segment + after;
   });
 }
 

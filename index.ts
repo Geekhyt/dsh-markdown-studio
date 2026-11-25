@@ -44,7 +44,6 @@ export function apply(ctx: HostContext): void {
       );
     },
   });
-  const aiHandler = createAiRoute({ service: aiService });
 
   ctx.effect(function () {
     const disposers: Array<() => void> = [];
@@ -58,6 +57,7 @@ export function apply(ctx: HostContext): void {
       }
     };
     const abort = new AbortController();
+    const aiHandler = createAiRoute({ service: aiService, signal: abort.signal });
     const localServer = startLocalImageServer({ service, signal: abort.signal });
     disposers.push(function () {
       abort.abort();
@@ -71,7 +71,15 @@ export function apply(ctx: HostContext): void {
     });
     try {
       disposers.push(ctx.webServer.register({ kind: 'exact', path: ROUTE_PATH, handler: apiHandler }));
-      disposers.push(ctx.webServer.register({ kind: 'prefix', path: ASSET_PREFIX, handler: assetHandler }));
+      // DeepSeek Harness `webServer` matches `kind: 'prefix'` via `pathname === prefix || pathname.startsWith(prefix + '/')`,
+      // so the registered prefix must omit the trailing slash (otherwise DSH checks `//`).
+      disposers.push(
+        ctx.webServer.register({
+          kind: 'prefix',
+          path: ASSET_PREFIX.replace(/\/+$/, ''),
+          handler: assetHandler,
+        }),
+      );
       disposers.push(ctx.webServer.register({ kind: 'exact', path: MERMAID_PATH, handler: mermaidRoute }));
       disposers.push(ctx.webServer.register({ kind: 'exact', path: MATH_PATH, handler: mathRoute }));
       disposers.push(ctx.webServer.register({ kind: 'exact', path: AI_ROUTE_PATH, handler: aiHandler }));

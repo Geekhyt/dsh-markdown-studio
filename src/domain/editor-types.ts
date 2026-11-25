@@ -35,6 +35,7 @@ export interface EditorInlineBlock {
   addParts?: readonly EditorDiffPart[];
   delOffsets?: readonly EditorDiffOffset[];
   status: 'streaming' | 'ready' | 'error';
+  ariaLabel?: string;
   warning?: string;
   primaryLabel: string;
   secondaryLabel: string;

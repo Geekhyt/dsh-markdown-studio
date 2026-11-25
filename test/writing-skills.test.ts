@@ -845,6 +845,72 @@ await check('G5 regressions: patch overlap, YAML block scalars, stale provider f
     () => clientBadJson.stream({ system: 's', prompt: 'p' }),
     (err: unknown) => err instanceof AiClientError && err.code === 'HTTP_502',
   );
+
+  // G2 & G5 regressions: bare 401 line number is NOT API_KEY_MISSING; upstream secret scrubbed; 600-char CJK pinpoint diff
+  const bare401Svc = new AiHostService({
+    getLlm: () => ({
+      stream() {
+        return {
+          [Symbol.asyncIterator]() {
+            return {
+              next: async () => {
+                throw new Error('Failed parsing JSON at line 401 column 5');
+              },
+            };
+          },
+        };
+      },
+    }),
+    getDefaultModel: () => ({ currentSelection: () => ({ provider: 'p', model: 'm' }) }),
+  });
+  await assert.rejects(
+    () => bare401Svc.stream({ system: 'sys', prompt: 'hi' }, () => {}),
+    (err: unknown) => !(err instanceof AiHostError && err.code === 'API_KEY_MISSING'),
+    'bare 401 line number is not misclassified as API_KEY_MISSING',
+  );
+  const leakSvc = new AiHostService({
+    getLlm: () => ({
+      stream() {
+        return {
+          [Symbol.asyncIterator]() {
+            let done = false;
+            return {
+              next: async () => {
+                if (done) return { value: undefined, done: true };
+                done = true;
+                return {
+                  value: {
+                    type: 'finish',
+                    reason: {
+                      kind: 'error',
+                      failure: { code: 'CUSTOM_SECRET', message: 'Bearer sk-live-secret-token-9999 rejected' },
+                    },
+                  },
+                  done: false,
+                };
+              },
+            };
+          },
+        };
+      },
+    }),
+    getDefaultModel: () => ({ currentSelection: () => ({ provider: 'p', model: 'm' }) }),
+  });
+  await assert.rejects(
+    () => leakSvc.stream({ system: 'sys', prompt: 'hi' }, () => {}),
+    (err: unknown) => err instanceof AiHostError && !err.message.includes('sk-live-secret') && err.code === 'LLM_ERROR',
+    'upstream failure message containing bearer tokens is scrubbed',
+  );
+  const baseSentence = '工程团队在发布前需要检查接口兼容与安全边界，避免回归缺陷流入生产环境。';
+  const longOrig = '首句需要核对。' + baseSentence.repeat(18) + '尾句需要复盘。';
+  const longNext = '首句已核对。' + baseSentence.repeat(18) + '尾句已复盘。';
+  assert.ok(longOrig.length > 600, 'CJK diff benchmark exceeds 600 chars');
+  const longDiff = computeTextDiff(longOrig, longNext);
+  const addedChars = longDiff.addParts.filter((p) => p.changed).reduce((sum, p) => sum + p.text.length, 0);
+  assert.ok(
+    addedChars / longNext.length < 0.1,
+    `600+ char CJK diff pinpoints edits instead of full replacement (ratio ${(addedChars / longNext.length).toFixed(3)})`,
+  );
 });
 
 console.log(`\n${checks} writing-skills checks passed.`);

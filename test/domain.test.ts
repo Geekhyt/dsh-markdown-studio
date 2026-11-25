@@ -355,6 +355,49 @@ assert.ok((nearDockBelow.top ?? 0) >= 58, 'below-caret SlashMenu shifts beneath 
     (aboveWithTopDock.top ?? 0) + aboveWithTopDock.maxHeight <= 320,
     'above-caret popover pushed down by top dock clamps height to stay strictly above caretTop',
   );
+
+  // Short-viewport SlashMenu clamping (surface.height = 106px, neither above nor below >= 72px)
+  const shortSlash = computeCaretPopoverPos({
+    surface: { left: 0, top: 133, right: 960, bottom: 239, width: 960, height: 106 },
+    caretTop: 205,
+    caretBottom: 225,
+    caretLeft: 40,
+    width: 240,
+    maxMenuHeight: 320,
+  });
+  assert.ok(
+    (shortSlash.top ?? 0) >= 10 && (shortSlash.top ?? 0) + shortSlash.maxHeight <= 96,
+    'short-viewport SlashMenu stays strictly inside surface vertical bounds',
+  );
+
+  // G4: fenced code & inline code spans are ignored during image asset discovery & replacement
+  const fencedImgs =
+    '```md\n![code](assets/aaaaaaaaaaaaaaaaaaaaaaaa.png)\n```\n`![inline](assets/cccccccccccccccccccccccc.png)`\n![live](assets/bbbbbbbbbbbbbbbbbbbbbbbb.png)';
+  assert.deepEqual(assetFilesInMarkdown(fencedImgs), ['bbbbbbbbbbbbbbbbbbbbbbbb.png']);
+  const replacedFenced = replaceLocalImages(
+    fencedImgs,
+    new Map([
+      ['assets/aaaaaaaaaaaaaaaaaaaaaaaa.png', 'assets/111111111111111111111111.png'],
+      ['assets/bbbbbbbbbbbbbbbbbbbbbbbb.png', 'assets/222222222222222222222222.png'],
+    ]),
+  );
+  assert.ok(
+    replacedFenced.includes('assets/aaaaaaaaaaaaaaaaaaaaaaaa.png') &&
+      replacedFenced.includes('assets/222222222222222222222222.png'),
+    'replaceLocalImages leaves fenced code examples intact while rewriting live images',
+  );
+
+  // YAML block scalar frontmatter title & callout [!NOTE] plain-text strip
+  assert.equal(
+    deriveTitle('---\ntitle: |\n  Block Scalar Title\n\n  Line Two\n\nauthor: Me\n---\nBody', 'Untitled'),
+    'Block Scalar Title\n\nLine Two',
+  );
+  assert.equal(deriveTitle('---\ntitle: >\n  Folded\n  Title\n---\nBody', 'Untitled'), 'Folded Title');
+  assert.equal(
+    markdownToPlain('> [!NOTE] Custom Title\n> Body line').includes('[!NOTE]'),
+    false,
+    'markdownToPlain strips GFM callout marker syntax',
+  );
 }
 
 console.log('47 settings, asset & surface-geometry edge checks passed.');

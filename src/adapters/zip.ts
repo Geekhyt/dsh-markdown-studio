@@ -357,7 +357,8 @@ function zipRecord(
   if (isUnsafeZipPath(rawName)) throw new Error('unsafe zip path');
   const name = rawName.replace(/\\/g, '/');
   const unixMode = (externalAttr >>> 16) & 0o170000;
-  const isSymlink = versionMadeBy >>> 8 === 3 && unixMode === 0o120000;
+  const madeByHost = versionMadeBy >>> 8;
+  const isSymlink = (madeByHost === 3 || madeByHost === 19) && unixMode === 0o120000;
   return {
     next,
     entry: {

@@ -18,15 +18,28 @@ function contentLengthExceeds(req: IncomingMessage, limit: number): boolean {
   return Number.isFinite(parsed) && parsed > limit;
 }
 
+const BODY_READ_TIMEOUT_MS = 30_000;
+
 async function readJsonBody(req: IncomingMessage, limit: number): Promise<Record<string, unknown>> {
   if (contentLengthExceeds(req, limit)) {
     throw new ImageHostError('BODY_TOO_LARGE', '请求内容过大', '请减少一次上传的图片数量。');
+  }
+  if (req.destroyed || req.aborted) {
+    throw new ImageHostError('BAD_JSON', '请求连接已提前断开');
+  }
+  if (req.readableEnded) {
+    return {};
   }
   return await new Promise(function (resolve, reject) {
     const chunks: Buffer[] = [];
     let size = 0;
     let settled = false;
+    const timer = setTimeout(function () {
+      fail(new ImageHostError('BAD_JSON', '读取请求超时'));
+    }, BODY_READ_TIMEOUT_MS);
+    if (typeof timer.unref === 'function') timer.unref();
     function cleanup(): void {
+      clearTimeout(timer);
       req.removeListener('data', onData);
       req.removeListener('end', onEnd);
       req.removeListener('error', onError);
@@ -86,7 +99,7 @@ async function readJsonBody(req: IncomingMessage, limit: number): Promise<Record
 }
 
 function sendJson(res: ServerResponse, status: number, payload: unknown): void {
-  if (res.headersSent) return;
+  if (res.headersSent || res.destroyed || res.closed || res.writableEnded) return;
   const body = JSON.stringify(payload);
   res.statusCode = status;
   res.setHeader('content-type', 'application/json; charset=utf-8');
@@ -95,7 +108,7 @@ function sendJson(res: ServerResponse, status: number, payload: unknown): void {
   res.end(body);
 }
 
-function headerValue(value: string | string[] | undefined): string {
+export function headerValue(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0] || '';
   return value || '';
 }
@@ -108,17 +121,15 @@ function isJsonContentType(value: string): boolean {
 const TRUSTED_ELECTRON_PROTOCOLS = new Set(['dsh-app:', 'dsh:', 'app:']);
 const ALLOWED_DESKTOP_PROTOCOLS = new Set(['dsh-app:', 'dsh:', 'app:', 'file:']);
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
+const STRICT_LOOPBACK_HOST = /^(?:127\.0\.0\.1|localhost|\[::1\])(?::(\d{1,5}))?$/i;
 
 export function isLoopbackHostHeader(host: string): boolean {
   const trimmed = host.trim();
-  if (!trimmed) return false;
-  try {
-    const parsed = new URL('http://' + trimmed);
-    if (parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) return false;
-    return LOOPBACK_HOSTS.has(parsed.hostname.toLowerCase());
-  } catch {
-    return false;
-  }
+  const match = STRICT_LOOPBACK_HOST.exec(trimmed);
+  if (!match) return false;
+  if (!match[1]) return true;
+  const port = Number(match[1]);
+  return Number.isInteger(port) && port >= 1 && port <= 65535;
 }
 
 export function isLoopbackReq(req: IncomingMessage): boolean {
@@ -128,20 +139,25 @@ export function isLoopbackReq(req: IncomingMessage): boolean {
 
 export function isAllowedOrigin(origin: string, host: string, site: string): boolean {
   if (!isLoopbackHostHeader(host)) return false;
-  if (!origin) return site !== 'cross-site';
+  const normSite = site.trim().toLowerCase();
+  const normOrigin = origin.trim();
+  if (!normOrigin) return normSite === '' || normSite === 'same-origin' || normSite === 'none';
   // An opaque `null` origin is only trusted when the browser vouches for it via Sec-Fetch-Site.
-  if (origin === 'null') return site === 'same-origin' || site === 'none';
+  if (normOrigin === 'null') return normSite === 'same-origin' || normSite === 'none';
   let parsed: URL;
   try {
-    parsed = new URL(origin);
+    parsed = new URL(normOrigin);
   } catch {
     return false;
   }
-  if (TRUSTED_ELECTRON_PROTOCOLS.has(parsed.protocol)) return true;
-  if (site === 'cross-site') return false;
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    return ALLOWED_DESKTOP_PROTOCOLS.has(parsed.protocol);
+  if (TRUSTED_ELECTRON_PROTOCOLS.has(parsed.protocol)) {
+    return !parsed.username && !parsed.password;
   }
+  if (normSite === 'cross-site') return false;
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return ALLOWED_DESKTOP_PROTOCOLS.has(parsed.protocol) && !parsed.username && !parsed.password;
+  }
+  if (parsed.origin.toLowerCase() !== normOrigin.toLowerCase()) return false;
   try {
     const canonicalHost = new URL(parsed.protocol + '//' + host.trim()).host.toLowerCase();
     return parsed.host.toLowerCase() === canonicalHost && LOOPBACK_HOSTS.has(parsed.hostname.toLowerCase());
@@ -252,6 +268,7 @@ export function createImageRoute(options: {
 }
 
 function sendAssetText(res: ServerResponse, status: number, text: string, headOnly = false): void {
+  if (res.headersSent || res.destroyed || res.closed || res.writableEnded) return;
   res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8' });
   res.end(headOnly ? undefined : text);
 }
@@ -273,7 +290,13 @@ export function createAssetRoute(options: {
         return;
       }
       const headOnly = req.method === 'HEAD';
-      const pathname = new URL(req.url || '/', 'http://localhost').pathname;
+      let pathname: string;
+      try {
+        pathname = new URL(req.url || '/', 'http://localhost').pathname;
+      } catch {
+        sendAssetText(res, 400, 'bad request', headOnly);
+        return;
+      }
       if (pathname.indexOf(ASSET_PREFIX) !== 0) {
         sendAssetText(res, 404, 'not found', headOnly);
         return;
@@ -283,16 +306,17 @@ export function createAssetRoute(options: {
         sendAssetText(res, 404, 'not found', headOnly);
         return;
       }
+      if (res.destroyed || res.closed || res.writableEnded) return;
       res.writeHead(200, {
         'content-type': asset.mime,
         'content-length': asset.buffer.length,
         'cache-control': 'private, max-age=31536000, immutable',
         'x-content-type-options': 'nosniff',
       });
-      res.end(req.method === 'HEAD' ? undefined : asset.buffer);
+      res.end(headOnly ? undefined : asset.buffer);
     } catch {
       if (!res.headersSent) sendAssetText(res, 500, 'internal error', req.method === 'HEAD');
-      else res.end();
+      else if (!res.destroyed && !res.closed && !res.writableEnded) res.end();
     }
   };
 }

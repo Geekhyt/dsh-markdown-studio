@@ -327,6 +327,14 @@ for (const file of allSrcFiles) {
         `${file} must measure container .clientWidth (or @container mdstudio) instead of branching on window.innerWidth`,
       );
     }
+    // Unicode case-folding length safety: never slice original UI text via `toLowerCase().indexOf(...)`
+    // (Turkish `İ`.toLowerCase() expands from 1 to 2 UTF-16 code units, causing +1 highlight offset drift).
+    if (normalized.startsWith('src/ui/')) {
+      assert.ok(
+        !/\.to(?:Lower|Upper)Case\(\)\s*\.indexOf\(/.test(code),
+        `${file} must not use toLowerCase()/toUpperCase().indexOf() in UI (use length-preserving RegExp "i" instead)`,
+      );
+    }
   }
 
   assert.ok(!source.includes('#nice'), `${file} must not reference legacy #nice selector`);
@@ -626,6 +634,65 @@ assert.ok(
 assert.ok(
   /key === 'Tab'[\s\S]{0,160}closeAndFocusTrigger/.test(primitivesSrc),
   'src/ui/dsh-primitives.ts must trap Tab inside FallbackMenuPanel and return focus to its trigger',
+);
+
+// Real DSH Cordis webServer prefix-route contract (no trailing slash on `kind: 'prefix'`),
+// CodeMirror Escape hijack ban, destructive confirm safe focus, and SkillManager single-guard Mod+S.
+{
+  const indexSrc = fs.readFileSync(path.join(root, 'index.ts'), 'utf8');
+  const indexSf = ts.createSourceFile('index.ts', indexSrc, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  let prefixRouteCount = 0;
+  function checkCordisRoutes(node: ts.Node): void {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === 'register'
+    ) {
+      const arg = node.arguments[0];
+      if (arg && ts.isObjectLiteralExpression(arg)) {
+        let kindText = '';
+        let pathInit: ts.Expression | null = null;
+        for (const prop of arg.properties) {
+          if (!ts.isPropertyAssignment(prop) || !ts.isIdentifier(prop.name)) continue;
+          if (prop.name.text === 'kind' && ts.isStringLiteral(prop.initializer)) kindText = prop.initializer.text;
+          if (prop.name.text === 'path') pathInit = prop.initializer;
+        }
+        if (kindText === 'prefix' && pathInit) {
+          prefixRouteCount++;
+          if (ts.isStringLiteral(pathInit)) {
+            assert.ok(
+              !pathInit.text.endsWith('/'),
+              `index.ts registers Cordis prefix route with forbidden trailing slash: ${pathInit.text}`,
+            );
+          } else {
+            const exprText = pathInit.getText(indexSf);
+            assert.ok(
+              exprText.includes('.replace(/\\/+$/,') || !exprText.includes('ASSET_PREFIX'),
+              `index.ts must strip trailing slashes when registering prefix route (${exprText})`,
+            );
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, checkCordisRoutes);
+  }
+  checkCordisRoutes(indexSf);
+  assert.ok(prefixRouteCount >= 1, 'index.ts registers at least one verified Cordis prefix route');
+}
+assert.ok(
+  /defaultKeymap\.filter\([\s\S]{0,80}Escape/.test(cmCoreSrc) && !/\.\.\.defaultKeymap\s*[,\]\n]/.test(cmCoreSrc),
+  'src/ui/codemirror-core.ts must exclude Escape from defaultKeymap so active selection never hijacks overlay LIFO Escape',
+);
+const dialogHostSrc = stripComments(fs.readFileSync(path.join(root, 'src/ui/dialog-host.ts'), 'utf8'));
+assert.ok(
+  /autoFocus:\s*active\.kind === 'confirm' && danger/.test(dialogHostSrc) &&
+    /autoFocus:\s*active\.kind === 'confirm' && !danger/.test(dialogHostSrc),
+  'src/ui/dialog-host.ts must focus Cancel (never red submit) on danger confirm dialogs',
+);
+const skillDialogSrc = stripComments(fs.readFileSync(path.join(root, 'src/ui/skill-manager-dialog.ts'), 'utf8'));
+assert.ok(
+  /function handleSave\(\)[\s\S]{0,120}!canSaveDraft/.test(skillDialogSrc),
+  'src/ui/skill-manager-dialog.ts must enforce the same canSaveDraft guard inside handleSave (Mod+S parity)',
 );
 
 // i18n hygiene: zh / en dictionaries stay in exact key parity and every key is referenced by

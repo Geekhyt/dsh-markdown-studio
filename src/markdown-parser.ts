@@ -129,6 +129,14 @@ function findMathClose(text: string, from: number, delimiter: string): number {
       continue;
     }
     if (text.startsWith(delimiter, pos) && !isOddBackslashEscaped(text, pos)) {
+      if (delimiter === '$' || delimiter === '$$') {
+        const prevDollar = pos > from && text.charAt(pos - 1) === '$';
+        const nextDollar = text.charAt(pos + delimiter.length) === '$';
+        if (prevDollar || nextDollar) {
+          while (pos < text.length && text.charAt(pos) === '$') pos++;
+          continue;
+        }
+      }
       return pos;
     }
     pos++;
@@ -453,8 +461,31 @@ function findMatching(text: string, start: number, open: string, close: string):
   return -1;
 }
 
-function findLinkBracketEnd(text: string, start: number): number {
+function buildBracketMatchMap(text: string): Map<number, number> {
+  const matches = new Map<number, number>();
+  const stack: number[] = [];
+  for (let i = 0; i < text.length; i++) {
+    const jumped = skipCodeOrMath(text, i);
+    if (jumped > i) {
+      i = jumped;
+      continue;
+    }
+    const ch = text[i];
+    if (ch === '\\') {
+      i++;
+      continue;
+    }
+    if (ch === '[') stack.push(i);
+    else if (ch === ']' && stack.length > 0) {
+      matches.set(stack.pop()!, i);
+    }
+  }
+  return matches;
+}
+
+function findLinkBracketEnd(text: string, start: number, bracketMap?: Map<number, number>): number {
   if (text.charAt(start) !== '[') return -1;
+  if (bracketMap) return bracketMap.get(start) ?? -1;
   let depth = 0;
   for (let i = start; i < text.length; i++) {
     const jumped = skipCodeOrMath(text, i);
@@ -476,8 +507,8 @@ function findLinkBracketEnd(text: string, start: number): number {
   return -1;
 }
 
-function parseLinkAt(text: string, start: number): LinkMatch | null {
-  const end = findLinkBracketEnd(text, start);
+function parseLinkAt(text: string, start: number, bracketMap?: Map<number, number>): LinkMatch | null {
+  const end = findLinkBracketEnd(text, start, bracketMap);
   if (end === -1 || text.charAt(end + 1) !== '(') return null;
   const close = findMatching(text, end + 1, '(', ')');
   if (close === -1) return null;
@@ -494,12 +525,17 @@ function normalizeRefKey(raw: string): string {
   return raw.trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
-function parseRefLinkAt(text: string, start: number, linkDefs: Map<string, Destination>): LinkMatch | null {
-  const end = findLinkBracketEnd(text, start);
+function parseRefLinkAt(
+  text: string,
+  start: number,
+  linkDefs: Map<string, Destination>,
+  bracketMap?: Map<number, number>,
+): LinkMatch | null {
+  const end = findLinkBracketEnd(text, start, bracketMap);
   if (end === -1 || !linkDefs.size) return null;
   const label = text.slice(start + 1, end);
   if (text.charAt(end + 1) === '[') {
-    const refEnd = findLinkBracketEnd(text, end + 1);
+    const refEnd = findLinkBracketEnd(text, end + 1, bracketMap);
     if (refEnd === -1) return null;
     const rawRef = text.slice(end + 2, refEnd);
     const def = linkDefs.get(normalizeRefKey(rawRef || label));
@@ -580,6 +616,18 @@ const BARE_URL_STICKY_RE = /(https?:\/\/[^\s<>"'\u2018-\u201f\u2014\u3000-\u303f
 const ENTITY_STICKY_RE = /&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|([A-Za-z][A-Za-z0-9]{1,15}));/y;
 const FOOTNOTE_STICKY_RE = /\[\^([^\]\s]+)\]/y;
 
+function hasEvenRemainingDelimiters(text: string, from: number, delimiter: string): boolean {
+  let count = 0;
+  let pos = from;
+  while (pos < text.length) {
+    const found = text.indexOf(delimiter, pos);
+    if (found === -1) break;
+    count++;
+    pos = found + delimiter.length;
+  }
+  return count % 2 === 0;
+}
+
 function skipAutoOrBareLink(text: string, i: number, delimiter: string): number {
   const ch = text.charAt(i);
   if (ch === '<') {
@@ -595,7 +643,7 @@ function skipAutoOrBareLink(text: string, i: number, delimiter: string): number 
       if (
         (delimiter === '==' || delimiter === '++') &&
         url.endsWith(delimiter) &&
-        text.indexOf(delimiter, i + url.length) === -1
+        hasEvenRemainingDelimiters(text, i + url.length, delimiter)
       ) {
         url = url.slice(0, -delimiter.length);
       }
@@ -605,12 +653,18 @@ function skipAutoOrBareLink(text: string, i: number, delimiter: string): number 
   return i;
 }
 
-function skipInlineLinkOrImage(text: string, i: number, delimiter: string, inLink: boolean): number {
+function skipInlineLinkOrImage(
+  text: string,
+  i: number,
+  delimiter: string,
+  inLink: boolean,
+  bracketMap?: Map<number, number>,
+): number {
   if (inLink) return i;
   const ch = text.charAt(i);
   const start = ch === '!' && text.charAt(i + 1) === '[' ? i + 1 : ch === '[' ? i : -1;
   if (start === -1) return skipAutoOrBareLink(text, i, delimiter);
-  const link = parseLinkAt(text, start);
+  const link = parseLinkAt(text, start, bracketMap);
   return link ? link.end - 1 : i;
 }
 
@@ -620,13 +674,14 @@ function findClosingDelimiter(
   delimiter: string,
   failedCache?: Set<string>,
   inLink = false,
+  bracketMap?: Map<number, number>,
 ): number {
   const ch = delimiter.charAt(0);
   const len = delimiter.length;
   const trackNested = (ch === '*' || ch === '_') && len < 3;
   const openedInsideTriple = trackNested && text.charAt(from) === ch;
-  const cacheKey = (inLink ? 'L:' : '') + delimiter;
-  if (!openedInsideTriple && failedCache?.has(cacheKey)) return -1;
+  const cacheKey = (inLink ? 'L:' : '') + (openedInsideTriple ? 'T:' : '') + delimiter;
+  if (failedCache?.has(cacheKey)) return -1;
   const state: EmphasisScanState = { complementOpen: false, tripleDepth: 0, fallbackTriple: -1 };
   let sawAnyCloseCandidate = false;
   for (let i = from; i <= text.length - len; i++) {
@@ -635,7 +690,7 @@ function findClosingDelimiter(
       i = jumped;
       continue;
     }
-    const linkEnd = skipInlineLinkOrImage(text, i, delimiter, inLink);
+    const linkEnd = skipInlineLinkOrImage(text, i, delimiter, inLink, bracketMap);
     if (linkEnd > i) {
       i = linkEnd;
       continue;
@@ -660,7 +715,7 @@ function findClosingDelimiter(
     }
     i += runLen - 1;
   }
-  if (state.fallbackTriple === -1 && !openedInsideTriple && !sawAnyCloseCandidate) {
+  if (state.fallbackTriple === -1 && !sawAnyCloseCandidate) {
     failedCache?.add(cacheKey);
   }
   return state.fallbackTriple;
@@ -797,9 +852,16 @@ function inlineCode(text: string, index: number): InlineToken | null {
   };
 }
 
-function inlineImage(text: string, index: number, ctx?: RenderContext): InlineToken | null {
+function inlineImage(
+  text: string,
+  index: number,
+  ctx?: RenderContext,
+  bracketMap?: Map<number, number>,
+): InlineToken | null {
   if (text.charAt(index) !== '!' || text.charAt(index + 1) !== '[') return null;
-  const image = parseLinkAt(text, index + 1) || (ctx ? parseRefLinkAt(text, index + 1, ctx.linkDefs) : null);
+  const image =
+    parseLinkAt(text, index + 1, bracketMap) ||
+    (ctx ? parseRefLinkAt(text, index + 1, ctx.linkDefs, bracketMap) : null);
   if (!image) return null;
   const safeSrc = sanitizeImageUrl(image.href);
   if (!safeSrc) return { html: escapeHtml(image.label), next: image.end };
@@ -831,14 +893,20 @@ function inlineFootnote(text: string, index: number, ctx: RenderContext): Inline
   return { html: '<sup class="mdstudio-footnote-ref">[' + number + ']</sup>', next: index + footnote[0].length };
 }
 
-function inlineLink(text: string, index: number, ctx: RenderContext, failedBrackets?: Set<string>): InlineToken | null {
+function inlineLink(
+  text: string,
+  index: number,
+  ctx: RenderContext,
+  failedBrackets?: Set<string>,
+  bracketMap?: Map<number, number>,
+): InlineToken | null {
   if (text.charAt(index) !== '[') return null;
   const footnote = inlineFootnote(text, index, ctx);
   if (footnote) return footnote;
   if (ctx.inLink || failedBrackets?.has('[')) return null;
-  const link = parseLinkAt(text, index) || parseRefLinkAt(text, index, ctx.linkDefs);
+  const link = parseLinkAt(text, index, bracketMap) || parseRefLinkAt(text, index, ctx.linkDefs, bracketMap);
   if (!link) {
-    if (text.indexOf(']', index + 1) === -1) failedBrackets?.add('[');
+    if (!bracketMap && text.indexOf(']', index + 1) === -1) failedBrackets?.add('[');
     return null;
   }
   const label = normalizeLabel(link.label);
@@ -925,11 +993,12 @@ function inlineEmphasis(
   index: number,
   ctx: RenderContext,
   failedCache?: Set<string>,
+  bracketMap?: Map<number, number>,
 ): InlineToken | null {
   for (let s = 0; s < EMPHASIS_SPECS.length; s++) {
     const spec = EMPHASIS_SPECS[s];
     if (!text.startsWith(spec.delim, index) || !canOpenEmphasis(text, index, spec.delim)) continue;
-    const end = findClosingDelimiter(text, index + spec.delim.length, spec.delim, failedCache, ctx.inLink);
+    const end = findClosingDelimiter(text, index + spec.delim.length, spec.delim, failedCache, ctx.inLink, bracketMap);
     if (end !== -1) {
       return {
         html: spec.open + renderInline(text.slice(index + spec.delim.length, end), ctx) + spec.close,
@@ -940,16 +1009,22 @@ function inlineEmphasis(
   return null;
 }
 
-function inlineTokenAt(text: string, index: number, ctx: RenderContext, failedCache?: Set<string>): InlineToken | null {
+function inlineTokenAt(
+  text: string,
+  index: number,
+  ctx: RenderContext,
+  failedCache?: Set<string>,
+  bracketMap?: Map<number, number>,
+): InlineToken | null {
   return (
     inlineEntity(text, index) ||
     inlineMath(text, index) ||
     inlineCode(text, index) ||
-    inlineImage(text, index, ctx) ||
-    inlineLink(text, index, ctx, failedCache) ||
+    inlineImage(text, index, ctx, bracketMap) ||
+    inlineLink(text, index, ctx, failedCache, bracketMap) ||
     inlineAutoLink(text, index, ctx) ||
     inlineBareLink(text, index, ctx) ||
-    inlineEmphasis(text, index, ctx, failedCache)
+    inlineEmphasis(text, index, ctx, failedCache, bracketMap)
   );
 }
 
@@ -958,6 +1033,7 @@ function renderInline(text: string, ctx: RenderContext): string {
   let buffer = '';
   let i = 0;
   const failedCache = new Set<string>();
+  const bracketMap = text.includes('[') ? buildBracketMatchMap(text) : undefined;
   function flush(): void {
     if (buffer) {
       out += escapeHtml(buffer);
@@ -978,7 +1054,7 @@ function renderInline(text: string, ctx: RenderContext): string {
       i++;
       continue;
     }
-    const token = inlineTokenAt(text, i, ctx, failedCache);
+    const token = inlineTokenAt(text, i, ctx, failedCache, bracketMap);
     if (token) {
       flush();
       out += token.html;
@@ -1343,7 +1419,8 @@ function parseList(lines: string[], start: number, ctx: RenderContext): BlockRes
       const nextMatch = marker.exec(nextLine);
       const nextIndent = leadingColumns(nextLine);
       const sibling = listMarkerMatches(nextLine, nextMatch, baseIndent, ordered);
-      if (sibling || nextIndent >= current.indent) {
+      const minChildIndent = current.childStripIndent ?? current.indent;
+      if (sibling || nextIndent >= minChildIndent) {
         current.lines.push('');
         loose = true;
         i = nextIndex;
@@ -1418,6 +1495,7 @@ function isQuoteLazyContinuation(
   index: number,
 ): boolean {
   if (isAlertBlock || !content.length || !quoteEndsInOpenParagraph(content)) return false;
+  if (/^ {0,3}(?:=+|-+)[ \t]*$/.test(line)) return false;
   return !isBlockStart(line, lines, index);
 }
 
@@ -1939,7 +2017,7 @@ function parseLinkRefDestination(raw: string): Destination | null {
   const dest = String(raw || '').trim();
   if (!dest) return null;
   if (dest.charAt(0) === '<') {
-    const close = dest.indexOf('>');
+    const close = findUnescapedAngleClose(dest, 1);
     if (close === -1) return null;
     const href = unescapeLinkDest(dest.slice(1, close));
     const title = parseStrictDelimitedTitle(dest.slice(close + 1).trim());
@@ -1953,6 +2031,18 @@ function parseLinkRefDestination(raw: string): Destination | null {
   const title = parseStrictDelimitedTitle((split[2] || '').trim());
   if (title === null) return null;
   return { href, title };
+}
+
+function stepMathBlockState(active: '$$' | '\\[' | null, line: string): '$$' | '\\[' | null {
+  const trimmed = line.trim();
+  if (!active) {
+    if (trimmed === '$$') return '$$';
+    if (trimmed === '\\[') return '\\[';
+    return null;
+  }
+  if (active === '$$' && trimmed === '$$') return null;
+  if (active === '\\[' && trimmed === '\\]') return null;
+  return active;
 }
 
 function parseLinkRefLine(line: string, linkDefs: Map<string, Destination>): boolean {
@@ -1976,6 +2066,7 @@ function extractDefinitions(text: string): {
   const linkDefs = new Map<string, Destination>();
   let current: FootnoteDefinition | null = null;
   let fenceState: FenceOpening | null = null;
+  let mathBlock: '$$' | '\\[' | null = null;
   let canStartLinkDef = true;
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index];
@@ -1984,6 +2075,14 @@ function extractDefinitions(text: string): {
     if (prevFence || fenceState) {
       current = null;
       canStartLinkDef = !fenceState;
+      kept.push(line);
+      continue;
+    }
+    const prevMath = mathBlock;
+    mathBlock = stepMathBlockState(mathBlock, line);
+    if (prevMath || mathBlock) {
+      current = null;
+      canStartLinkDef = !mathBlock;
       kept.push(line);
       continue;
     }
@@ -2041,7 +2140,7 @@ function buildFrontmatterMetaHtml(meta: Record<string, string>, rawBody: string,
 }
 
 function findTopLevelH1Index(html: string): number {
-  const tagRe = /<(\/?)(blockquote|section|h1)\b[^>]*>/gi;
+  const tagRe = /<(\/?)(blockquote|section|ul|ol|li|table|h1)\b[^>]*>/gi;
   let depth = 0;
   let match: RegExpExecArray | null;
   while ((match = tagRe.exec(html))) {

@@ -22,10 +22,15 @@ export interface ComputedTextDiff {
 }
 
 const DIFF_TOKEN_RE = /[A-Za-z0-9_]+|\s+|[^\sA-Za-z0-9_]/gu;
+const DIFF_CLAUSE_RE = /[^。！？!?；;，,\n]+[。！？!?；;，,\n]*|[。！？!?；;，,\n]+/gu;
 const MAX_LCS_CELLS = 250_000;
 
 export function tokenizeDiff(text: string): string[] {
   return text.match(DIFF_TOKEN_RE) ?? [];
+}
+
+function splitDiffClauses(text: string): string[] {
+  return text.match(DIFF_CLAUSE_RE) ?? [];
 }
 
 function pushSegment(out: DiffSegment[], type: DiffSegment['type'], text: string): void {
@@ -68,12 +73,53 @@ function backtrackLcs(a: readonly string[], b: readonly string[], dp: Uint32Arra
   return out;
 }
 
-function diffTokenSlices(a: readonly string[], b: readonly string[]): DiffSegment[] {
+function refineClauseHunk(delText: string, insText: string, out: DiffSegment[]): void {
+  const { prefix, oldMid, newMid, suffix } = trimCommonEnds(tokenizeDiff(delText), tokenizeDiff(insText));
+  pushSegment(out, 'equal', prefix);
+  for (const seg of diffTokenSlices(oldMid, newMid, false)) {
+    pushSegment(out, seg.type, seg.text);
+  }
+  pushSegment(out, 'equal', suffix);
+}
+
+function diffByClauses(aText: string, bText: string): DiffSegment[] | null {
+  const aClauses = splitDiffClauses(aText);
+  const bClauses = splitDiffClauses(bText);
+  if ((aClauses.length <= 1 && bClauses.length <= 1) || aClauses.length * bClauses.length > MAX_LCS_CELLS) {
+    return null;
+  }
+  const coarse = backtrackLcs(aClauses, bClauses, buildLcsTable(aClauses, bClauses));
+  const out: DiffSegment[] = [];
+  for (let i = 0; i < coarse.length; i++) {
+    const cur = coarse[i];
+    const next = coarse[i + 1];
+    if (cur.type === 'delete' && next && next.type === 'insert') {
+      refineClauseHunk(cur.text, next.text, out);
+      i++;
+      continue;
+    }
+    if (cur.type === 'insert' && next && next.type === 'delete') {
+      refineClauseHunk(next.text, cur.text, out);
+      i++;
+      continue;
+    }
+    pushSegment(out, cur.type, cur.text);
+  }
+  return out;
+}
+
+function diffTokenSlices(a: readonly string[], b: readonly string[], allowClauseSplit = true): DiffSegment[] {
   if (!a.length && !b.length) return [];
   if (a.length * b.length > MAX_LCS_CELLS) {
+    const aText = a.join('');
+    const bText = b.join('');
+    if (allowClauseSplit) {
+      const refined = diffByClauses(aText, bText);
+      if (refined) return refined;
+    }
     const fallback: DiffSegment[] = [];
-    pushSegment(fallback, 'delete', a.join(''));
-    pushSegment(fallback, 'insert', b.join(''));
+    pushSegment(fallback, 'delete', aText);
+    pushSegment(fallback, 'insert', bText);
     return fallback;
   }
   return backtrackLcs(a, b, buildLcsTable(a, b));

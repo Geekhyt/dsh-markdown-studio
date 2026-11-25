@@ -46,6 +46,7 @@ export type FileSessionEvent =
   | { type: 'LINK_FILE'; handle: 'fileA' | 'fileB' }
   | { type: 'SWITCH_DOC'; docId: 'doc1' | 'doc2' }
   | { type: 'EDIT_DOC' }
+  | { type: 'EXTERNAL_STORAGE_SYNC'; markdownChanged: boolean }
   | { type: 'EXTERNAL_MODIFY'; handle: 'fileA' | 'fileB' }
   | { type: 'SET_PERMISSION'; permission: FilePermissionState }
   | { type: 'FOCUS_CHECK' }
@@ -253,6 +254,28 @@ export function stepFileSession(state: FileSessionState, event: FileSessionEvent
         docContent: { ...base.docContent, [base.activeDocId]: nextVer },
         dirtyDisk: hasLinked ? true : base.dirtyDisk,
         autosaveArmedFor: hasLinked && !base.conflict ? base.activeDocId : null,
+      };
+    }
+    case 'EXTERNAL_STORAGE_SYNC': {
+      if (!event.markdownChanged) return base;
+      const nextVer = ((base.docContent[base.activeDocId] + 1) % 3) + 1;
+      const updatedDocs = { ...base.docContent, [base.activeDocId]: nextVer };
+      if (base.linkedHandle === 'none') {
+        return { ...base, docContent: updatedDocs };
+      }
+      // Cross-tab markdown merge must detach the linked local file so Tab B's content never autosaves over Tab A's disk file.
+      return {
+        ...base,
+        restoring: false,
+        docContent: updatedDocs,
+        linkedDocId: null,
+        linkedHandle: 'none',
+        generation: base.generation + 1,
+        reloadSeq: base.reloadSeq + 1,
+        conflict: false,
+        dirtyDisk: false,
+        autosaveArmedFor: null,
+        permission: 'granted',
       };
     }
     case 'EXTERNAL_MODIFY': {

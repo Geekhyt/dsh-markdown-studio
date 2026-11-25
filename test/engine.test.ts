@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
 import { extractMermaidBlocks, prependMermaidDirective } from '../src/application/use-mermaid-assets';
 import { engine } from '../src/engine';
 import { buildCss, DEFAULT_SETTINGS, SAMPLE_MARKDOWN, THEMES } from '../src/themes';
@@ -919,6 +920,50 @@ check('v0.1.8 CommonMark link-ref, task-list, blockquote lazy continuation and C
   );
   const numRef = engine.renderMarkdown('![Diagram][fig1]\n\n[fig1]: fig1.png');
   assert.ok(numRef.html.includes('src="fig1.png"'), 'link-ref accepts filenames ending in digits like fig1.png');
+
+  // G4 regressions: CSS Inliner var depth, sibling vars, root alias collapse, pseudo fallback, attr specificity,
+  // ==url== parity with second mark, 2-space nested list across blank line, and $$ link-ref protection
+  {
+    const dom = new JSDOM(
+      '<!doctype html><section id="mdstudio" class="mdstudio-content"><p class="x">Hi</p></section>',
+    );
+    const root = dom.window.document.getElementById('mdstudio')!;
+    const tRedos = performance.now();
+    engine.inlineCss(
+      root,
+      [
+        `:root { --a: var(--b); --b: var(--a); }`,
+        `:root { --base: #123456; --derived: var(--base); }`,
+        `body .mdstudio-content p { color: #222222; background-color: var(--a); border-color: var(--derived); }`,
+        `p.x::before { content: "${'\\'.repeat(80)}"; color: #112233; color: var(--missing-var); }`,
+      ].join('\n'),
+    );
+    assert.ok(performance.now() - tRedos < 50, 'evaluatePseudoContent handles backslash chains in linear time');
+    const p = root.querySelector<HTMLElement>('p.x')!;
+    assert.equal(p.style.color, 'rgb(34, 34, 34)', 'body .mdstudio-content p collapses cleanly to match');
+    assert.equal(
+      p.style.backgroundColor,
+      '',
+      'cyclic/depth-exhausted var() does not leak raw var(...) into inline style',
+    );
+    assert.equal(p.outerHTML.includes('var('), false, 'no raw var() leaks into serialized HTML');
+    assert.equal(p.style.borderColor, 'rgb(18, 52, 86)', 'sibling custom property --derived resolves --base');
+    const pseudo = p.querySelector<HTMLElement>('span');
+    assert.equal(pseudo?.style.color, 'rgb(17, 34, 51)', 'unresolvable pseudo var() preserves prior fallback color');
+    assert.equal(
+      engine.selectorSpecificity('a[data-x="foo.bar#baz"]'),
+      11,
+      'attribute values containing . or # do not inflate selector specificity',
+    );
+    dom.window.close();
+  }
+  const markMulti = engine.renderMarkdown('==visit https://example.com/q=1== and ==other==', { linkFootnotes: true });
+  assert.equal(markMulti.refs[0]?.url, 'https://example.com/q=1', 'even-parity ==url== closes mark cleanly');
+  assert.ok(markMulti.html.includes('<mark>other</mark>'), 'subsequent ==mark== parses cleanly');
+  const twoSpaceList = engine.renderMarkdown('1. First\n  - Sub A\n\n  - Sub B\n2. Second');
+  assert.equal((twoSpaceList.html.match(/<ol/g) || []).length, 1, '2-space nested list across blank line keeps 1 <ol>');
+  const mathDefs = engine.renderMarkdown('$$\nx = 1\n\n[a]: b/c\n[^1]: foot\n$$');
+  assert.ok(mathDefs.html.includes('[a]: b/c') && mathDefs.html.includes('[^1]: foot'), '$$ math shields link/fn defs');
 });
 
 console.log(`\n${checks} engine checks passed.`);

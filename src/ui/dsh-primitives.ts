@@ -421,7 +421,11 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
                 },
                 className: tip.side === 'right' ? 'mdstudio-tooltip is-side-right' : 'mdstudio-tooltip',
                 role: 'tooltip',
-                style: { left: tip.left, top: tip.top, ...(props.maxWidth ? { maxWidth: props.maxWidth } : {}) },
+                style: {
+                  left: tip.left,
+                  top: tip.top,
+                  ...(props.maxWidth ? { maxWidth: props.maxWidth, whiteSpace: 'normal' } : {}),
+                },
               },
               resolved,
             ),
@@ -482,6 +486,7 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
   }
 
   function FallbackModal(props: DshModalProps): ReactNode {
+    const [descId] = React.useState(() => 'mdstudio-modal-desc-' + Math.random().toString(36).slice(2, 8));
     const focusedOnOpenRef = React.useRef(false);
     const previousFocusRef = React.useRef<HTMLElement | null>(null);
     const focusTimerRef = React.useRef<number | null>(null);
@@ -555,6 +560,7 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
             role: 'dialog',
             'aria-modal': 'true',
             'aria-label': props.title,
+            'aria-describedby': props.description ? descId : undefined,
             tabIndex: -1,
             onClick: function (event: ReactNamespace.MouseEvent<HTMLDivElement>) {
               event.stopPropagation();
@@ -591,7 +597,9 @@ export function createDshBridge(React: typeof ReactNamespace, primitives?: DshPr
                       h(Icon, { name: 'close', size: 14 }),
                     ),
                   ),
-                  props.description ? h('p', { className: 'mdstudio-modal-desc' }, props.description) : null,
+                  props.description
+                    ? h('p', { id: descId, className: 'mdstudio-modal-desc' }, props.description)
+                    : null,
                   props.children !== undefined ? h('div', { className: 'mdstudio-modal-body' }, props.children) : null,
                 ),
                 props.footer !== undefined ? h('div', { className: 'mdstudio-modal-footer' }, props.footer) : null,

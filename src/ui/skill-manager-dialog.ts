@@ -336,7 +336,7 @@ function SkillManagerDialogContent(props: SkillManagerDialogProps): ReactNode {
   }
 
   function handleSave(): void {
-    if (isBuiltin) return;
+    if (isBuiltin || !canSaveDraft) return;
     const normalized = normalizePastedDraft(form, t('ai.defaultCustomName'));
     const saved = props.actions.onSave(normalized);
     if (saved) {

@@ -358,7 +358,10 @@ class AiInlineBlockWidget extends WidgetType {
       `${item.primaryLabel}\0${item.secondaryLabel}\0${item.retryLabel || ''}`,
     );
     wrap.setAttribute('role', item.status === 'error' ? 'alert' : 'region');
-    wrap.setAttribute('aria-label', item.warning || item.secondaryLabel || item.primaryLabel);
+    wrap.setAttribute(
+      'aria-label',
+      item.ariaLabel || item.warning || (item.status === 'error' ? 'AI rewrite error' : 'AI rewrite suggestion'),
+    );
     inlineBlockSpecs.set(wrap, item);
 
     const prose = document.createElement('div');
@@ -649,6 +652,7 @@ export function create(options: EditorOptions): EditorApi {
   const resolveAriaLabel = (label?: string, ph?: string): string =>
     label || ph || (isCss ? 'CSS editor' : 'Markdown editor');
 
+  let destroyed = false;
   const extensions: Extension[] = [
     ...(isCss ? [lineNumbers()] : [markdownMonoLines, inlineBlocksField, diffTransitionField]),
     ...(opts.enableHistory ? [history()] : []),
@@ -669,7 +673,11 @@ export function create(options: EditorOptions): EditorApi {
     ),
     placeholderCompartment.of(opts.placeholder ? placeholder(opts.placeholder) : []),
     themeCompartment.of(editorTheme(dark, isCss)),
-    keymap.of([...(opts.enableHistory ? historyKeymap : []), ...closeBracketsKeymap, ...defaultKeymap]),
+    keymap.of([
+      ...(opts.enableHistory ? historyKeymap : []),
+      ...closeBracketsKeymap,
+      ...defaultKeymap.filter((binding) => binding.key !== 'Escape'),
+    ]),
     EditorView.updateListener.of(onUpdate),
     EditorView.domEventHandlers({
       blur: () => {
@@ -679,7 +687,7 @@ export function create(options: EditorOptions): EditorApi {
       compositionend: (_event, currentView) => {
         if (wasComposing && opts.onChange) {
           queueMicrotask(() => {
-            if (!wasComposing || currentView.composing) return;
+            if (destroyed || !wasComposing || currentView.composing) return;
             wasComposing = false;
             const selection = currentView.state.selection.main;
             opts.onChange?.(currentView.state.doc.toString(), {
@@ -824,6 +832,7 @@ export function create(options: EditorOptions): EditorApi {
       });
     },
     destroy() {
+      destroyed = true;
       scrollElement.removeEventListener('scroll', handleScroll);
       scrollListeners.clear();
       view.destroy();

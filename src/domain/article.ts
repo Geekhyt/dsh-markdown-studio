@@ -45,7 +45,31 @@ export function parseView(value: unknown): ViewMode {
 
 const FRONTMATTER_BLOCK_RE = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
 
-/** Parse validated leading YAML frontmatter (`key: value` / list items / comments only, never leading `---` HR). */
+function consumeYamlBlockScalar(lines: string[], startIndex: number, folded: boolean): { value: string; next: number } {
+  const collected: string[] = [];
+  let minIndent = Number.POSITIVE_INFINITY;
+  let j = startIndex + 1;
+  while (j < lines.length) {
+    const raw = lines[j];
+    if (!raw.trim()) {
+      collected.push('');
+      j++;
+      continue;
+    }
+    const indentMatch = /^([ \t]+)/.exec(raw);
+    if (!indentMatch) break;
+    minIndent = Math.min(minIndent, indentMatch[1].length);
+    collected.push(raw);
+    j++;
+  }
+  const strip = Number.isFinite(minIndent) ? minIndent : 0;
+  const dedented = collected.map((l) => (l.length >= strip ? l.slice(strip) : ''));
+  while (dedented.length && dedented[dedented.length - 1] === '') dedented.pop();
+  const value = folded ? dedented.join(' ').replace(/\s+/g, ' ').trim() : dedented.join('\n').trim();
+  return { value, next: j - 1 };
+}
+
+/** Parse validated leading YAML frontmatter (`key: value`, block scalars, list items, comments; never leading `---` HR). */
 export function parseFrontmatterBlock(
   text: string,
 ): { meta: Record<string, string>; body: string; offset: number } | null {
@@ -66,6 +90,13 @@ export function parseFrontmatterBlock(
     const pair = /^([A-Za-z_][\w-]*)\s*:\s*(.*)$/.exec(line);
     if (!pair) return null;
     let value = pair[2].trim();
+    if (/^[|>][+-]?$/.test(value)) {
+      const block = consumeYamlBlockScalar(lines, i, value.charAt(0) === '>');
+      lastKey = pair[1];
+      meta[lastKey] = block.value;
+      i = block.next;
+      continue;
+    }
     if (
       value.length >= 2 &&
       ((value.charAt(0) === '"' && value.charAt(value.length - 1) === '"') ||
@@ -114,7 +145,7 @@ export function markdownToPlain(markdown: unknown): string {
   return stripFencedCodeLines(withoutFrontmatter)
     .replace(/^ {0,3}:::(?:scroll(?:-x)?(?:\s+\d+(?:px)?)?|\s*)$/gim, '')
     .replace(/^ {0,3}:::(?:meta|lead|tldr|pull|sign|callout)[ \t]*/gim, '')
-    .replace(/^>\s*\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*$/gim, '')
+    .replace(/^>\s*\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*/gim, '')
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/^#{1,6}\s+/gm, '')

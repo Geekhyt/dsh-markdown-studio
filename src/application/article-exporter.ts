@@ -85,15 +85,24 @@ export function createArticleExporter(options: ArticleExportOptions): ArticleExp
       const patch = parseThemePatch(JSON.parse(await file.text()) as unknown);
       if (!patch) throw new Error('no known fields');
       const liveSettings = options.getSettings ? options.getSettings() : settings;
+      const incomingCustom = patch.customThemes ? [...patch.customThemes] : [];
       if (patch.customThemes) {
         patch.customThemes = mergeCustomThemes(liveSettings.customThemes, patch.customThemes);
       }
       const nextCustomThemes = patch.customThemes || liveSettings.customThemes || [];
-      if (patch.theme && isCustomThemeId(patch.theme) && !findCustomTheme(nextCustomThemes, patch.theme)) {
+      const droppedByCap = incomingCustom.some((item) => !findCustomTheme(nextCustomThemes, item.id));
+      const themeMissing = Boolean(
+        patch.theme && isCustomThemeId(patch.theme) && !findCustomTheme(nextCustomThemes, patch.theme),
+      );
+      if (themeMissing) {
         delete patch.theme;
       }
+      if (droppedByCap && themeMissing) {
+        options.notify(t('toast.themeLimit'), 'error');
+        return;
+      }
       options.updateSettings(patch);
-      options.notify(t('toast.themeImported'));
+      options.notify(t(droppedByCap ? 'toast.themeLimit' : 'toast.themeImported'), droppedByCap ? 'error' : 'success');
     } catch {
       options.notify(t('toast.themeInvalid'), 'error');
     }

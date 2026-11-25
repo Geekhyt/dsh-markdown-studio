@@ -1,14 +1,10 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { AiHostError, type AiHostService } from '../application/ai-service';
-import { isAllowedOrigin, isLoopbackReq } from './routes';
+import { headerValue, isAllowedOrigin, isLoopbackReq } from './routes';
 
 export const AI_ROUTE_PATH = '/api/markdown-studio/ai';
 export const MAX_AI_BODY_BYTES = 512 * 1024;
-
-function headerValue(value: string | string[] | undefined): string {
-  if (Array.isArray(value)) return value[0] || '';
-  return value || '';
-}
+const AI_BODY_READ_TIMEOUT_MS = 30_000;
 
 /** Exact MIME essence check: `text/plain;x=application/json` must not pass as JSON. */
 function isJsonContentType(value: string): boolean {
@@ -16,7 +12,7 @@ function isJsonContentType(value: string): boolean {
 }
 
 function sendJson(res: ServerResponse, status: number, payload: unknown): void {
-  if (res.headersSent || res.destroyed || res.closed) return;
+  if (res.headersSent || res.destroyed || res.closed || res.writableEnded) return;
   const body = JSON.stringify(payload);
   res.statusCode = status;
   res.setHeader('content-type', 'application/json; charset=utf-8');
@@ -35,11 +31,22 @@ async function readJsonObject(req: IncomingMessage, limit: number): Promise<Reco
   if (rawLen && Number.isFinite(Number(rawLen)) && Number(rawLen) > limit) {
     throw new AiHostError('BODY_TOO_LARGE', '请求内容超出限制');
   }
+  if (req.destroyed || req.aborted) {
+    throw new AiHostError('BAD_JSON', '请求连接已提前断开');
+  }
+  if (req.readableEnded) {
+    return {};
+  }
   return await new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
     let settled = false;
+    const timer = setTimeout(() => {
+      fail(new AiHostError('BAD_JSON', '读取请求超时'));
+    }, AI_BODY_READ_TIMEOUT_MS);
+    if (typeof timer.unref === 'function') timer.unref();
     const cleanup = (): void => {
+      clearTimeout(timer);
       req.removeListener('data', onData);
       req.removeListener('end', onEnd);
       req.removeListener('error', onError);
@@ -121,12 +128,19 @@ async function handleStreamAction(
   service: AiHostService,
   body: Record<string, unknown>,
   res: ServerResponse,
+  teardownSignal?: AbortSignal,
 ): Promise<void> {
   if (res.destroyed || res.closed || res.socket?.destroyed) return;
   const controller = new AbortController();
-  res.on('close', () => {
+  const onClose = (): void => {
     if (!res.writableEnded) controller.abort();
-  });
+  };
+  const onTeardown = (): void => {
+    controller.abort();
+  };
+  if (teardownSignal?.aborted) controller.abort();
+  else teardownSignal?.addEventListener('abort', onTeardown, { once: true });
+  res.on('close', onClose);
   res.statusCode = 200;
   res.setHeader('content-type', 'application/x-ndjson; charset=utf-8');
   res.setHeader('cache-control', 'no-store');
@@ -151,6 +165,8 @@ async function handleStreamAction(
       });
     }
   } finally {
+    res.removeListener('close', onClose);
+    teardownSignal?.removeEventListener('abort', onTeardown);
     if (!res.writableEnded && !res.destroyed && !res.closed) res.end();
   }
 }
@@ -158,9 +174,11 @@ async function handleStreamAction(
 export function createAiRoute(options: {
   service: AiHostService;
   maxBodyBytes?: number;
+  signal?: AbortSignal;
 }): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   const service = options.service;
   const maxBodyBytes = options.maxBodyBytes || MAX_AI_BODY_BYTES;
+  const teardownSignal = options.signal;
 
   return async function aiRoute(req, res) {
     try {
@@ -172,7 +190,7 @@ export function createAiRoute(options: {
         return;
       }
       if (action === 'ai.stream') {
-        await handleStreamAction(service, body, res);
+        await handleStreamAction(service, body, res, teardownSignal);
         return;
       }
       sendJson(res, 400, { ok: false, error: { code: 'UNKNOWN_ACTION', message: '未知操作: ' + action } });

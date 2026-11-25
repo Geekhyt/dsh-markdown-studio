@@ -534,6 +534,46 @@ assert.equal(customStore.getActive().settings.theme, 'classic', 'deleting custom
     );
     assert.equal(switchStore.flush(), true);
     assert.equal(switchWritesBefore.count, 0, 'no redundant writeback after remote deleted switched-to doc');
+
+    // (d) G3 field-level dirty merge (view vs markdown) & concurrent customThemes intent merge
+    const themeA = { id: 'custom:a', name: 'A', css: '#mdstudio{color:#111}' };
+    const themeB = { id: 'custom:b', name: 'B', css: '#mdstudio{color:#222}' };
+    let fieldDisk: LibraryState = {
+      activeId: 'doc1',
+      docs: [{ ...article('doc1', '# v1'), rev: 1 }],
+      trash: [],
+    };
+    const fieldStore = new DocumentStore(
+      structuredClone(fieldDisk),
+      (next) => {
+        fieldDisk = structuredClone(next);
+        return true;
+      },
+      () => structuredClone(fieldDisk),
+    );
+    fieldStore.updateActive({ view: 'preview' });
+    fieldStore.updateActive({ settings: { ...fieldStore.getActive().settings, customThemes: [themeA] } });
+    fieldDisk = {
+      activeId: 'doc1',
+      docs: [
+        {
+          ...fieldDisk.docs[0],
+          markdown: '# v2 from tab B',
+          rev: 2,
+          settings: { ...fieldDisk.docs[0].settings, customThemes: [themeB] },
+        },
+      ],
+      trash: [],
+    };
+    assert.equal(fieldStore.flush(), true);
+    assert.equal(
+      fieldStore.getActive().markdown,
+      '# v2 from tab B',
+      'view-only dirty edit preserves concurrent cross-tab markdown',
+    );
+    assert.equal(fieldStore.getActive().view, 'preview', 'local view change survives field-level merge');
+    const mergedIds = (fieldStore.getActive().settings.customThemes || []).map((t) => t.id).sort();
+    assert.deepEqual(mergedIds, ['custom:a', 'custom:b'], 'concurrent custom theme additions merge without loss');
     unsub();
   }
 

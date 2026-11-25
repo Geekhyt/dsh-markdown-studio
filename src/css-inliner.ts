@@ -179,8 +179,16 @@ export function normalizeSelector(selector: string, rootReplacement = '#mdstudio
   if (rootReplacement) {
     value = value.replace(/(^|[\s>+~,(])(?::root|html|body)(?=$|[\s>+~,.#[:)])/gi, '$1' + rootReplacement);
     const escaped = rootReplacement.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    value = value.replace(new RegExp(`${escaped}(\\s+)${escaped}`, 'gi'), rootReplacement);
-    value = value.replace(new RegExp(`${escaped}(\\s*>\\s*)${escaped}`, 'gi'), rootReplacement);
+    const rootAtom = `(?:${escaped}|#mdstudio|\\.mdstudio-content)`;
+    const redundantRootRe = new RegExp(
+      `(^|[\\s>+~,(])${rootAtom}(?:\\s+|\\s*>\\s*)${rootAtom}(?=$|[\\s>+~,.#[:)])`,
+      'gi',
+    );
+    let prev = '';
+    while (value !== prev) {
+      prev = value;
+      value = value.replace(redundantRootRe, '$1' + rootReplacement);
+    }
   }
   value = value.replace(
     /\.mdstudio-notes-title\b/g,
@@ -188,7 +196,9 @@ export function normalizeSelector(selector: string, rootReplacement = '#mdstudio
   );
   value = value.replace(/\.mdstudio-notes\b(?!-)/g, ':is(.mdstudio-notes, .mdstudio-references, .mdstudio-footnotes)');
   value = value.replace(/\.mdstudio-task-box-checked\b/g, '.mdstudio-task-box.is-checked');
-  value = value.replace(/\.mdstudio-task-done\b/g, '.mdstudio-task.is-checked .mdstudio-task-text');
+  value = value.replace(/([a-zA-Z][\w-]*)?\.mdstudio-task-done\b/g, function (_m, tag?: string) {
+    return '.mdstudio-task.is-checked ' + (tag || '') + '.mdstudio-task-text';
+  });
   return value;
 }
 
@@ -270,7 +280,8 @@ function extractBalancedPseudo(selector: string, pattern: RegExp, onInner: (inne
 
 function selectorSpecificityTuple(selector: string): SpecificityTuple {
   let bonus: SpecificityTuple = [0, 0, 0];
-  let source = extractBalancedPseudo(selector, /:where\(/gi, function () {});
+  let source = replaceAttributeSelectors(selector);
+  source = extractBalancedPseudo(source, /:where\(/gi, function () {});
   source = extractBalancedPseudo(source, /:(?:is|not|has)\(/gi, function (inner) {
     bonus = addSpecificity(bonus, maxBranchSpecificity(inner));
   });
@@ -283,7 +294,7 @@ function selectorSpecificityTuple(selector: string): SpecificityTuple {
   source = source.replace(/::[\w-]+/g, ' ');
   const legacyPseudo = /:(?:before|after|first-line|first-letter)\b/gi;
   const pseudoElements = doublePseudoCount + (source.match(legacyPseudo) || []).length;
-  source = replaceAttributeSelectors(source.replace(legacyPseudo, ' '));
+  source = source.replace(legacyPseudo, ' ');
   const ids = (source.match(/#[\w-]+/g) || []).length;
   const classes = (source.match(/\.[\w-]+|:[\w-]+(?:\([^)]*\))?/g) || []).length;
   source = source.replace(/:[\w-]+\([^)]*\)/g, ' ');
@@ -392,8 +403,11 @@ function resolveVarsChecked(
   visiting: Set<string>,
   budget: VarBudget,
 ): ResolvedVar {
-  if (!vars || !/var\(/i.test(input) || level > 8 || budget.steps >= MAX_VAR_EXPANSIONS) {
+  if (!vars || !/var\(/i.test(input)) {
     return { value: input, valid: true };
+  }
+  if (level > 8 || budget.steps >= MAX_VAR_EXPANSIONS) {
+    return { value: '', valid: false };
   }
   let out = '';
   let i = 0;
@@ -493,7 +507,7 @@ function formatCounter(num: number, style: string): string {
 function evaluatePseudoContent(raw: string, counters: Record<string, number> | undefined): string {
   const input = String(raw || '').trim();
   if (!input || input === 'none' || input === 'normal') return '';
-  const tokenRe = /(['"])((?:\\.|(?!\1)[\s\S])*)\1|counter\(\s*([\w-]+)\s*(?:,\s*([\w-]+)\s*)?\)/gi;
+  const tokenRe = /(['"])((?:\\[\s\S]|(?!\1)[^\\])*)\1|counter\(\s*([\w-]+)\s*(?:,\s*([\w-]+)\s*)?\)/gi;
   let out = '';
   let match: RegExpExecArray | null;
   while ((match = tokenRe.exec(input)) !== null) {
@@ -506,41 +520,75 @@ function evaluatePseudoContent(raw: string, counters: Record<string, number> | u
   return out;
 }
 
+function applyCounterProps(
+  props: Map<string, StyleValue[]> | undefined,
+  vars: Record<string, string>,
+  state: Record<string, number>,
+  scopedResets?: Map<string, number | undefined>,
+): void {
+  if (!props) return;
+  const resetList = props.get('counter-reset');
+  const incList = props.get('counter-increment');
+  const reset = resetList ? winningCandidate(resetList) : null;
+  const inc = incList ? winningCandidate(incList) : null;
+  if (reset) {
+    parseCounterList(resolveVars(reset.value, vars), 0).forEach(function (pair) {
+      if (scopedResets && !scopedResets.has(pair[0])) {
+        scopedResets.set(pair[0], Object.hasOwn(state, pair[0]) ? state[pair[0]] : undefined);
+      }
+      state[pair[0]] = pair[1];
+    });
+  }
+  if (inc) {
+    parseCounterList(resolveVars(inc.value, vars), 1).forEach(function (pair) {
+      state[pair[0]] = (Object.hasOwn(state, pair[0]) ? state[pair[0]] : 0) + pair[1];
+    });
+  }
+}
+
 function snapshotCounters(
   root: HTMLElement,
   styleMap: Map<HTMLElement, Map<string, StyleValue[]>>,
-  pseudoTargets: Map<HTMLElement, unknown>,
+  pseudoTargets: Map<HTMLElement, Record<string, Map<string, StyleValue[]>>>,
   varsFor: (element: HTMLElement) => Record<string, string>,
 ): Map<HTMLElement, Record<string, number>> {
   const snapshots = new Map<HTMLElement, Record<string, number>>();
   if (!pseudoTargets.size) return snapshots;
   const state: Record<string, number> = Object.create(null) as Record<string, number>;
-  const nodes: HTMLElement[] = [root];
-  const descendants = root.querySelectorAll('*');
-  for (let i = 0; i < descendants.length; i++) nodes.push(descendants[i] as HTMLElement);
-  nodes.forEach(function (el) {
+  function walk(el: HTMLElement): void {
     const props = styleMap.get(el);
-    const resetList = props && props.get('counter-reset');
-    const incList = props && props.get('counter-increment');
-    const reset = resetList ? winningCandidate(resetList) : null;
-    const inc = incList ? winningCandidate(incList) : null;
-    const vars = reset || inc ? varsFor(el) : null;
-    if (reset && vars) {
-      parseCounterList(resolveVars(reset.value, vars), 0).forEach(function (pair) {
-        state[pair[0]] = pair[1];
-      });
+    const pseudoRec = pseudoTargets.get(el);
+    const hasCounterProps = Boolean(
+      props?.has('counter-reset') ||
+        props?.has('counter-increment') ||
+        pseudoRec?.before?.has('counter-reset') ||
+        pseudoRec?.before?.has('counter-increment') ||
+        pseudoRec?.after?.has('counter-reset') ||
+        pseudoRec?.after?.has('counter-increment'),
+    );
+    const scopedResets = new Map<string, number | undefined>();
+    const vars = hasCounterProps ? varsFor(el) : null;
+    if (vars) {
+      applyCounterProps(props, vars, state, scopedResets);
+      if (pseudoRec?.before) applyCounterProps(pseudoRec.before, vars, state);
     }
-    if (inc && vars) {
-      parseCounterList(resolveVars(inc.value, vars), 1).forEach(function (pair) {
-        state[pair[0]] = (Object.hasOwn(state, pair[0]) ? state[pair[0]] : 0) + pair[1];
-      });
-    }
-    if (pseudoTargets.has(el)) {
+    if (pseudoRec) {
       const snap: Record<string, number> = Object.create(null) as Record<string, number>;
       Object.assign(snap, state);
       snapshots.set(el, snap);
     }
-  });
+    for (let child = el.firstElementChild; child; child = child.nextElementSibling) {
+      walk(child as HTMLElement);
+    }
+    if (vars && pseudoRec?.after) {
+      applyCounterProps(pseudoRec.after, vars, state);
+    }
+    scopedResets.forEach(function (prevVal, name) {
+      if (prevVal === undefined) delete state[name];
+      else state[name] = prevVal;
+    });
+  }
+  walk(root);
   return snapshots;
 }
 
@@ -599,22 +647,37 @@ function buildElementVars(
     cache.set(element, parentVars);
     return parentVars;
   }
-  const combined: Record<string, string> = { ...parentVars };
   const resolved: Record<string, string> = { ...parentVars };
-  for (const [name, decl] of own.entries()) combined[name] = decl.value;
-  for (const [name, decl] of own.entries()) {
-    const visiting = new Set<string>([name]);
-    const directSelfRef = new RegExp(`var\\(\\s*${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\s*[,)])`);
-    const lookup: Record<string, string> = { ...combined };
+  const status = new Map<string, 'visiting' | 'done'>();
+  function resolveOwn(name: string): void {
+    if (status.has(name)) return;
+    const decl = own!.get(name);
+    if (!decl) return;
+    status.set(name, 'visiting');
+    const depRe = /var\(\s*(--[\w-]+)/gi;
+    let depMatch: RegExpExecArray | null;
+    while ((depMatch = depRe.exec(decl.value)) !== null) {
+      const dep = depMatch[1];
+      if (dep !== name && own!.has(dep) && !status.has(dep)) resolveOwn(dep);
+    }
+    const lookup: Record<string, string> = { ...resolved };
+    const visiting = new Set<string>();
+    for (const [k, st] of status.entries()) {
+      if (st === 'visiting' && k !== name) visiting.add(k);
+    }
+    const directSelfRef = new RegExp(`var\\(\\s*${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\s*[,)])`, 'i');
     if (directSelfRef.test(decl.value)) {
-      visiting.delete(name);
       if (Object.hasOwn(parentVars, name)) lookup[name] = parentVars[name];
       else delete lookup[name];
+    } else {
+      visiting.add(name);
     }
     const next = resolveVarsChecked(decl.value, lookup, 0, visiting, { steps: 0 });
     if (next.valid && next.value) resolved[name] = next.value;
     else delete resolved[name];
+    status.set(name, 'done');
   }
+  for (const name of own.keys()) resolveOwn(name);
   cache.set(element, resolved);
   return resolved;
 }
@@ -731,7 +794,7 @@ export function inlineCss<T extends HTMLElement>(root: T, css: string, options?:
     if (original.length > 0) reapplyOriginalInlineStyles(element, original);
   });
 
-  const pseudoMap = new Map<HTMLElement, Record<string, Map<string, StyleValue>>>();
+  const pseudoMap = new Map<HTMLElement, Record<string, Map<string, StyleValue[]>>>();
   entries.forEach(function (entry) {
     const pseudoName = entry.pseudo;
     if (!pseudoName || pseudoName === 'skip') return;
@@ -744,20 +807,18 @@ export function inlineCss<T extends HTMLElement>(root: T, css: string, options?:
         record = {};
         pseudoMap.set(element, record);
       }
-      const props: Map<string, StyleValue> = record[pseudoName] || new Map<string, StyleValue>();
+      const props: Map<string, StyleValue[]> = record[pseudoName] || new Map<string, StyleValue[]>();
       record[pseudoName] = props;
       entry.decls.forEach(function (decl, index) {
-        const previous = props.get(decl.prop);
-        const candidate: StyleCandidate = { value: decl.value, important: decl.important };
-        if (!previous || beats(candidate, entry, previous)) {
-          props.set(decl.prop, {
-            value: decl.value,
-            important: decl.important,
-            specificity: entry.specificity,
-            order: entry.order,
-            index: index,
-          });
-        }
+        const list = props.get(decl.prop) || [];
+        list.push({
+          value: decl.value,
+          important: decl.important,
+          specificity: entry.specificity,
+          order: entry.order,
+          index: index,
+        });
+        props.set(decl.prop, list);
       });
     });
   });
@@ -770,27 +831,40 @@ export function inlineCss<T extends HTMLElement>(root: T, css: string, options?:
     const elementVars = buildElementVars(element, root, varMap, varCache);
     Object.keys(record).forEach(function (pseudo) {
       const props = record[pseudo];
-      const contentDecl = props.get('content');
-      if (!contentDecl) return;
-      const rawContent = resolveVars(contentDecl.value, elementVars).trim();
+      const contentList = props.get('content');
+      if (!contentList || !contentList.length) return;
+      const orderedContent = contentList.map((decl): [string, StyleValue] => ['content', decl]).sort(cascadeOrder);
+      let rawContent = '';
+      for (let idx = orderedContent.length - 1; idx >= 0; idx--) {
+        const checked = resolveVarsChecked(orderedContent[idx][1].value, elementVars, 0, new Set<string>(), {
+          steps: 0,
+        });
+        if (checked.valid) {
+          rawContent = checked.value.trim();
+          break;
+        }
+      }
       if (!rawContent || rawContent === 'none' || rawContent === 'normal') return;
       const span = element.ownerDocument.createElement('span');
       span.setAttribute('data-mdstudio-pseudo', pseudo);
       const content = evaluatePseudoContent(rawContent, elementCounters);
-      Array.from(props.entries())
-        .sort(cascadeOrder)
-        .forEach(function (pair) {
-          const prop = pair[0];
-          const decl = pair[1];
-          if (prop === 'content' || prop.indexOf('--') === 0) return;
-          const resolved = resolveVars(decl.value, elementVars);
-          if (!allowExternal && hasExternalCssUrl(resolved)) return;
-          try {
-            span.style.setProperty(prop, resolved, decl.important ? 'important' : '');
-          } catch {
-            /* ignore */
-          }
-        });
+      const orderedPseudo: Array<[string, StyleValue]> = [];
+      props.forEach(function (list, prop) {
+        if (prop === 'content' || prop.indexOf('--') === 0 || /^counter-(?:reset|increment)$/i.test(prop)) return;
+        for (const decl of list) orderedPseudo.push([prop, decl]);
+      });
+      orderedPseudo.sort(cascadeOrder).forEach(function (pair) {
+        const prop = pair[0];
+        const decl = pair[1];
+        const checked = resolveVarsChecked(decl.value, elementVars, 0, new Set<string>(), { steps: 0 });
+        if (!checked.valid) return;
+        if (!allowExternal && hasExternalCssUrl(checked.value)) return;
+        try {
+          span.style.setProperty(prop, checked.value, decl.important ? 'important' : '');
+        } catch {
+          /* ignore */
+        }
+      });
       if (span.style.display === 'block') {
         span.style.setProperty('display', 'inline-block');
         if (!span.style.width) span.style.setProperty('width', '100%');

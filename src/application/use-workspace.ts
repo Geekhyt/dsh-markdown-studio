@@ -1,5 +1,6 @@
 import type * as ReactNamespace from 'react';
 import { loadWorkspaceHandle, storeWorkspaceHandle } from '../adapters/storage';
+import { assetFilesInMarkdown } from '../domain/images';
 import type { WorkspaceEntry, WorkspaceFile, WorkspaceState } from '../domain/workspace';
 import { useWindowEvent } from '../runtime/react-lifecycle';
 import type { FileContextApi } from './use-file-context';
@@ -8,6 +9,8 @@ type Notify = (text: string, tone?: 'success' | 'error' | 'info') => void;
 const MAX_ENTRIES = 2000;
 const MAX_DEPTH = 8;
 const SKIP_DIRECTORIES = new Set(['assets', '.git', 'node_modules']);
+const COPY_SKIP_DIRECTORIES = new Set(['.git', 'node_modules']);
+const INVALID_FILENAME_CHARS = /[<>:"|?*\u0000-\u001f]/;
 
 export interface WorkspaceOptions {
   React: typeof ReactNamespace;
@@ -15,6 +18,7 @@ export interface WorkspaceOptions {
   notify: Notify;
   fileContext: FileContextApi;
   onMenuClose: () => void;
+  flushBeforeOpen?: () => Promise<boolean>;
   onOpenFile: (
     directory: FileSystemDirectoryHandle,
     entry: WorkspaceFile,
@@ -113,12 +117,17 @@ function parentPath(path: string): string {
   return at < 0 ? '' : path.slice(0, at);
 }
 
+const BAD_ENTRY_NAME_RE = /(?:^\.|[/\\]|[.\s]$)/;
+
+function isValidEntryName(value: string, markdown: boolean): boolean {
+  if (!value || BAD_ENTRY_NAME_RE.test(value) || INVALID_FILENAME_CHARS.test(value)) return false;
+  return markdown || !SKIP_DIRECTORIES.has(value.toLowerCase());
+}
+
 function validateName(name: string, markdown: boolean): string | null {
-  let value = name.trim();
-  if (!value || value === '.' || value === '..') return null;
-  if (value.includes('/') || value.includes('\\') || value.includes('\0')) return null;
-  if (markdown && !/\.(md|markdown)$/i.test(value)) value += '.md';
-  return value;
+  const value = name.trim();
+  if (!isValidEntryName(value, markdown)) return null;
+  return markdown && !/\.(md|markdown)$/i.test(value) ? value + '.md' : value;
 }
 
 async function ensurePermission(handle: FileSystemDirectoryHandle): Promise<boolean> {
@@ -148,14 +157,15 @@ async function listTree(
   const entries: WorkspaceEntry[] = [];
   for await (const entry of directory.values()) {
     if (counter.value >= MAX_ENTRIES) break;
-    counter.value++;
     const path = joinPath(parent, entry.name);
     if (entry.kind === 'directory') {
       if (SKIP_DIRECTORIES.has(entry.name) || entry.name.startsWith('.')) continue;
+      counter.value++;
       const handle = entry as FileSystemDirectoryHandle;
       const children = await listTree(handle, path, depth + 1, counter);
       entries.push({ kind: 'directory', name: entry.name, path, handle, children });
     } else if (/\.(md|markdown)$/i.test(entry.name)) {
+      counter.value++;
       entries.push({ kind: 'file', name: entry.name, path, handle: entry as FileSystemFileHandle });
     }
   }
@@ -230,6 +240,7 @@ async function copyDirectory(
   if (depth > MAX_DEPTH) throw new Error('directory depth limit exceeded');
   for await (const entry of source.values()) {
     if (entry.kind === 'directory') {
+      if (COPY_SKIP_DIRECTORIES.has(entry.name)) continue;
       const child = await target.getDirectoryHandle(entry.name, { create: true });
       await copyDirectory(entry as FileSystemDirectoryHandle, child, depth + 1);
     } else {
@@ -237,6 +248,31 @@ async function copyDirectory(
       await copyFileSafe(target, entry.name, await file.arrayBuffer());
     }
   }
+}
+
+async function copyReferencedAssets(
+  sourceDir: FileSystemDirectoryHandle,
+  targetDir: FileSystemDirectoryHandle,
+  markdown: string,
+): Promise<void> {
+  const files = assetFilesInMarkdown(markdown);
+  if (!files.length) return;
+  const srcAssets = await lookupDirectoryHandle(sourceDir, 'assets');
+  if (!srcAssets) return;
+  const dstAssets = await targetDir.getDirectoryHandle('assets', { create: true });
+  await Promise.all(
+    files.map(async (filename) => {
+      try {
+        if (await fileExists(dstAssets, filename)) return;
+        const srcFileHandle = await lookupFileHandle(srcAssets, filename);
+        if (!srcFileHandle) return;
+        const srcFile = await srcFileHandle.getFile();
+        await copyFileSafe(dstAssets, filename, await srcFile.arrayBuffer());
+      } catch {
+        /* best-effort sidecar asset copy */
+      }
+    }),
+  );
 }
 
 async function copyDirectoryToName(
@@ -416,6 +452,9 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
     try {
       const root = rootRef.current;
       if (!root) throw new Error('workspace directory is unavailable');
+      // Flush any unsaved edits on the currently linked file BEFORE reading disk so re-opening the same file reads fresh bytes.
+      if (options.flushBeforeOpen && !(await options.flushBeforeOpen())) return false;
+      if (req !== openGenRef.current) return false;
       const directory = await resolveDirectory(root, parentPath(entry.path));
       const file = await entry.handle.getFile();
       const text = await file.text();
@@ -611,7 +650,10 @@ export function useWorkspace(options: WorkspaceOptions): WorkspaceApi {
           return;
         }
         const file = await entry.handle.getFile();
-        await copyFileSafe(target, entry.name, await file.arrayBuffer());
+        const bytes = await file.arrayBuffer();
+        const text = new TextDecoder().decode(bytes);
+        await copyFileSafe(target, entry.name, bytes);
+        await copyReferencedAssets(source, target, text);
         await source.removeEntry(entry.name);
       }
       await refresh();

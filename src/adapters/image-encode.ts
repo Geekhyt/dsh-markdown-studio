@@ -91,7 +91,7 @@ export function prepareImageForWechat(dataUrl: unknown): Promise<PreparedImage> 
     }
     if (
       (mime === 'image/png' || mime === 'image/jpeg' || mime === 'image/jpg') &&
-      approximateDataBytes(dataUrl) <= 950000
+      approximateDataBytes(dataUrl) <= 1000000
     ) {
       resolve(fallback);
       return;

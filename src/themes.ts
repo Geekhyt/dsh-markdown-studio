@@ -11,7 +11,6 @@ import {
   findCssBlockOpen,
   isRootThemeSelector,
   parseCssRules,
-  preprocessCssInput,
   splitCssTopLevel,
   stripCssComments,
   stripExternalCssUrls,
@@ -195,7 +194,7 @@ function componentLabel(selector: string, locale: 'zh' | 'en' = 'zh'): string {
 
 /** Pretty-print theme CSS with section comments and one declaration per line. */
 export function formatCssSource(css: string, locale: 'zh' | 'en' = 'zh'): string {
-  const source = preprocessCssInput(css);
+  const source = stripCssComments(css);
   const sections = locale === 'en' ? CSS_SECTIONS_EN : CSS_SECTIONS;
   const groupLabels =
     locale === 'en'
@@ -689,7 +688,10 @@ export function buildCss(settings: ThemeSettings): string {
     if (paper) css += '\n' + paper;
   }
   if (userCss.trim()) {
-    css += '\n/* user styles */\n' + (settings.allowExternalCssResources ? userCss : stripExternalCssUrls(userCss));
+    // Strip comments (including unclosed `/*` to EOF) so trailing user CSS can never swallow appended codeTheme CSS.
+    css +=
+      '\n/* user styles */\n' +
+      (settings.allowExternalCssResources ? stripCssComments(userCss) : stripExternalCssUrls(userCss));
   }
   // Apply independent code theme overrides after custom theme CSS so selecting a code theme works on custom themes too.
   const codeCss = codeThemeCss(settings.codeTheme);

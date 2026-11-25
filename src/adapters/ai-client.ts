@@ -41,6 +41,7 @@ export class AiClientError extends Error {
 const AI_ERROR_CODE_KEYS: Record<string, string> = {
   ROUTE_NOT_LOADED: 'err.aiRouteNotLoaded',
   HOST_UNAVAILABLE: 'err.aiHostUnavailable',
+  HOST_BAD_RESPONSE: 'err.hostBadResponse',
   ABORTED: 'err.aiAborted',
   EMPTY_PROMPT: 'err.aiEmptyPrompt',
   INPUT_TOO_LARGE: 'err.aiInputTooLarge',
@@ -63,7 +64,7 @@ const AUTH_ERROR_CODES = new Set([
   'HTTP_401',
 ]);
 
-const RATE_LIMIT_CODES = new Set(['RATE_LIMITED', 'QUOTA_EXCEEDED', 'HTTP_429']);
+const RATE_LIMIT_CODES = new Set(['RATE_LIMIT', 'RATE_LIMITED', 'QUOTA_EXCEEDED', 'HTTP_429']);
 
 const GENERIC_UPSTREAM_CODES = new Set(['', 'AI_ERROR', 'LLM_ERROR', 'INTERNAL']);
 
@@ -141,6 +142,10 @@ interface StreamAccumulator {
   done?: boolean;
 }
 
+class DeltaCallbackError {
+  constructor(readonly cause: unknown) {}
+}
+
 function consumeNdjsonLine(line: string, acc: StreamAccumulator, onDelta?: (delta: string) => void): void {
   const trimmed = line.trim();
   if (!trimmed) return;
@@ -148,14 +153,20 @@ function consumeNdjsonLine(line: string, acc: StreamAccumulator, onDelta?: (delt
   try {
     parsed = recordOf(JSON.parse(trimmed));
   } catch {
-    return;
+    throw new AiClientError('HOST_BAD_RESPONSE', '宿主 AI 响应格式异常');
   }
-  if (!parsed) return;
+  if (!parsed) throw new AiClientError('HOST_BAD_RESPONSE', '宿主 AI 响应格式异常');
   if (parsed.type === 'delta') {
     const chunk = strOf(parsed.text);
     if (chunk) {
       acc.text += chunk;
-      if (onDelta) onDelta(chunk);
+      if (onDelta) {
+        try {
+          onDelta(chunk);
+        } catch (err) {
+          throw new DeltaCallbackError(err);
+        }
+      }
     }
     return;
   }
@@ -245,15 +256,19 @@ export class AiClient {
   private readonly route: string;
   private readonly fetchImpl: typeof fetch;
 
-  constructor(route = '/api/markdown-studio/ai', fetchImpl: typeof fetch = globalThis.fetch) {
+  constructor(
+    route = '/api/markdown-studio/ai',
+    fetchImpl: typeof fetch = (input, init) => globalThis.fetch(input, init),
+  ) {
     this.route = route;
     this.fetchImpl = fetchImpl;
   }
 
   async status(): Promise<AiStatusInfo> {
     let response: Response;
+    const doFetch = this.fetchImpl;
     try {
-      response = await this.fetchImpl(this.route, {
+      response = await doFetch(this.route, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ action: 'ai.status' }),
@@ -263,6 +278,7 @@ export class AiClient {
     }
     const contentType = (response.headers.get('content-type') || '').toLowerCase();
     if (!contentType.includes('application/json')) {
+      response.body?.cancel?.().catch(() => undefined);
       return { available: false, provider: '', model: '', models: [] };
     }
     let rawJson: unknown;
@@ -285,8 +301,9 @@ export class AiClient {
 
   async stream(request: AiStreamRequest): Promise<AiStreamResult> {
     let response: Response;
+    const doFetch = this.fetchImpl;
     try {
-      response = await this.fetchImpl(this.route, {
+      response = await doFetch(this.route, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -307,15 +324,18 @@ export class AiClient {
       await throwJsonStreamError(response);
     }
     if (!response.ok) {
+      response.body?.cancel?.().catch(() => undefined);
       throw httpStatusError(response.status);
     }
     if (!contentType.includes('ndjson')) {
+      response.body?.cancel?.().catch(() => undefined);
       throw new AiClientError('HOST_BAD_RESPONSE', '宿主 AI 响应格式异常');
     }
     const acc: StreamAccumulator = { text: '', provider: '', model: '' };
     try {
       await readStreamLines(response, acc, request.onDelta);
     } catch (error) {
+      if (error instanceof DeltaCallbackError) throw error.cause;
       if (error instanceof AiClientError) throw error;
       if (request.signal?.aborted) throw new AiClientError('ABORTED', '已取消');
       throw new AiClientError('STREAM_INTERRUPTED', '模型输出意外中断，请重试');

@@ -514,6 +514,25 @@ console.log('v2 editorial blocks (meta, tldr, pull, caption, sign) pass WeChat p
     cleanedSrc.includes('label: "Step 1, img: safe {a, b}"') && cleanedSrc.includes('shape: rect'),
     'stripMermaidImageDirectives preserves quoted commas/braces/img text and multiline shape',
   );
+  for (const [label, src] of [
+    ['double-quoted img key', 'flowchart TD\nA@{ "img": "https://evil.example/dq.png", label: "ok" }'],
+    ['unicode-escaped img key', 'flowchart TD\nA@{ "\\u0069\\x6dg": "https://evil.example/esc.png", label: "a\\nb" }'],
+    ['single-quoted img key', "flowchart TD\nA@{ 'img': 'https://evil.example/sq.png', label: 'ok' }"],
+    ['YAML-tagged img key', 'flowchart TD\nA@{ !!str img: "https://evil.example/tag.png", label: "ok" }'],
+    ['commented brace before img', 'flowchart TD\nA@{\n  label: "a" # }\n  img: "https://evil.example/cmt.png"\n}'],
+  ] as const) {
+    assert.equal(
+      stripMermaidImageDirectives(src).includes('evil.example'),
+      false,
+      `stripMermaidImageDirectives strips ${label}`,
+    );
+  }
+  const { prependMermaidDirective } = await import('../src/application/use-mermaid-assets');
+  const trailingSpaceFm = '---  \ntitle: Demo\n---  \nflowchart TD\nA-->B';
+  assert.ok(
+    prependMermaidDirective(trailingSpaceFm, '%%{init:{}}%%').startsWith('---'),
+    'prependMermaidDirective keeps YAML frontmatter first when --- has trailing spaces',
+  );
   const cleanedSvg = sanitizeMermaidSvg(
     '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><style>.a{background:url(https://evil.example/t.png);color:red}</style><script>alert(1)</script><image href="https://evil.example/x.png"/><a href="javascript:alert(1)"><text onclick="alert(1)" style="background:url(https://evil.example/s.png);color:red" fill="url(https://evil.example/f.svg#x)">Hi</text></a><use href="https://evil.example/u.svg#x" xlink:href="javascript:alert(1)"/><use href="#ok"/></svg>',
   );

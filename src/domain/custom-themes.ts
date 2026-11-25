@@ -147,21 +147,66 @@ export function normalizeHexColor(value: string): string {
   return '';
 }
 
+function clampByte(n: number): number {
+  return Math.max(0, Math.min(255, Math.round(n)));
+}
+
+function rgbTripleToHex(r: number, g: number, b: number): string {
+  return (
+    '#' +
+    clampByte(r).toString(16).padStart(2, '0') +
+    clampByte(g).toString(16).padStart(2, '0') +
+    clampByte(b).toString(16).padStart(2, '0')
+  );
+}
+
+function hslToHex(hDeg: number, sPct: number, lPct: number): string {
+  const h = (((hDeg % 360) + 360) % 360) / 360;
+  const s = Math.max(0, Math.min(1, sPct / 100));
+  const l = Math.max(0, Math.min(1, lPct / 100));
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  const channel = (t: number): number => {
+    const x = t < 0 ? t + 1 : t > 1 ? t - 1 : t;
+    if (x < 1 / 6) return p + (q - p) * 6 * x;
+    if (x < 1 / 2) return q;
+    if (x < 2 / 3) return p + (q - p) * (2 / 3 - x) * 6;
+    return p;
+  };
+  return rgbTripleToHex(channel(h + 1 / 3) * 255, channel(h) * 255, channel(h - 1 / 3) * 255);
+}
+
+function parseRgbOrHslHex(value: string): string {
+  if (/(?:gradient|url)\s*\(/i.test(value)) return '';
+  const rgb = /\brgba?\(\s*([\d.]+%?)[,\s]+([\d.]+%?)[,\s]+([\d.]+%?)(?:\s*[,/]\s*([\d.]+%?))?\s*\)/i.exec(value);
+  if (rgb) {
+    const alpha = rgb[4] ? (rgb[4].endsWith('%') ? parseFloat(rgb[4]) / 100 : parseFloat(rgb[4])) : 1;
+    if (alpha <= 0.1) return '';
+    const ch = (raw: string) => (raw.endsWith('%') ? (parseFloat(raw) / 100) * 255 : parseFloat(raw));
+    return rgbTripleToHex(ch(rgb[1]), ch(rgb[2]), ch(rgb[3]));
+  }
+  const hsl = /\bhsla?\(\s*([\d.+-]+)(?:deg)?[,\s]+([\d.]+)%[,\s]+([\d.]+)%(?:\s*[,/]\s*([\d.]+%?))?\s*\)/i.exec(value);
+  if (hsl) {
+    const alpha = hsl[4] ? (hsl[4].endsWith('%') ? parseFloat(hsl[4]) / 100 : parseFloat(hsl[4])) : 1;
+    if (alpha <= 0.1) return '';
+    return hslToHex(parseFloat(hsl[1]), parseFloat(hsl[2]), parseFloat(hsl[3]));
+  }
+  return '';
+}
+
 function extractSolidHex(value: string): string {
+  const raw = String(value || '');
   // Remove parenthesized functions (e.g. `linear-gradient(...)`, `url(...)`) so gradient stops aren't mistaken for solid bg.
-  const outsideParens = String(value || '')
-    .replace(/\([^()]*\)/g, ' ')
-    .replace(/\([^()]*\)/g, ' ');
+  const outsideParens = raw.replace(/\([^()]*\)/g, ' ').replace(/\([^()]*\)/g, ' ');
   const match = /(?:^|\s)(#[0-9a-f]{3}(?:[0-9a-f]{3})?)(?=$|[\s;!])/i.exec(outsideParens);
-  return match ? normalizeHexColor(match[1]) : '';
+  if (match) return normalizeHexColor(match[1]);
+  return parseRgbOrHslHex(raw);
 }
 
 export function extractCustomThemePreview(css: string, fallbackAccent = '#3d57e6'): CustomThemePreview {
   const rules = parseCssRules(css);
-  let varBg = '';
-  let varAccent = '';
-  let varHeading = '';
-  let varText = '';
+  const rootVars: Record<string, string> = {};
+  const anyVars: Record<string, string> = {};
   let rootBg = '';
   let rootColor = '';
   for (const rule of rules) {
@@ -169,18 +214,23 @@ export function extractCustomThemePreview(css: string, fallbackAccent = '#3d57e6
     for (const decl of rule.declarations) {
       const hex = extractSolidHex(decl.value);
       if (!hex) continue;
-      if (decl.prop === '--mdstudio-bg') varBg = hex;
-      else if (decl.prop === '--mdstudio-accent') varAccent = hex;
-      else if (decl.prop === '--mdstudio-heading') varHeading = hex;
-      else if (decl.prop === '--mdstudio-text') varText = hex;
-      else if (isRoot && (decl.prop === 'background-color' || decl.prop === 'background')) rootBg = hex;
+      if (
+        decl.prop === '--mdstudio-bg' ||
+        decl.prop === '--mdstudio-accent' ||
+        decl.prop === '--mdstudio-heading' ||
+        decl.prop === '--mdstudio-text'
+      ) {
+        if (isRoot) rootVars[decl.prop] = hex;
+        else anyVars[decl.prop] = hex;
+      } else if (isRoot && (decl.prop === 'background-color' || decl.prop === 'background')) rootBg = hex;
       else if (isRoot && decl.prop === 'color') rootColor = hex;
     }
   }
-  const bg = varBg || rootBg || '#ffffff';
-  const accent = varAccent || normalizeHexColor(fallbackAccent) || '#3d57e6';
+  const pickVar = (name: string): string => rootVars[name] || anyVars[name] || '';
+  const bg = pickVar('--mdstudio-bg') || rootBg || '#ffffff';
+  const accent = pickVar('--mdstudio-accent') || normalizeHexColor(fallbackAccent) || '#3d57e6';
   const dark = isDark(bg);
-  const fg = varHeading || varText || rootColor || (dark ? '#f3f4f6' : '#1f2328');
+  const fg = pickVar('--mdstudio-heading') || pickVar('--mdstudio-text') || rootColor || (dark ? '#f3f4f6' : '#1f2328');
   return {
     bg,
     fg,

@@ -111,6 +111,16 @@ export interface CaretPopoverSpec {
   obstacles?: readonly SurfaceRect[];
 }
 
+function computeFallbackCaretPos(
+  surfaceHeight: number,
+  left: number,
+  maxMenuHeight: number,
+  pad: number,
+): { top: number; left: number; maxHeight: number } {
+  const surfaceBudget = Math.max(48, Math.floor(surfaceHeight - 2 * pad));
+  return { top: pad, left, maxHeight: Math.min(maxMenuHeight, surfaceBudget) };
+}
+
 /**
  * Caret-anchored popover solver (`SlashMenu`). Bounds `maxHeight` to the free
  * vertical span on the chosen side of the caret so the popup never covers the
@@ -124,11 +134,12 @@ export function computeCaretPopoverPos(spec: CaretPopoverSpec): {
 } {
   const gap = spec.gap ?? 6;
   const pad = spec.pad ?? 10;
+  const surfaceBudget = Math.max(48, Math.floor(spec.surface.height - 2 * pad));
   const spaceBelow = Math.floor(spec.surface.bottom - spec.caretBottom - gap - pad);
   const spaceAbove = Math.floor(spec.caretTop - spec.surface.top - gap - pad);
   const preferBelow = spaceBelow >= Math.min(220, spec.maxMenuHeight) || spaceBelow >= spaceAbove;
   const freeSpan = preferBelow ? spaceBelow : spaceAbove;
-  const maxHeight = Math.max(72, Math.min(spec.maxMenuHeight, freeSpan));
+  const maxHeight = Math.min(surfaceBudget, Math.max(72, Math.min(spec.maxMenuHeight, freeSpan)));
   const caretTopRel = spec.caretTop - spec.surface.top;
   const preferredTop = preferBelow
     ? Math.round(spec.caretBottom - spec.surface.top + gap)
@@ -144,9 +155,10 @@ export function computeCaretPopoverPos(spec: CaretPopoverSpec): {
   });
   if (!preferBelow) {
     const caretClearBottom = Math.floor(caretTopRel - gap);
-    if (placed.top === preferredTop) {
+    const availAbove = Math.floor(caretClearBottom - pad);
+    if (placed.top === preferredTop && availAbove >= 72) {
       const bottom = Math.max(pad, Math.round(spec.surface.height - caretClearBottom));
-      return { bottom, left: placed.left, maxHeight };
+      return { bottom, left: placed.left, maxHeight: Math.min(maxHeight, availAbove) };
     }
     const clampedAbove = Math.floor(caretClearBottom - placed.top);
     if (clampedAbove >= 72) {
@@ -156,16 +168,21 @@ export function computeCaretPopoverPos(spec: CaretPopoverSpec): {
       return {
         top: Math.round(spec.caretBottom - spec.surface.top + gap),
         left: placed.left,
-        maxHeight: Math.min(spec.maxMenuHeight, spaceBelow),
+        maxHeight: Math.min(spec.maxMenuHeight, spaceBelow, surfaceBudget),
       };
     }
+    return computeFallbackCaretPos(spec.surface.height, placed.left, spec.maxMenuHeight, pad);
   }
   const caretBottomRel = spec.caretBottom - spec.surface.top + gap;
-  if (preferBelow && placed.top < caretBottomRel && spaceAbove >= 72) {
+  if (placed.top < caretBottomRel && spaceAbove >= 72) {
     const clampedAbove = Math.floor(caretTopRel - gap - placed.top);
     if (clampedAbove >= 72) {
       return { top: placed.top, left: placed.left, maxHeight: Math.min(maxHeight, clampedAbove) };
     }
   }
-  return { top: placed.top, left: placed.left, maxHeight };
+  const availFromPlaced = Math.floor(spec.surface.height - pad - placed.top);
+  if (availFromPlaced < 72 && spaceBelow < 72) {
+    return computeFallbackCaretPos(spec.surface.height, placed.left, spec.maxMenuHeight, pad);
+  }
+  return { top: placed.top, left: placed.left, maxHeight: Math.min(maxHeight, Math.max(48, availFromPlaced)) };
 }

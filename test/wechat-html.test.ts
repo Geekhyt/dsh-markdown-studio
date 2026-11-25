@@ -115,6 +115,18 @@ assert.deepEqual(
     ).some((i) => i.code === 'nested-list'),
     'direct nested list after sibling <section> inside <li> is flagged',
   );
+
+  // G4 regression: <section> inside headings is demoted to inline-block <span>; <section> inside phrasing is lifted
+  const inlineSecDoc = new JSDOM(
+    '<!doctype html><section id="mdstudio"><h2>Title <section class="mdstudio-math-block">x</section></h2><p><strong>A <section class="mdstudio-math-block">y</section> B</strong></p><section class="wrap"><em><section class="mdstudio-math-block">z</section></em></section></section>',
+  ).window.document;
+  const inlineSecRoot = inlineSecDoc.getElementById('mdstudio')!;
+  prepareClipboardDom(inlineSecRoot);
+  assert.equal(
+    inlineSecRoot.querySelectorAll('h1 section, h2 section, strong section, span section').length,
+    0,
+    'prepareClipboardDom leaves zero invalid <section> descendants inside headings or inline phrasing',
+  );
   dom.window.close();
 }
 

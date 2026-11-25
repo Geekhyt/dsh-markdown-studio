@@ -79,6 +79,7 @@ export function createImageInserter(options: ImageInsertOptions): ImageInsertApi
     }
     const targetArticleId = options.getActiveArticleId?.();
     const items: Array<{ file: File; url: string; filename: string }> = [];
+    const tracked: string[] = [];
     let failed = 0;
     let lastError: unknown = null;
     try {
@@ -89,7 +90,10 @@ export function createImageInserter(options: ImageInsertOptions): ImageInsertApi
             const prepared = await prepareImageForWechat(dataUrl);
             const stored = await options.hostClient.storeAsset(prepared.dataUrl, prepared.filename);
             const itemUrl = stored.assetPath || stored.localUrl || stored.url;
-            if (stored.filename) options.onTrackInFlight?.(stored.filename, true);
+            if (stored.filename) {
+              options.onTrackInFlight?.(stored.filename, true);
+              tracked.push(stored.filename);
+            }
             return itemUrl ? { file, url: itemUrl, filename: stored.filename || '' } : null;
           } catch (error) {
             failed++;
@@ -112,7 +116,7 @@ export function createImageInserter(options: ImageInsertOptions): ImageInsertApi
           const name =
             String(item.file.name || 'image')
               .replace(/\.[^.]+$/, '')
-              .replace(/[\r\n[\]]+/g, ' ')
+              .replace(/[\r\n[\]\\]+/g, ' ')
               .trim() || 'image';
           return '![' + name + '](' + item.url + ')';
         })
@@ -123,8 +127,8 @@ export function createImageInserter(options: ImageInsertOptions): ImageInsertApi
       if (failed) message += ' · ' + failed + ' ' + options.t('toast.assetsFailed');
       options.notify(message, skipped || failed ? 'error' : 'success');
     } finally {
-      for (const item of items) {
-        if (item.filename) options.onTrackInFlight?.(item.filename, false);
+      for (const filename of tracked) {
+        options.onTrackInFlight?.(filename, false);
       }
     }
   }

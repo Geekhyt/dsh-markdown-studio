@@ -116,11 +116,13 @@ export function createDocumentCommands(options: DocumentActionsOptions): Documen
     const tracked: string[] = [];
     try {
       const entries = await unzipEntries(buffer);
+      const isMacMetadata = (name: string): boolean => name.startsWith('__MACOSX/') || /(?:^|\/)\._[^/]+$/.test(name);
+      const cleanEntries = entries.filter((entry) => !isMacMetadata(entry.name));
       const markdownEntry =
-        entries.find(function (entry) {
+        cleanEntries.find(function (entry) {
           return /^article\.md$/i.test(entry.name);
         }) ||
-        entries.find(function (entry) {
+        cleanEntries.find(function (entry) {
           return /\.(md|markdown)$/i.test(entry.name);
         });
       if (!markdownEntry) throw new Error('missing Markdown entry');

@@ -1,6 +1,7 @@
 import type * as ReactNamespace from 'react';
 import { fileFingerprint } from '../adapters/file-version';
 import { loadDocumentRef, storeDocumentRef } from '../adapters/storage';
+import { normalizeLineEndings } from './use-document-history';
 import type { DocumentRef, FileVersion } from '../domain/document-ref';
 import { isGenerationCurrent, isReloadRequestValid, normalizePermissionState } from '../domain/file-session.machine';
 import { useDocumentEvent, useLatest, useMountDisposable, useWindowEvent } from '../runtime/react-lifecycle';
@@ -193,13 +194,14 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
         current && (current === handle || (handle.isSameEntry && (await handle.isSameEntry(current)))),
       );
       if (generation !== generationRef.current) return 'stale';
-      if (handle.queryPermission) {
-        let allowed = await handle.queryPermission({ mode: 'readwrite' });
-        if (allowed !== 'granted' && requestWritePermission) {
-          allowed = await handle.requestPermission({ mode: 'readwrite' });
+      const permTarget = sameFile ? permissionHandle() || handle : handle;
+      if (permTarget.queryPermission) {
+        let allowed = await permTarget.queryPermission({ mode: 'readwrite' });
+        if (allowed !== 'granted' && requestWritePermission && typeof permTarget.requestPermission === 'function') {
+          allowed = await permTarget.requestPermission({ mode: 'readwrite' });
         }
         if (sameFile && generation === generationRef.current) {
-          setPermission(allowed === 'granted' ? 'granted' : allowed === 'denied' ? 'denied' : 'prompt');
+          setPermission(normalizePermissionState(allowed));
         }
         if (allowed !== 'granted') return 'denied';
       }
@@ -238,6 +240,7 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
   function linkFile(handle: FileSystemFileHandle): void {
     workspacePickRef.current = null;
     dismissConflict();
+    if (stampRef.current?.handle !== handle) stampRef.current = null;
     const version = stampRef.current?.handle === handle ? stampRef.current : undefined;
     persist({
       kind: 'file',
@@ -251,6 +254,7 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
   function linkFolder(directory: FileSystemDirectoryHandle, file: FileSystemFileHandle): void {
     workspacePickRef.current = directory;
     dismissConflict();
+    if (stampRef.current?.handle !== file) stampRef.current = null;
     const version = stampRef.current?.handle === file ? stampRef.current : undefined;
     persist({
       kind: 'folder',
@@ -333,10 +337,15 @@ export function useFileContext(options: FileContextOptions): FileContextApi {
     if (!currentRequest(generation, article.id) || perm !== 'granted') return;
     try {
       const file = await handle.getFile();
-      const fingerprint = await fileFingerprint(await file.text());
-      const expected = ref.version?.fingerprint || (await fileFingerprint(article.markdown));
+      const diskText = await file.text();
+      const fingerprint = await fileFingerprint(diskText);
+      const matchesVersion = ref.version ? fingerprint === ref.version.fingerprint : false;
+      const matchesNormalizedDraft =
+        !ref.version &&
+        (await fileFingerprint(normalizeLineEndings(diskText))) ===
+          (await fileFingerprint(normalizeLineEndings(article.markdown)));
       if (!currentRequest(generation, article.id)) return;
-      if (fingerprint !== expected) markConflict();
+      if (!matchesVersion && !matchesNormalizedDraft) markConflict();
       else rememberFile(handle, file, fingerprint);
     } catch {
       if (currentRequest(generation, article.id)) markConflict('file.missing');

@@ -99,6 +99,9 @@ const STUDIO_EVENTS: StudioSurfaceEvent[] = [
   { type: 'SET_VIEW', view: 'split' },
   { type: 'SET_VIEW', view: 'edit' },
   { type: 'SET_VIEW', view: 'preview' },
+  { type: 'EXTERNAL_VIEW_CHANGE', view: 'split' },
+  { type: 'EXTERNAL_VIEW_CHANGE', view: 'edit' },
+  { type: 'EXTERNAL_VIEW_CHANGE', view: 'preview' },
   { type: 'RESIZE', narrow: false },
   { type: 'RESIZE', narrow: true },
   { type: 'OPEN_CSS_WORKBENCH' },
@@ -462,6 +465,13 @@ assert.ok(studioReport.states >= 500, `explored rich studio overlay state space 
     'header menu closes directly even when rendered with role=menu',
   );
 
+  // 14. External cross-tab view change reconciles wide CSS workbench & editor transients
+  s = initialStudioSurfaceState(false);
+  s = stepStudioSurface(s, { type: 'OPEN_CSS_WORKBENCH' });
+  s = stepStudioSurface(s, { type: 'EXTERNAL_VIEW_CHANGE', view: 'preview' });
+  assert.equal(s.cssWorkbenchOpen, false, 'wide external view change to preview closes CSS workbench');
+  assert.deepEqual(checkStudioSurfaceInvariants(s), []);
+
   // Negative self-tests: prove every invariant predicate fires on broken synthetic states (non-vacuity)
   const base = initialStudioSurfaceState(false);
   assert.ok(
@@ -505,12 +515,20 @@ const FILE_EVENTS: FileSessionEvent[] = [
   { type: 'WRITE_COMPLETE' },
   { type: 'RELOAD_START' },
   { type: 'RELOAD_COMPLETE' },
+  { type: 'EXTERNAL_STORAGE_SYNC', markdownChanged: true },
+  { type: 'EXTERNAL_STORAGE_SYNC', markdownChanged: false },
   { type: 'DETACH' },
 ];
 
 // Normalize unbounded counters into a bounded horizon (generation/reloadSeq <= 3) so BFS covers every race shape
 function boundedFileStep(state: FileSessionState, event: FileSessionEvent): FileSessionState {
-  if ((event.type === 'LINK_FILE' || event.type === 'SWITCH_DOC' || event.type === 'DETACH') && state.generation >= 3) {
+  if (
+    (event.type === 'LINK_FILE' ||
+      event.type === 'SWITCH_DOC' ||
+      event.type === 'DETACH' ||
+      (event.type === 'EXTERNAL_STORAGE_SYNC' && event.markdownChanged)) &&
+    state.generation >= 3
+  ) {
     return state;
   }
   if (event.type === 'RELOAD_START' && state.reloadSeq >= 3) {
@@ -596,6 +614,17 @@ assert.equal(normalizePermissionState('prompt'), 'prompt');
   const userEditVer = f.docContent.doc1;
   f = stepFileSession(f, { type: 'RELOAD_COMPLETE' });
   assert.equal(f.docContent.doc1, userEditVer, 'in-flight reload does not clobber concurrent user typing');
+
+  // 4. Cross-tab storage sync with changed markdown detaches linked local file so sibling edits never clobber disk
+  f = stepFileSession(initialFileSessionState(), { type: 'RESTORE_DONE' });
+  const diskOriginal = f.diskContent.fileA;
+  f = stepFileSession(f, { type: 'EXTERNAL_STORAGE_SYNC', markdownChanged: true });
+  assert.equal(f.linkedHandle, 'none', 'cross-tab markdown change detaches linked local disk file');
+  assert.equal(f.autosaveArmedFor, null, 'detachment disarms pending autosave');
+  f = stepFileSession(f, { type: 'AUTOSAVE_FIRE' });
+  f = stepFileSession(f, { type: 'WRITE_COMPLETE' });
+  assert.equal(f.diskContent.fileA, diskOriginal, 'disk file remains untouched after cross-tab storage sync');
+  assert.deepEqual(checkFileSessionInvariants(f), []);
 
   // Negative self-tests: prove every file-session invariant rejects synthetic broken states (non-vacuity)
   const fBase = initialFileSessionState();

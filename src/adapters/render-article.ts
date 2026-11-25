@@ -130,7 +130,7 @@ export function renderArticle(
         const image = document.createElement('img');
         image.setAttribute('src', imageBaseUrl + '/uploads/' + entry.filename);
         image.setAttribute('alt', 'Mermaid diagram');
-        image.setAttribute('data-mdstudio-local', 'true');
+        if (forPreview) image.setAttribute('data-mdstudio-local', 'true');
         if (pre && pre.parentNode) pre.parentNode.replaceChild(image, pre);
       }
     });

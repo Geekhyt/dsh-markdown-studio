@@ -30,6 +30,7 @@ export function useDialogHost(
   React: typeof ReactNamespace,
   t: (key: string) => string,
   bridge: DshBridge,
+  onClosed?: () => void,
 ): DialogHostApi {
   const h = React.createElement;
   const [dialog, setDialog] = React.useState<ActiveDialog | null>(null);
@@ -85,6 +86,7 @@ export function useDialogHost(
     if (!active) return;
     if (active.kind === 'confirm') active.resolve(false);
     else active.resolve(null);
+    onClosed?.();
   }
 
   function submit(): void {
@@ -94,12 +96,14 @@ export function useDialogHost(
       activeRef.current = null;
       setDialog(null);
       active.resolve(true);
+      onClosed?.();
       return;
     }
     if (!active.allowEmpty && !value.trim()) return;
     activeRef.current = null;
     setDialog(null);
     active.resolve(value);
+    onClosed?.();
   }
 
   function renderDialog(active: ActiveDialog): ReactNode {
@@ -123,6 +127,7 @@ export function useDialogHost(
             {
               variant: 'outline',
               size: 'md',
+              autoFocus: active.kind === 'confirm' && danger,
               className: 'mdstudio-dialog-cancel',
               onClick: cancel,
             },
@@ -134,7 +139,7 @@ export function useDialogHost(
               variant: 'primary',
               size: 'md',
               disabled: submitDisabled,
-              autoFocus: active.kind === 'confirm',
+              autoFocus: active.kind === 'confirm' && !danger,
               className: 'mdstudio-dialog-submit' + (danger ? ' is-danger-fill' : ''),
               onClick: submit,
             },

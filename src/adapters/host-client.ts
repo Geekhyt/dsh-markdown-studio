@@ -74,15 +74,16 @@ export class HostClient {
   private readonly route: string;
   private readonly fetchImpl: typeof fetch;
 
-  constructor(route: string, fetchImpl: typeof fetch = globalThis.fetch) {
+  constructor(route: string, fetchImpl: typeof fetch = (input, init) => globalThis.fetch(input, init)) {
     this.route = route;
     this.fetchImpl = fetchImpl;
   }
 
   private async post(action: string, payload: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
     let response: Response;
+    const doFetch = this.fetchImpl;
     try {
-      response = await this.fetchImpl(this.route, {
+      response = await doFetch(this.route, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ action, ...payload }),
@@ -150,7 +151,7 @@ export class HostClient {
     return data.assets.map(assetItemOf).filter((item): item is AssetItem => item !== null);
   }
 
-  async deleteAsset(filename: string): Promise<void> {
-    await this.post('asset.delete', { filename });
+  async deleteAsset(filename: string, expectedStoredAt?: string): Promise<void> {
+    await this.post('asset.delete', expectedStoredAt ? { filename, expectedStoredAt } : { filename });
   }
 }

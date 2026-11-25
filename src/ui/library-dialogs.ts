@@ -38,16 +38,22 @@ export interface LibraryDialogProps extends DialogCommon {
   actions: LibraryDialogActions;
 }
 
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function highlightHit(h: typeof ReactNamespace.createElement, text: string, needle: string): ReactNode {
   if (!needle) return text;
-  const at = text.toLowerCase().indexOf(needle);
-  if (at < 0) return text;
+  const match = new RegExp(escapeRegExp(needle), 'i').exec(text);
+  if (!match || !match[0]) return text;
+  const at = match.index;
+  const len = match[0].length;
   return h(
     'span',
     null,
     text.slice(0, at),
-    h('mark', { className: 'mdstudio-search-hit' }, text.slice(at, at + needle.length)),
-    text.slice(at + needle.length),
+    h('mark', { className: 'mdstudio-search-hit' }, text.slice(at, at + len)),
+    text.slice(at + len),
   );
 }
 
@@ -535,13 +541,15 @@ function pluralizeEn(count: number, pluralLabel: string): string {
 function buildImportModeDescription(summary: ImportBackupSummary, t: (key: string) => string): string {
   const prefix = t('library.importModeDescPrefix');
   const isZh = /[\u4e00-\u9fff]/.test(prefix);
+  const docUnit = t('library.importDocsUnit');
+  const imgUnit = t('library.importImagesUnit');
   const docPart = isZh
-    ? summary.docCount + ' 篇' + t('library.articles')
+    ? summary.docCount + ' ' + docUnit + t('library.articles')
     : summary.docCount + ' ' + pluralizeEn(summary.docCount, t('library.articles'));
   const assetPart =
     summary.assetCount > 0
       ? isZh
-        ? ' · ' + summary.assetCount + ' 张' + t('localImages')
+        ? ' · ' + summary.assetCount + ' ' + imgUnit + t('localImages')
         : ' · ' + summary.assetCount + ' ' + pluralizeEn(summary.assetCount, t('localImages'))
       : '';
   const missingPart =

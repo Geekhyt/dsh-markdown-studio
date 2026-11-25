@@ -176,11 +176,31 @@ for (const [label, payload, runner] of [
   ['unclosed ![' as const, '!['.repeat(20_000), (s: string) => assetFilesInMarkdown(s)],
   ['unclosed <img ' as const, '<img '.repeat(20_000), (s: string) => assetFilesInMarkdown(s)],
   ['unclosed ![a](<' as const, '![a](<'.repeat(12_000), (s: string) => collectLocalImages(s)],
+  ['repeated ***a' as const, '***a '.repeat(2500), (s: string) => engine.renderMarkdown(s)],
+  ['unclosed [' as const, '[a'.repeat(5000) + ']', (s: string) => engine.renderMarkdown(s)],
 ] as const) {
   const t0 = performance.now();
   runner(payload);
   const dt = performance.now() - t0;
-  assert.ok(dt < 150, `Image scan ReDoS probe (${label}) exceeded 150ms (${dt.toFixed(1)}ms)`);
+  assert.ok(dt < 150, `Image/MD scan ReDoS probe (${label}) exceeded 150ms (${dt.toFixed(1)}ms)`);
+}
+// CSS pseudo content backslash ReDoS & comment/quote smuggling probes
+{
+  const redosDom = new JSDOM('<!doctype html><section id="mdstudio"><p>x</p></section>');
+  const t0 = performance.now();
+  engine.inlineCss(
+    redosDom.window.document.getElementById('mdstudio')!,
+    `p::before { content: "${'\\'.repeat(200)}"; }`,
+  );
+  assert.ok(performance.now() - t0 < 50, 'evaluatePseudoContent backslash ReDoS probe < 50ms');
+  redosDom.window.close();
+  for (const smuggle of [
+    'p { background: red/**/url(https://evil.example/a.png); }',
+    'p { background: u/*x*/rl(https://evil.example/a.png); }',
+    'p { content: "\\\\"; } @import url(https://evil.example/b.css);',
+  ]) {
+    assert.equal(stripExternalCssUrls(smuggle).includes('evil.example'), false, `CSS sanitizer blocks ${smuggle}`);
+  }
 }
 // Image destination parser + replaceLocalImages coverage (angled, nested parens, single/double/paren titles)
 const imgDoc = [
@@ -256,9 +276,20 @@ const inlineMs = performance.now() - inlineStart;
 const lintIssues = inspectWechatHtml(rootEl.outerHTML);
 assert.deepEqual(lintIssues, [], 'large benchmark WeChat HTML passes compatibility lint');
 
+const diffBefore = largeDoc.slice(0, 1200);
+const diffAfter = diffBefore.replace(/排版/g, '工程化排版');
 const diffStart = performance.now();
-computeTextDiff(largeDoc.slice(0, 1200), largeDoc.slice(0, 1200).replace(/排版/g, '工程化排版'));
+const diffResult = computeTextDiff(diffBefore, diffAfter);
 const diffMs = performance.now() - diffStart;
+
+// Semantic quality oracle (not just "fast"): 1.2k CJK localized edit must stay pinpoint instead of collapsing to 100% replacement
+const diffAddedChars = diffResult.addOffsets.reduce((sum, span) => sum + (span.toOffset - span.fromOffset), 0);
+const diffAddRatio = diffAddedChars / diffAfter.length;
+assert.ok(
+  diffAddRatio > 0 && diffAddRatio < 0.15,
+  `computeTextDiff(1.2k CJK) semantic precision degraded: addRatio=${diffAddRatio.toFixed(2)} (expected 0 < r < 0.15)`,
+);
+assert.ok(diffResult.addOffsets.length >= 1, 'computeTextDiff(1.2k CJK) emits non-empty pinpoint addOffsets');
 
 assert.equal(headings.length, 43, 'large doc extracts all 43 headings');
 assert.ok(parseMs < 500, `renderMarkdown(10k) within budget (${parseMs.toFixed(1)}ms < 500ms)`);

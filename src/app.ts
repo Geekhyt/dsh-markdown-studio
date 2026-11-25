@@ -285,7 +285,7 @@ export function createClientPlugin(
 
   function StudioPage(props: { initial: LibraryState }): ReactNamespace.ReactElement {
     const localeRevision = useLocaleRevision();
-    const dialogHost = useDialogHost(React, t, uiKit.bridge);
+    const dialogHost = useDialogHost(React, t, uiKit.bridge, () => onDialogClosedRef.current());
 
     const [store] = React.useState(() => new DocumentStore(props.initial, savePersistedLibrary, loadPersistedLibrary));
     const [hostClient] = React.useState(
@@ -542,11 +542,16 @@ export function createClientPlugin(
               if (!pageAliveRef.current) return;
               if (fileContext.linkedFile() !== reloadedHandle || store.getActive().markdown !== normalizedText) return;
               if (imported.text !== normalizedText) {
-                setMarkdown(imported.text, {
-                  boundary: true,
-                  title: deriveTitleWithFallback(imported.text),
-                  prevSelection: selection(),
-                });
+                suppressAutosaveRef.current = true;
+                try {
+                  setMarkdown(imported.text, {
+                    boundary: true,
+                    title: deriveTitleWithFallback(imported.text),
+                    prevSelection: selection(),
+                  });
+                } finally {
+                  suppressAutosaveRef.current = false;
+                }
               }
             })
             .catch(() => {});
@@ -575,17 +580,20 @@ export function createClientPlugin(
       const handle = fileContext.linkedFile();
       if (!handle || !dirtyDiskRef.current || fileContext.conflictRef.current) return true;
       cancelAutosaveRef.current();
+      const snapshotMd = markdownRef.current;
       try {
-        const result = await fileContext.writeFile(handle, markdownRef.current);
+        const result = await fileContext.writeFile(handle, snapshotMd);
         if (result === 'saved') {
-          dirtyDiskRef.current = false;
+          if (markdownRef.current === snapshotMd) dirtyDiskRef.current = false;
           const folder = fileContext.linkedFolder();
           if (folder) {
-            void writeFolderAssets(folder, markdownRef.current, localImageServerUrlRef.current).catch(() => {});
+            void writeFolderAssets(folder, snapshotMd, localImageServerUrlRef.current).catch(() => {});
           }
           return true;
         }
-        notify(t(result === 'denied' ? 'file.permission' : 'file.saveFailed'), 'error');
+        if (result !== 'conflict') {
+          notify(t(result === 'denied' ? 'file.permission' : 'file.saveFailed'), 'error');
+        }
         return false;
       } catch {
         notify(t('file.saveFailed'), 'error');
@@ -696,6 +704,7 @@ export function createClientPlugin(
     );
     const pruneOrphanAssets = (bypassGraceFor?: Iterable<string>) => {
       if (hasFuturePersistedLibrary()) return;
+      store.flush();
       void assetGc.prune(bypassGraceFor ? { bypassGraceFor } : undefined);
     };
 
@@ -744,6 +753,7 @@ export function createClientPlugin(
       notify,
       fileContext,
       onMenuClose: () => setMenuOpen(false),
+      flushBeforeOpen: flushLinkedFileBeforeSwitch,
       onOpenFile: async (directory, entry, text, openedFile) => {
         const isCurrentOpen = claimOpenTransition();
         if (!(await flushLinkedFileBeforeSwitch())) return false;
@@ -751,7 +761,13 @@ export function createClientPlugin(
         const fileObj = openedFile || (await entry.handle.getFile());
         if (!isCurrentOpen()) return false;
         const normalizedText = normalizeLineEndings(text);
-        resetEditorTo({ title: deriveTitleWithFallback(normalizedText), markdown: normalizedText, settings, view });
+        const liveDoc = store.getActive();
+        resetEditorTo({
+          title: deriveTitleWithFallback(normalizedText),
+          markdown: normalizedText,
+          settings: liveDoc.settings,
+          view: liveDoc.view,
+        });
         await fileContext.stampFile(entry.handle, fileObj, text);
         if (!isCurrentOpen()) return false;
         fileContext.applyDocumentRef({ kind: 'folder', directory, file: entry.handle });
@@ -761,11 +777,16 @@ export function createClientPlugin(
         const imported = await importFolderAssets(directory, normalizedText, hostClient, trackInFlightAsset);
         if (isStaleOpen() || store.getActive().markdown !== normalizedText) return true;
         if (imported.text !== normalizedText) {
-          setMarkdown(imported.text, {
-            boundary: true,
-            title: deriveTitleWithFallback(imported.text),
-            prevSelection: selection(),
-          });
+          suppressAutosaveRef.current = true;
+          try {
+            setMarkdown(imported.text, {
+              boundary: true,
+              title: deriveTitleWithFallback(imported.text),
+              prevSelection: selection(),
+            });
+          } finally {
+            suppressAutosaveRef.current = false;
+          }
         }
         return true;
       },
@@ -874,14 +895,15 @@ export function createClientPlugin(
       ) {
         scrollSync.capturePreviewRatio();
       }
-      store.updateActive({ settings: { ...settings, ...patch } });
+      store.updateActive({ settings: { ...store.getActive().settings, ...patch } });
     }
 
     function pickTheme(id: string): void {
       clearCssWorkbenchDraft();
-      const custom = findCustomTheme(settings.customThemes, id);
+      const liveSettings = store.getActive().settings;
+      const custom = findCustomTheme(liveSettings.customThemes, id);
       if (custom) {
-        const preview = extractCustomThemePreview(custom.css, settings.accent);
+        const preview = extractCustomThemePreview(custom.css, liveSettings.accent);
         updateSettings({ theme: id, accent: preview.accent });
         return;
       }
@@ -891,7 +913,8 @@ export function createClientPlugin(
     function resetStyles(): void {
       scrollSync.capturePreviewRatio();
       clearCssWorkbenchDraft();
-      store.updateActive({ settings: { ...themes.DEFAULT_SETTINGS, customThemes: settings.customThemes || [] } });
+      const liveCustom = store.getActive().settings.customThemes || [];
+      store.updateActive({ settings: { ...themes.DEFAULT_SETTINGS, customThemes: liveCustom } });
     }
 
     const articleExport = createArticleExporter({
@@ -963,7 +986,7 @@ export function createClientPlugin(
       describeHostError,
       insertBlock: formatting.insertBlock,
       onTrackInFlight: trackInFlightAsset,
-      getActiveArticleId: () => store.getActive().id,
+      getActiveArticleId: () => store.getActive().id + ':' + openTransitionSeqRef.current,
       isPageAlive: () => pageAliveRef.current,
     });
 
@@ -983,8 +1006,15 @@ export function createClientPlugin(
     }
 
     function dismissEditorEscape(): 'handled' | 'defer' | false {
+      const hasDomMenu = Boolean(
+        typeof document !== 'undefined' &&
+          Array.from(document.querySelectorAll('[role="menu"], [data-menu-material]')).some((node) =>
+            isElementVisible(node as HTMLElement),
+          ),
+      );
       const outcome = resolveEditorEscapeOutcome({
         menuOpen,
+        hasDomMenu,
         outlineOpen,
         showMarkdownEditor: panes.showMarkdownEditor,
         searchOpen: searchPanel.open,
@@ -1085,8 +1115,8 @@ export function createClientPlugin(
     const handleExternalMergeRef = useLatest(
       React,
       (
-        prevActive: { id: string; markdown: string },
-        nextActive: { id: string; markdown: string },
+        prevActive: { id: string; markdown: string; view: 'split' | 'edit' | 'preview' },
+        nextActive: { id: string; markdown: string; view: 'split' | 'edit' | 'preview' },
         activeWasDirty: boolean,
       ) => {
         if (nextActive.id !== prevActive.id) {
@@ -1094,8 +1124,23 @@ export function createClientPlugin(
           detachFileContext();
           resetDocumentSurface();
           docHistory.reset(nextActive.markdown);
-        } else if (!activeWasDirty && nextActive.markdown !== prevActive.markdown) {
+          return;
+        }
+        if (!activeWasDirty && nextActive.markdown !== prevActive.markdown) {
+          openTransitionSeqRef.current++;
+          // Detach any linked local file before the autosave subscriber runs so Tab B's markdown never overwrites Tab A's disk file.
+          if (fileContext.linkedFile()) detachFileContext();
           docHistory.reset(nextActive.markdown);
+        }
+        if (nextActive.view !== prevActive.view) {
+          const width = containerWidth();
+          if (!shouldKeepCssWorkbenchOnViewChange(cssWorkbench.open, width, nextActive.view)) {
+            clearCssWorkbenchDraft();
+          }
+          dismissTransientOverlays({
+            keepSearch: nextActive.view !== 'preview',
+            keepDrawer: shouldKeepDrawerOnNavigation(width),
+          });
         }
       },
     );
@@ -1300,6 +1345,12 @@ export function createClientPlugin(
       ].some(Boolean);
     }
 
+    const onDialogClosedRef = useLatest(React, () => {
+      if (!docLibrary.open && !workspace.open && !writingSkills.managerOpen) {
+        restoreDialogTriggerFocus();
+      }
+    });
+
     const canFocusEditorRef = useLatest(
       React,
       () =>
@@ -1499,6 +1550,7 @@ export function createClientPlugin(
         actions: {
           onTitle: (value) => store.updateActive({ title: value }),
           onView: (next) => {
+            if (next === 'preview') scrollSync.syncPreviewFromEditor();
             store.updateActive({ view: next });
             const containerW = containerWidth();
             const keepWorkbench = shouldKeepCssWorkbenchOnViewChange(cssWorkbench.open, containerW, next);
@@ -1507,6 +1559,11 @@ export function createClientPlugin(
               keepSearch: next !== 'preview',
               keepDrawer: shouldKeepDrawerOnNavigation(containerW),
             });
+            if (next === 'preview') {
+              window.requestAnimationFrame(() => scrollSync.restorePreviewScroll());
+            } else {
+              window.requestAnimationFrame(() => scrollSync.restoreEditorScroll());
+            }
           },
           onImmersive: enterImmersive,
           onOpenLibrary: () => {

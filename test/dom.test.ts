@@ -488,9 +488,18 @@ check('prepareClipboardDom unwraps section blocks nested inside paragraphs with 
   try {
     const darkHost = document.createElement('div');
     darkHost.innerHTML =
-      '<section id="mdstudio" style="background-color: rgb(18, 18, 22); color: rgb(240, 240, 240);"><p>Noir</p></section>';
+      '<section id="mdstudio" style="background-color: rgb(18, 18, 22); color: rgb(240, 240, 240);">' +
+      '<p style="color: hsl(210, 60%, 25%); background-color: hsla(60, 70%, 92%, 0.95);">Noir HSL</p>' +
+      '<p style="color: #123f; background-color: #fafafaee;">Noir Hex4/8</p>' +
+      '<p style="color: rgb(10%, 15%, 20%); background-color: rgb(95%, 96%, 98%);">Noir Pct</p>' +
+      '<pre style="background-color: rgb(246, 248, 250); color: rgb(36, 41, 47);"><code>const x = 1;</code></pre></section>';
     document.body.appendChild(darkHost);
-    assert.equal(await applyDarkPreview(darkHost), true, 'already-dark paper short-circuits cleanly');
+    assert.equal(await applyDarkPreview(darkHost), true, 'already-dark paper adapts nested bright light code blocks');
+    assert.notEqual(
+      darkHost.querySelector<HTMLElement>('pre')?.style.backgroundColor,
+      'rgb(246, 248, 250)',
+      'light GitHub codeTheme pre inside dark Night root is darkened in dark preview',
+    );
     darkHost.remove();
 
     const lightHost = document.createElement('div');
@@ -576,6 +585,15 @@ check('prepareClipboardDom unwraps section blocks nested inside paragraphs with 
     assert.equal(lastSelectionProgrammatic, true, 'revealRange emits programmatic selection');
     mdEditor.focusRange(2, 6);
     assert.equal(lastSelectionProgrammatic, true, 'focusRange emits programmatic selection');
+    const cmContent = cmParent.querySelector<HTMLElement>('.cm-content')!;
+    const escEvt = new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    cmContent.dispatchEvent(escEvt);
+    assert.equal(escEvt.defaultPrevented, false, 'CodeMirror does not hijack Escape when selection is active');
+    assert.deepEqual(
+      { start: mdEditor.getSelection().start, end: mdEditor.getSelection().end },
+      { start: 2, end: 6 },
+      'Escape does not collapse active CodeMirror selection',
+    );
     mdEditor.destroy();
 
     const cssParent = document.createElement('div');

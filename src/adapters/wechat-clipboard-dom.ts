@@ -137,11 +137,17 @@ function hasMeaningfulContent(node: Element): boolean {
   return Boolean((node.textContent || '').trim() || node.querySelector('img,svg,br,section'));
 }
 
-function liftSectionOutOfInlineParent(section: HTMLElement): void {
-  while (section.parentElement && section.parentElement.tagName !== 'P') {
+const PHRASING_CONTAINER_RE = /^(SPAN|STRONG|EM|B|I|A|DEL|INS|MARK|U|SMALL|SUB|SUP|CODE|LABEL)$/;
+
+function shouldStopInlineLift(inline: HTMLElement, stopAtParagraph: boolean): boolean {
+  return stopAtParagraph ? inline.tagName === 'P' : !PHRASING_CONTAINER_RE.test(inline.tagName);
+}
+
+function liftSectionOutOfInlineParent(section: HTMLElement, stopAtParagraph: boolean): void {
+  while (section.parentElement) {
     const inline = section.parentElement;
+    if (shouldStopInlineLift(inline, stopAtParagraph) || !inline.parentNode) break;
     const grand = inline.parentNode;
-    if (!grand) break;
     const before = inline.cloneNode(false) as HTMLElement;
     while (inline.firstChild && inline.firstChild !== section) {
       before.appendChild(inline.firstChild);
@@ -152,10 +158,26 @@ function liftSectionOutOfInlineParent(section: HTMLElement): void {
   }
 }
 
+function demoteSectionToInlineBlockSpan(section: HTMLElement): void {
+  const span = section.ownerDocument.createElement('span');
+  for (const attr of Array.from(section.attributes)) {
+    span.setAttribute(attr.name, attr.value);
+  }
+  if (!span.style.display) span.style.display = 'inline-block';
+  while (section.firstChild) span.appendChild(section.firstChild);
+  section.replaceWith(span);
+}
+
 function unwrapParagraphSections(root: HTMLElement): void {
+  // Headings cannot legally contain <section>; demote any nested <section> inside h1-h6 to inline-block <span>.
+  Array.from(
+    root.querySelectorAll<HTMLElement>('h1 section, h2 section, h3 section, h4 section, h5 section, h6 section'),
+  ).forEach(function (section) {
+    if (section.isConnected) demoteSectionToInlineBlockSpan(section);
+  });
   Array.from(root.querySelectorAll<HTMLElement>('p section')).forEach(function (section) {
     if (!section.closest('p')) return;
-    liftSectionOutOfInlineParent(section);
+    liftSectionOutOfInlineParent(section, true);
     const paragraph = section.parentElement;
     if (!paragraph || paragraph.tagName !== 'P' || !paragraph.parentNode) return;
     const before = paragraph.ownerDocument.createElement('p');
@@ -170,6 +192,17 @@ function unwrapParagraphSections(root: HTMLElement): void {
     if (!hasMeaningfulContent(paragraph)) {
       paragraph.remove();
     }
+  });
+  // Lift any remaining <section> nested inside phrasing elements (e.g. <li><strong><section>...</section></strong></li>).
+  const phrasingSel =
+    'span section, strong section, em section, a section, del section, ins section, mark section, u section';
+  Array.from(root.querySelectorAll<HTMLElement>(phrasingSel)).forEach(function (section) {
+    if (!section.isConnected) return;
+    if (section.closest('h1, h2, h3, h4, h5, h6')) {
+      demoteSectionToInlineBlockSpan(section);
+      return;
+    }
+    liftSectionOutOfInlineParent(section, false);
   });
 }
 
@@ -298,8 +331,10 @@ function sanitizeMathSvgs(root: HTMLElement): void {
         if (element.tagName.toLowerCase() !== 'svg') element.removeAttribute('style');
       });
     }
-    const replacement = node.ownerDocument.createElement(display ? 'section' : 'span');
+    const insideHeading = Boolean(node.closest('h1, h2, h3, h4, h5, h6'));
+    const replacement = node.ownerDocument.createElement(display && !insideHeading ? 'section' : 'span');
     replacement.className = display ? 'mdstudio-math-block' : 'mdstudio-math-inline';
+    if (display && insideHeading) replacement.style.display = 'inline-block';
     replacement.setAttribute('data-mdstudio-math', 'true');
     while (node.firstChild) replacement.appendChild(node.firstChild);
     node.replaceWith(replacement);

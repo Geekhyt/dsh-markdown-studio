@@ -102,6 +102,7 @@ function buildSelectionStreamingBlock(
     to: session.selectionRange.end,
     text: isErr ? session.error : session.streamText || t('ai.generating'),
     status: session.status,
+    ariaLabel: t('ai.inlineCardLabel'),
     primaryLabel: t('ai.replace'),
     secondaryLabel: session.status === 'streaming' ? t('ai.stop') : t('ai.discard'),
     retryLabel: isErr ? t('ai.retry') : undefined,
@@ -128,6 +129,7 @@ function buildPatchInlineBlock(
     addParts: diff.addParts,
     delOffsets: diff.delOffsets,
     status: 'ready',
+    ariaLabel: t('ai.inlineCardLabel'),
     warning: warn,
     primaryLabel: t('ai.replace'),
     secondaryLabel: t('ai.discard'),
@@ -327,9 +329,10 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
   };
 
   const exportSkill = (skill: WritingSkill): void => {
+    const live = optionsRef.current;
     const safeFile = (skill.name.replace(/[\\/:*?"<>|\s]+/g, '-') || 'skill') + '.SKILL.md';
-    if (options.download(safeFile, serializeSkillMarkdown(skill), 'text/markdown;charset=utf-8')) {
-      options.notify(t('ai.skillExported'));
+    if (live.download(safeFile, serializeSkillMarkdown(skill), 'text/markdown;charset=utf-8')) {
+      live.notify(live.t('ai.skillExported'));
     }
   };
 
@@ -341,12 +344,13 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
       if (file.size > 1_000_000) throw new Error('skill file too large');
       const raw = await file.text();
       if (!raw.trim()) throw new Error('empty skill file');
-      const baseName = file.name.replace(/(?:\.skill)?\.md$/i, '').trim() || t('ai.defaultCustomName');
+      const baseName =
+        file.name.replace(/(?:\.skill)?\.md$/i, '').trim() || optionsRef.current.t('ai.defaultCustomName');
       const parsed = parseSkillMarkdown(raw, baseName);
       if (!parsed.instructions.trim()) throw new Error('empty skill instructions');
       return parsed;
     } catch {
-      options.notify(t('ai.skillImportFailed'), 'error');
+      optionsRef.current.notify(optionsRef.current.t('ai.skillImportFailed'), 'error');
       return null;
     }
   };
@@ -357,10 +361,11 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
     range: SelectionRange,
     controller: AbortController,
   ): Promise<void> => {
+    const liveStart = optionsRef.current;
     const selectedText = markdown.slice(range.start, range.end);
     const { system, prompt } = buildSelectionSkillPrompt({
       skill,
-      title: options.title(),
+      title: liveStart.title(),
       markdown,
       start: range.start,
       end: range.end,
@@ -375,7 +380,7 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
       error: '',
     });
     let raw = '';
-    const res = await options.aiClient.stream({
+    const res = await liveStart.aiClient.stream({
       system,
       prompt,
       signal: controller.signal,
@@ -386,11 +391,12 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
       },
     });
     if (abortRef.current !== controller || controller.signal.aborted) return;
-    const unwrappedRaw = unwrapMarkdownFenceIfProse((raw || res.text).trimEnd(), selectedText).replace(/\r\n?/g, '\n');
+    const rawUnwrapped = unwrapMarkdownFenceIfProse((raw || res.text).trimEnd(), selectedText).replace(/\r\n?/g, '\n');
+    const unwrappedRaw = !selectedText.startsWith('\n') ? rawUnwrapped.replace(/^\n+/, '') : rawUnwrapped;
     const cleanText = unwrappedRaw.trim();
     if (!cleanText || cleanText === selectedText.trim()) {
       setSession(null);
-      options.notify(t('ai.noChangesNeeded'), 'info');
+      optionsRef.current.notify(optionsRef.current.t('ai.noChangesNeeded'), 'info');
       return;
     }
     const isInlineSpan = !selectedText.includes('\n');
@@ -408,8 +414,9 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
   };
 
   const runSkill = async (overrideSkill?: WritingSkill, explicitRange?: SelectionRange): Promise<void> => {
-    const markdown = options.editorValue();
-    const liveSelection = options.selection();
+    const live = optionsRef.current;
+    const markdown = live.editorValue();
+    const liveSelection = live.selection();
     const rawRange =
       explicitRange && explicitRange.end > explicitRange.start
         ? explicitRange
@@ -434,7 +441,7 @@ export function useWritingSkills(options: UseWritingSkillsOptions): WritingSkill
       await runSelectionFlow(skill, markdown, range, controller);
     } catch (error) {
       if (abortRef.current !== controller || controller.signal.aborted) return;
-      const msg = formatAiClientError(error, t);
+      const msg = formatAiClientError(error, optionsRef.current.t);
       // The inline review card (and the fallback banner) already surface the error; no duplicate toast.
       setSession((prev) => (prev ? { ...prev, status: 'error', error: msg } : null));
     } finally {

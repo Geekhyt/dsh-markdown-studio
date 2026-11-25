@@ -68,20 +68,86 @@ interface InlineImageSpan {
   title: string;
 }
 
-function scanInlineImages(source: string): InlineImageSpan[] {
-  const spans: InlineImageSpan[] = [];
-  for (let i = 0; i < source.length - 1; i++) {
-    if (source[i] !== '!' || source[i + 1] !== '[') continue;
-    const closeBracket = findBracketEnd(source, i + 1);
-    if (closeBracket < 0) {
-      if (source.indexOf(']', i + 2) < 0) break;
+function advanceMarkdownFence(active: string, line: string): string {
+  if (!active) {
+    const open = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (!open || (open[1].charAt(0) === '`' && open[2].includes('`'))) return '';
+    return open[1];
+  }
+  const close = new RegExp('^ {0,3}' + active.charAt(0) + '{' + active.length + ',}[ \\t]*$');
+  return close.test(line) ? '' : active;
+}
+
+function maskInlineCodeLine(line: string): string {
+  if (!line.includes('`')) return line;
+  let out = '';
+  let i = 0;
+  while (i < line.length) {
+    if (line[i] !== '`') {
+      out += line[i++];
       continue;
     }
-    if (source[closeBracket + 1] !== '(') {
+    let ticks = 1;
+    while (line[i + ticks] === '`') ticks++;
+    let close = -1;
+    let scan = i + ticks;
+    while (scan < line.length) {
+      const next = line.indexOf('`', scan);
+      if (next < 0) break;
+      let run = 1;
+      while (line[next + run] === '`') run++;
+      if (run === ticks) {
+        close = next;
+        break;
+      }
+      scan = next + run;
+    }
+    if (close >= 0) {
+      out += ' '.repeat(close + ticks - i);
+      i = close + ticks;
+    } else {
+      out += line.slice(i, i + ticks);
+      i += ticks;
+    }
+  }
+  return out;
+}
+
+/** Replace fenced code blocks and inline code spans with equal-length spaces (keeping line breaks & offsets exact). */
+function maskCodePreservingOffsets(source: string): string {
+  if (!source.includes('`') && !source.includes('~')) return source;
+  const lines = source.split('\n');
+  let fence = '';
+  for (let idx = 0; idx < lines.length; idx++) {
+    const line = lines[idx];
+    const hasCr = line.endsWith('\r');
+    const clean = hasCr ? line.slice(0, -1) : line;
+    const prevFence = fence;
+    fence = advanceMarkdownFence(fence, clean);
+    if (prevFence || fence) {
+      lines[idx] = ' '.repeat(clean.length) + (hasCr ? '\r' : '');
+    } else {
+      lines[idx] = maskInlineCodeLine(clean) + (hasCr ? '\r' : '');
+    }
+  }
+  return lines.join('\n');
+}
+
+function scanInlineImages(source: string, preMasked?: string): InlineImageSpan[] {
+  const masked = preMasked ?? maskCodePreservingOffsets(source);
+  const spans: InlineImageSpan[] = [];
+  for (let i = 0; i < masked.length - 1; i++) {
+    if (masked[i] !== '!' || masked[i + 1] !== '[') continue;
+    const closeBracket = findBracketEnd(masked, i + 1);
+    if (closeBracket < 0) {
+      if (masked.indexOf(']', i + 2) < 0) break;
+      continue;
+    }
+    if (masked[closeBracket + 1] !== '(') {
       i = closeBracket;
       continue;
     }
-    const parsed = parseInlineImageDest(source, closeBracket + 1);
+    const parsed = parseInlineImageDest(masked, closeBracket + 1);
     if (!parsed) {
       i = closeBracket + 1;
       continue;
@@ -92,7 +158,13 @@ function scanInlineImages(source: string): InlineImageSpan[] {
       alt: source.slice(i + 2, closeBracket),
       url: parsed.url,
       angled: parsed.angled,
-      title: parsed.title,
+      title:
+        source.slice(
+          closeBracket + 2 + (parsed.angled ? parsed.url.length + 2 : parsed.url.length),
+          parsed.closeParen,
+        ) === parsed.title
+          ? parsed.title
+          : source.slice(parsed.titleStart, parsed.closeParen),
     });
     i = parsed.closeParen;
   }
@@ -142,7 +214,7 @@ function skipOptionalImageTitle(source: string, start: number): number {
 function parseInlineImageDest(
   source: string,
   openParen: number,
-): { url: string; angled: boolean; title: string; closeParen: number } | null {
+): { url: string; angled: boolean; title: string; titleStart: number; closeParen: number } | null {
   let i = skipSpaces(source, openParen + 1);
   let url = '';
   let angled = false;
@@ -162,7 +234,7 @@ function parseInlineImageDest(
   const titleStart = i;
   i = skipOptionalImageTitle(source, titleStart);
   if (i < 0 || source[i] !== ')') return null;
-  return { url, angled, title: source.slice(titleStart, i), closeParen: i };
+  return { url, angled, title: source.slice(titleStart, i), titleStart, closeParen: i };
 }
 
 export function collectLocalImages(text: unknown): Map<string, AssetEntry> {
@@ -217,23 +289,30 @@ function findBracketEnd(source: string, openIndex: number): number {
   return -1;
 }
 
+function isImgTagStart(source: string, idx: number): boolean {
+  if (idx + 4 >= source.length) return false;
+  if ((source.charCodeAt(idx + 1) | 32) !== 105) return false;
+  if ((source.charCodeAt(idx + 2) | 32) !== 109) return false;
+  if ((source.charCodeAt(idx + 3) | 32) !== 103) return false;
+  const sep = source.charAt(idx + 4);
+  return sep === ' ' || sep === '\t' || sep === '\n' || sep === '\r' || sep === '/' || sep === '>';
+}
+
 function collectHtmlImgSrcs(source: string, addUrl: (raw: string | undefined) => void): void {
-  const lower = source.toLowerCase();
-  let pos = 0;
-  while (pos < lower.length) {
-    const start = lower.indexOf('<img', pos);
+  let cursor = 0;
+  while (cursor < source.length) {
+    const start = source.indexOf('<', cursor);
     if (start < 0) break;
-    const after = lower[start + 4] || '';
-    if (after && !/[\s/>]/.test(after)) {
-      pos = start + 4;
+    if (!isImgTagStart(source, start)) {
+      cursor = start + 1;
       continue;
     }
     const end = source.indexOf('>', start + 4);
     if (end < 0) break;
-    const tag = source.slice(start + 4, end);
-    const srcMatch = /\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/i.exec(tag);
+    const attrs = source.slice(start + 4, end);
+    const srcMatch = /\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/i.exec(attrs);
     if (srcMatch) addUrl(srcMatch[1] || srcMatch[2] || srcMatch[3]);
-    pos = end + 1;
+    cursor = end + 1;
   }
 }
 
@@ -241,16 +320,17 @@ function collectHtmlImgSrcs(source: string, addUrl: (raw: string | undefined) =>
 export function assetFilesInMarkdown(text: unknown): string[] {
   const files = new Set<string>();
   const source = String(text || '');
+  const masked = maskCodePreservingOffsets(source);
   const addUrl = (raw: string | undefined) => {
     const filename = assetFilenameFromSrc(raw);
     if (filename) files.add(filename);
   };
-  for (const span of scanInlineImages(source)) addUrl(span.url);
+  for (const span of scanInlineImages(source, masked)) addUrl(span.url);
   const refDefPattern = /^ {0,3}\[[^\]]+\]:[ \t]*(?:<([^>\n]+)>|([^\s]+))/gm;
   let match: RegExpExecArray | null;
-  while ((match = refDefPattern.exec(source))) {
+  while ((match = refDefPattern.exec(masked))) {
     addUrl(match[1] || match[2]);
   }
-  collectHtmlImgSrcs(source, addUrl);
+  collectHtmlImgSrcs(masked, addUrl);
   return Array.from(files);
 }

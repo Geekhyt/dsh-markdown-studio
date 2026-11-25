@@ -9,7 +9,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import http from 'node:http';
 import type { LocalAsset, LocalServerInfo } from './application/image-store';
-import { isLoopbackHostHeader, isLoopbackReq } from './http/routes';
+import { headerValue, isLoopbackHostHeader, isLoopbackReq } from './http/routes';
 
 export const LOCAL_SERVER_PORTS = [4010, 4011, 4012, 4013, 4014, 4015, 4016, 4017, 4018, 4019];
 
@@ -45,12 +45,18 @@ export function createLocalImageServer(options: { service: LocalAssetReader }): 
   return http.createServer(async function (req: IncomingMessage, res: ServerResponse) {
     const headOnly = req.method === 'HEAD';
     try {
-      const host = Array.isArray(req.headers.host) ? req.headers.host[0] || '' : req.headers.host || '';
+      const host = headerValue(req.headers.host);
       if (!isLoopbackReq(req) || !isLoopbackHostHeader(host)) {
         sendText(res, 403, 'loopback only', headOnly);
         return;
       }
-      const pathname = new URL(req.url || '/', 'http://127.0.0.1').pathname;
+      let pathname: string;
+      try {
+        pathname = new URL(req.url || '/', 'http://127.0.0.1').pathname;
+      } catch {
+        sendText(res, 400, 'bad request', headOnly);
+        return;
+      }
       if (req.method === 'OPTIONS') {
         res.writeHead(204, pathname.indexOf('/uploads/') === 0 ? cors() : { 'cache-control': 'no-store' });
         res.end();
@@ -94,6 +100,21 @@ export function createLocalImageServer(options: { service: LocalAssetReader }): 
   });
 }
 
+function isRetryableBindError(error: NodeJS.ErrnoException | undefined, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return false;
+  return error?.code === 'EADDRINUSE' || error?.code === 'EACCES';
+}
+
+function recordBindFailure(
+  service: LocalAssetReader,
+  error: NodeJS.ErrnoException | undefined,
+  signal?: AbortSignal,
+): void {
+  if (signal?.aborted) return;
+  service.localServerInfo = null;
+  service.localServerError = String(error?.message || error);
+}
+
 export function startLocalImageServer(options: {
   service: LocalAssetReader;
   ports?: number[];
@@ -105,9 +126,26 @@ export function startLocalImageServer(options: {
   const server = createLocalImageServer({ service });
   let index = 0;
 
+  let ownedInfo: LocalServerInfo | null = null;
+  function closeServerImmediately(): void {
+    if (ownedInfo && service.localServerInfo === ownedInfo) {
+      service.localServerInfo = null;
+    }
+    try {
+      server.close();
+      server.closeIdleConnections?.();
+      server.closeAllConnections?.();
+    } catch {
+      /* ignore */
+    }
+  }
+  const onAbort = (): void => {
+    closeServerImmediately();
+  };
+  signal?.addEventListener('abort', onAbort, { once: true });
+
   function attempt(): Promise<{ server: http.Server; info: LocalServerInfo } | null> {
     if (signal?.aborted) {
-      service.localServerInfo = null;
       return Promise.resolve(null);
     }
     if (index >= ports.length) {
@@ -119,24 +157,17 @@ export function startLocalImageServer(options: {
     return new Promise(function (resolve) {
       function onError(error: NodeJS.ErrnoException): void {
         server.removeListener('listening', onListening);
-        if (error?.code === 'EADDRINUSE' && !signal?.aborted) {
+        if (isRetryableBindError(error, signal)) {
           void attempt().then(resolve);
           return;
         }
-        if (!signal?.aborted) {
-          service.localServerInfo = null;
-          service.localServerError = String(error?.message || error);
-        }
+        recordBindFailure(service, error, signal);
         resolve(null);
       }
       function onListening(): void {
         server.removeListener('error', onError);
         if (signal?.aborted) {
-          try {
-            server.close();
-          } catch {
-            /* ignore */
-          }
+          closeServerImmediately();
           resolve(null);
           return;
         }
@@ -146,6 +177,7 @@ export function startLocalImageServer(options: {
         const address = server.address();
         const actualPort = address && typeof address === 'object' ? address.port : port;
         const info: LocalServerInfo = { port: actualPort, url: 'http://127.0.0.1:' + actualPort };
+        ownedInfo = info;
         service.localServerInfo = info;
         service.localServerError = '';
         resolve({ server, info });
@@ -157,11 +189,15 @@ export function startLocalImageServer(options: {
   }
 
   return attempt().then(function (result) {
-    if (!result) return null;
+    if (!result) {
+      signal?.removeEventListener('abort', onAbort);
+      return null;
+    }
     return {
       server: result.server,
       info: result.info,
       stop: function (): Promise<void> {
+        signal?.removeEventListener('abort', onAbort);
         if (service.localServerInfo === result.info) {
           service.localServerInfo = null;
         }

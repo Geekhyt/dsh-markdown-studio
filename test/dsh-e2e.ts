@@ -703,6 +703,26 @@ try {
   assert.equal(aiStatusRes.status, 200, 'real DSH host serves /api/markdown-studio/ai');
   assert.equal(aiStatusRes.json.ok, true, 'real DSH AI status endpoint responds with ok: true');
 
+  // Verify real DSH authenticated asset prefix route (/api/markdown-studio/assets/<fn>) serves GET & HEAD 200
+  const assetRouteCheck = await page.evaluate(async () => {
+    const png1x1 =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl9sAAAAASUVORK5CYII=';
+    const storeRes = await fetch('/api/markdown-studio/wechat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'asset.store', dataUrl: png1x1, filename: 'e2e-check.png' }),
+    });
+    const stored = (await storeRes.json()) as { ok?: boolean; assetUrl?: string; filename?: string };
+    const headRes = await fetch(stored.assetUrl || '', { method: 'HEAD' });
+    const getRes = await fetch(stored.assetUrl || '', { method: 'GET' });
+    const bytes = (await getRes.arrayBuffer()).byteLength;
+    return { ok: stored.ok, assetUrl: stored.assetUrl, headStatus: headRes.status, getStatus: getRes.status, bytes };
+  });
+  assert.equal(assetRouteCheck.ok, true, 'real DSH assets.store succeeds');
+  assert.equal(assetRouteCheck.headStatus, 200, 'real DSH HEAD /api/markdown-studio/assets/<fn> returns 200');
+  assert.equal(assetRouteCheck.getStatus, 200, 'real DSH GET /api/markdown-studio/assets/<fn> returns 200');
+  assert.ok(assetRouteCheck.bytes > 0, 'real DSH GET /api/markdown-studio/assets/<fn> streams PNG payload');
+
   // Verify mouse drag (including backwards right-to-left) places floating AI pill right at the final mouse release point
   const targetLineBox = await page.locator('.cm-line').nth(2).boundingBox();
   assert.ok(targetLineBox, 'editor prose line has measurable bounding box');

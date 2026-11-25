@@ -72,11 +72,12 @@ export function createFileCommands(options: FileActionsOptions): FileActionsApi 
       ) {
         return;
       }
+      const liveDoc = options.store.getActive();
       options.resetEditorTo({
         title: options.deriveTitle(text),
         markdown: text,
-        settings: options.settings,
-        view: options.view,
+        settings: liveDoc.settings,
+        view: liveDoc.view,
       });
       await options.stampFile(handle, file, text);
       if (
@@ -140,7 +141,7 @@ export function createFileCommands(options: FileActionsOptions): FileActionsApi 
     const articleId = options.store.getActive().id;
     const linkedBefore = options.fileContext.linkedFile();
     const initialContent = String(options.markdownRef.current || '');
-    const title = doc.title || t('untitled');
+    const title = options.store.getActive().title || doc.title || t('untitled');
     try {
       const handle = await chooseSaveHandle(forceDialog, title, initialContent);
       if (!handle || options.store.getActive().id !== articleId || options.fileContext.linkedFile() !== linkedBefore) {
@@ -163,6 +164,9 @@ export function createFileCommands(options: FileActionsOptions): FileActionsApi 
           (currentLinked === handle ||
             (typeof handle.isSameEntry === 'function' && (await handle.isSameEntry(currentLinked).catch(() => false)))),
       );
+      if (options.store.getActive().id !== articleId || options.fileContext.linkedFile() !== linkedBefore) {
+        return;
+      }
       if (!isSameLinked) {
         options.setDocumentRef({ kind: 'file', handle });
       }

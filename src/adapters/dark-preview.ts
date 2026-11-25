@@ -106,23 +106,60 @@ function parseColor4Component(raw: string, pctScale: number): number {
   return raw.endsWith('%') ? (parseFloat(raw) / 100) * pctScale : parseFloat(raw);
 }
 
-const OPAQUE_RGB_RE = /^rgba?\(\s*[\d.]+[,\s]+[\d.]+[,\s]+[\d.]+\s*\)$/i;
+const OPAQUE_RGB_RE = /^rgba?\(\s*[\d.]+%?[,\s]+[\d.]+%?[,\s]+[\d.]+%?\s*\)$/i;
 const OPAQUE_HEX_RE = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
-const RGB_PREFIX_RE = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/][^)]*)?\s*\)$/i;
+const HEX_ALPHA_4_RE = /^#([0-9a-f])([0-9a-f])([0-9a-f])([0-9a-f])$/i;
+const HEX_ALPHA_8_RE = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i;
+const RGB_PREFIX_RE = /^rgba?\(\s*([\d.]+%?)[,\s]+([\d.]+%?)[,\s]+([\d.]+%?)(?:[,\s/][^)]*)?\s*\)$/i;
+const HSL_RE =
+  /^hsla?\(\s*(none|[\d.eE+-]+(?:deg|rad|grad|turn)?)[,\s]+(none|[\d.eE+-]+%?)[,\s]+(none|[\d.eE+-]+%?)(?:[,\s/][^)]*)?\s*\)$/i;
 const SLASH_ALPHA_RE = /^(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\([^()]+\/\s*(none|[\d.eE+-]+%?)\s*\)$/i;
-const LEGACY_RGBA_ALPHA_RE = /^rgba?\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*,\s*(none|[\d.eE+-]+%?)\s*\)$/i;
+const LEGACY_ALPHA_RE = /^(?:rgba?|hsla?)\(\s*[^,]+,\s*[^,]+,\s*[^,]+,\s*(none|[\d.eE+-]+%?)\s*\)$/i;
+
+function clamp255(n: number): number {
+  return Math.max(0, Math.min(255, n));
+}
+
+function hslChannel(hDeg: number, s: number, l: number, n: number): number {
+  const k = (n + hDeg / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+}
+
+function hslToRgbTuple(hRad: number, sPct: number, lPct: number): [number, number, number] {
+  const hDeg = ((((hRad * 180) / Math.PI) % 360) + 360) % 360;
+  const s = Math.max(0, Math.min(1, sPct / 100));
+  const l = Math.max(0, Math.min(1, lPct / 100));
+  return [
+    clamp255(hslChannel(hDeg, s, l, 0) * 255),
+    clamp255(hslChannel(hDeg, s, l, 8) * 255),
+    clamp255(hslChannel(hDeg, s, l, 4) * 255),
+  ];
+}
 
 function parseCssColor4Fallback(color: string): [number, number, number] | null {
   const value = color.trim();
-  const srgb = /^color\(\s*srgb\s+(none|[\d.eE+-]+)\s+(none|[\d.eE+-]+)\s+(none|[\d.eE+-]+)/i.exec(value);
+  const hex4 = HEX_ALPHA_4_RE.exec(value);
+  if (hex4) return [parseInt(hex4[1] + hex4[1], 16), parseInt(hex4[2] + hex4[2], 16), parseInt(hex4[3] + hex4[3], 16)];
+  const hex8 = HEX_ALPHA_8_RE.exec(value);
+  if (hex8) return [parseInt(hex8[1], 16), parseInt(hex8[2], 16), parseInt(hex8[3], 16)];
+  const hsl = HSL_RE.exec(value);
+  if (hsl) {
+    return hslToRgbTuple(
+      parseAngleRad(hsl[1].toLowerCase()),
+      parseColor4Component(hsl[2], 100),
+      parseColor4Component(hsl[3], 100),
+    );
+  }
+  const srgb = /^color\(\s*srgb\s+(none|[\d.eE+-]+%?)\s+(none|[\d.eE+-]+%?)\s+(none|[\d.eE+-]+%?)/i.exec(value);
   if (srgb) {
     return [
-      parseColor4Component(srgb[1], 1) * 255,
-      parseColor4Component(srgb[2], 1) * 255,
-      parseColor4Component(srgb[3], 1) * 255,
+      clamp255(parseColor4Component(srgb[1], 1) * 255),
+      clamp255(parseColor4Component(srgb[2], 1) * 255),
+      clamp255(parseColor4Component(srgb[3], 1) * 255),
     ];
   }
-  const p3 = /^color\(\s*display-p3\s+(none|[\d.eE+-]+)\s+(none|[\d.eE+-]+)\s+(none|[\d.eE+-]+)/i.exec(value);
+  const p3 = /^color\(\s*display-p3\s+(none|[\d.eE+-]+%?)\s+(none|[\d.eE+-]+%?)\s+(none|[\d.eE+-]+%?)/i.exec(value);
   if (p3) {
     const lr = srgbToLinear(parseColor4Component(p3[1], 1));
     const lg = srgbToLinear(parseColor4Component(p3[2], 1));
@@ -156,7 +193,13 @@ function parseCssColor4Fallback(color: string): [number, number, number] | null 
 function rgbTuple(color: string): [number, number, number] | null {
   const value = String(color || '').trim();
   const rgb = RGB_PREFIX_RE.exec(value);
-  if (rgb) return [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])];
+  if (rgb) {
+    return [
+      clamp255(parseColor4Component(rgb[1], 255)),
+      clamp255(parseColor4Component(rgb[2], 255)),
+      clamp255(parseColor4Component(rgb[3], 255)),
+    ];
+  }
   const native = resolveBrowserRgba(value);
   if (native !== undefined) return native ? [native[0], native[1], native[2]] : null;
   return parseCssColor4Fallback(value);
@@ -166,9 +209,13 @@ export function alphaOf(color: string): number {
   const value = String(color || '').trim();
   if (value.toLowerCase() === 'transparent') return 0;
   if (OPAQUE_RGB_RE.test(value) || OPAQUE_HEX_RE.test(value)) return 1;
+  const hex4 = HEX_ALPHA_4_RE.exec(value);
+  if (hex4) return parseInt(hex4[4] + hex4[4], 16) / 255;
+  const hex8 = HEX_ALPHA_8_RE.exec(value);
+  if (hex8) return parseInt(hex8[4], 16) / 255;
   const slash = SLASH_ALPHA_RE.exec(value);
   if (slash) return parseColor4Component(slash[1], 1);
-  const legacy = LEGACY_RGBA_ALPHA_RE.exec(value);
+  const legacy = LEGACY_ALPHA_RE.exec(value);
   if (legacy) return parseColor4Component(legacy[1], 1);
   const native = resolveBrowserRgba(value);
   return native ? native[3] : 1;
@@ -396,6 +443,8 @@ export async function applyDarkPreview(article: HTMLElement, isCancelled?: () =>
     const root = article.querySelector<HTMLElement>('#mdstudio');
     if (isAlreadyDarkRoot(root)) {
       cleanupDarkPreview();
+      // Even when the theme root is already dark (e.g. `night`), adapt bright child blocks (e.g. `codeTheme: 'github'`) and lift contrast.
+      finalizeDarkRoot(root);
       return true;
     }
     const Darkmode = await import('mp-darkmode');

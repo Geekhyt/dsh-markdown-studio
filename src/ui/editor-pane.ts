@@ -880,6 +880,7 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
               }
               if (event.key === 'Escape' && !shouldDeferSearchEscape(event, outline.open)) {
                 event.preventDefault();
+                event.stopPropagation();
                 search.onClose();
               }
             },
@@ -901,6 +902,7 @@ export function EditorPane(props: EditorPaneProps): ReactNode {
               }
               if (event.key === 'Escape' && !shouldDeferSearchEscape(event, outline.open)) {
                 event.preventDefault();
+                event.stopPropagation();
                 search.onClose();
               }
             },

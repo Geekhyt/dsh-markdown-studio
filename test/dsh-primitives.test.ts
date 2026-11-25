@@ -142,6 +142,25 @@ const h = React.createElement;
   const disposeNoObserver = observeHostTitlebarInset(target);
   assert.equal(target.style.getPropertyValue('--mdstudio-host-inset'), '140px');
   disposeNoObserver();
+
+  // Touch tablet (pointer: coarse) without data-platform or --dsh-frame-leading-clearance gets 0px clearance
+  const origMatchMedia = win.matchMedia;
+  win.matchMedia = ((q: string) => ({
+    matches: q.includes('coarse'),
+    media: q,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  })) as typeof win.matchMedia;
+  rectLeft = 0;
+  Object.defineProperty(win, 'innerWidth', { value: 736, configurable: true });
+  const disposeCoarse = observeHostTitlebarInset(target);
+  assert.equal(target.style.getPropertyValue('--mdstudio-host-inset'), '0px', 'coarse-pointer tablet gets 0px inset');
+  disposeCoarse();
+  win.matchMedia = origMatchMedia;
   console.log('ok - observeHostTitlebarInset tracks host frame inset and cleans up');
 }
 
@@ -639,6 +658,24 @@ const h = React.createElement;
     });
   });
   assert.ok(container.querySelector('.mdstudio-dialog-submit.is-danger-fill'));
+  const dangerDialogEl = container.querySelector<HTMLElement>('[role="dialog"]')!;
+  const descId = dangerDialogEl.getAttribute('aria-describedby');
+  assert.ok(
+    descId && dangerDialogEl.querySelector(`#${descId}`)?.textContent === 'Irreversible',
+    'FallbackModal wires aria-describedby to description element',
+  );
+  assert.equal(
+    container.querySelector('.mdstudio-dialog-cancel')?.hasAttribute('data-mdstudio-autofocus') ||
+      container.querySelector<HTMLButtonElement>('.mdstudio-dialog-cancel')?.autofocus ||
+      container.querySelector('.mdstudio-dialog-cancel')?.hasAttribute('autofocus'),
+    true,
+    'danger confirm autofocuses Cancel instead of red destructive submit',
+  );
+  assert.equal(
+    container.querySelector('.mdstudio-dialog-submit')?.hasAttribute('autofocus'),
+    false,
+    'danger confirm does not autofocus red destructive submit',
+  );
   await act(async () => {
     container.querySelector<HTMLButtonElement>('.mdstudio-dialog-submit')!.click();
   });

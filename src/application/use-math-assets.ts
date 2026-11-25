@@ -33,8 +33,8 @@ function loadMathScript(): Promise<void> {
     script.async = true;
     script.setAttribute('data-plugin', 'dsh-markdown-studio');
     script.onload = function () {
+      sharedMathLoadPromise = null;
       if (!window.__MDSTUDIO_MATH__) {
-        sharedMathLoadPromise = null;
         script.remove();
       }
       resolve();

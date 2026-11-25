@@ -557,8 +557,68 @@ try {
           const symName = 'deadbeefdeadbeefdeadbeef.png';
           await fs.symlink(secret, path.join(symDir, 'assets', symName));
           assert.equal(await symSvc.readAsset(symName), null, 'ImageHostService refuses to follow symlinks in assets/');
+          await fs.symlink(secret, path.join(symDir, 'assets.json'));
+          assert.deepEqual(
+            (await symSvc.listAssets()).assets,
+            [],
+            'ImageHostService refuses to follow symlinked assets.json manifest',
+          );
         } finally {
           await fs.rm(symDir, { recursive: true, force: true });
+        }
+
+        // G2 regressions: strict RFC 9110 Host/Origin, expectedStoredAt optimistic concurrency, and DSH prefix route
+        assert.equal(isLoopbackHostHeader('127.0.0.1:99999'), false, 'out-of-range TCP port rejected');
+        assert.equal(isLoopbackHostHeader('127.0.0.1:0'), false, 'zero TCP port rejected');
+        assert.equal(
+          isAllowedOrigin('http://attacker@127.0.0.1:4010', '127.0.0.1:4010', 'same-origin'),
+          false,
+          'userinfo in Origin header rejected',
+        );
+        assert.equal(
+          isAllowedOrigin('', '127.0.0.1:4010', 'same-site'),
+          false,
+          'empty Origin with Sec-Fetch-Site: same-site rejected',
+        );
+        const storedOpt = await service.storeAsset({ dataUrl: IMAGE, filename: 'opt.png' });
+        const optEntry = (await service.listAssets()).assets.find((item) => item.filename === storedOpt.filename);
+        assert.ok(optEntry?.storedAt, 'listed asset exposes storedAt timestamp');
+        const staleDel = await service.deleteAsset({
+          filename: storedOpt.filename,
+          expectedStoredAt: '1970-01-01T00:00:00.000Z',
+        });
+        assert.equal(staleDel.deleted, false, 'stale expectedStoredAt blocks deletion of re-uploaded asset');
+        assert.ok(await service.readAsset(storedOpt.filename), 'asset survives stale delete attempt');
+        const freshDel = await service.deleteAsset({
+          filename: storedOpt.filename,
+          expectedStoredAt: optEntry.storedAt,
+        });
+        assert.equal(freshDel.deleted, true, 'matching expectedStoredAt deletes asset');
+
+        // Verify plugin entry registers ASSET_PREFIX without trailing slash to match DSH webServer prefix router
+        const registeredRoutes: Array<{ kind: string; path: string }> = [];
+        let effectCleanup: (() => void) | undefined;
+        const pluginEntry = await import('../index');
+        try {
+          pluginEntry.apply({
+            effect: (fn: () => (() => void) | void) => {
+              const res = fn();
+              if (typeof res === 'function') effectCleanup = res;
+            },
+            webServer: {
+              register: (spec: { kind: string; path: string }) => {
+                registeredRoutes.push({ kind: spec.kind, path: spec.path });
+                return () => {};
+              },
+            },
+            baseDir: tempDir,
+          } as never);
+          assert.ok(
+            registeredRoutes.some((r) => r.kind === 'prefix' && r.path === '/api/markdown-studio/assets'),
+            `index.ts registers prefix /api/markdown-studio/assets without trailing slash (got ${JSON.stringify(registeredRoutes)})`,
+          );
+        } finally {
+          effectCleanup?.();
         }
       } finally {
         mathServer.server.close();

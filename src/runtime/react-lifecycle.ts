@@ -196,9 +196,18 @@ export function useLazyChunkReady(
 ): { error: string | null; retry: () => void } {
   const [, setTick] = React.useState(0);
   const [error, setError] = React.useState<string | null>(null);
+  const readyAtRender = isReady();
   React.useEffect(
     function () {
-      if (isReady() || error !== null) return undefined;
+      if (isReady()) {
+        if (!readyAtRender) {
+          setTick(function (n) {
+            return n + 1;
+          });
+        }
+        return undefined;
+      }
+      if (error !== null) return undefined;
       let cancelled = false;
       load().then(
         function () {
@@ -215,7 +224,7 @@ export function useLazyChunkReady(
         cancelled = true;
       };
     },
-    [error],
+    [error, readyAtRender],
   );
   return {
     error,

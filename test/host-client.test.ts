@@ -160,4 +160,35 @@ await assert.rejects(
   (error: unknown) => error instanceof HostClientError && error.code === 'HOST_ERROR',
 );
 
+// G2 regressions: EN localization for HOST_BAD_RESPONSE & RATE_LIMIT, corrupt NDJSON, and expectedStoredAt forwarding
+assert.equal(
+  formatAiClientError(new AiClientError('HOST_BAD_RESPONSE', 'raw-zh'), tEn),
+  UI_STRINGS_EN['err.hostBadResponse'],
+  'HOST_BAD_RESPONSE localizes to English UI string',
+);
+assert.equal(
+  formatAiClientError(new AiClientError('RATE_LIMIT', 'raw'), tEn),
+  UI_STRINGS_EN['err.aiRateLimited'],
+  'RATE_LIMIT localizes to English rate-limit string',
+);
+await assert.rejects(
+  () =>
+    new AiClient(
+      '/api/ai',
+      async () =>
+        new Response('{corrupt-ndjson\n', { status: 200, headers: { 'content-type': 'application/x-ndjson' } }),
+    ).stream({ system: 'sys', prompt: 'p' }),
+  (error: unknown) => error instanceof AiClientError && error.code === 'HOST_BAD_RESPONSE',
+  'corrupt NDJSON line throws HOST_BAD_RESPONSE instead of silent stream drop',
+);
+let capturedDeleteBody: Record<string, unknown> = {};
+await new HostClient('/api/test', async (_url, init) => {
+  capturedDeleteBody = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>;
+  return new Response(JSON.stringify({ ok: true, filename: 'aaaaaaaaaaaaaaaaaaaaaaaa.png', deleted: false }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+}).deleteAsset('aaaaaaaaaaaaaaaaaaaaaaaa.png', '2026-01-01T00:00:00.000Z');
+assert.equal(capturedDeleteBody.expectedStoredAt, '2026-01-01T00:00:00.000Z', 'deleteAsset forwards expectedStoredAt');
+
 console.log('24 host-client checks passed.');

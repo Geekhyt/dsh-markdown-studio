@@ -12,6 +12,7 @@ export const LIBRARY_KEY_V2 = 'dsh.markdown-studio.library.v2';
 export const LIBRARY_BACKUP_KEY = 'dsh.markdown-studio.library.backup.v2';
 export const LIBRARY_UNREADABLE_KEY = 'dsh.markdown-studio.library.unreadable.v2';
 export const WRITING_SKILLS_KEY = 'dsh.markdown-studio.skills.v1';
+const IMPORT_RECOVERY_STORAGE_KEY = 'dsh.markdown-studio.import-recovery.v1';
 
 export class LibraryStorageError extends Error {
   constructor(readonly reason: 'unsupported' | 'corrupt') {
@@ -76,7 +77,7 @@ function rejectFutureLibrary(raw: string | null): void {
 function parseArticleRecord(entry: unknown): Article | null {
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
   const record = entry as Record<string, unknown>;
-  if (typeof record.id !== 'string' || typeof record.markdown !== 'string') return null;
+  if (typeof record.id !== 'string' || !record.id.trim() || typeof record.markdown !== 'string') return null;
   const rawUpdated = Number(record.updatedAt);
   const rawRev = Number(record.rev);
   return {
@@ -172,9 +173,10 @@ function writePrimaryWithQuotaRetry(payload: string): void {
   try {
     window.localStorage.setItem(LIBRARY_KEY_V2, payload);
   } catch {
-    // Snapshot backup/unreadable keys before eviction so a still-failing retry does not destroy recovery data.
+    // Snapshot backup/unreadable/import-recovery keys before eviction so a still-failing retry does not destroy recovery data.
     const prevBackup = safeStorageGet(LIBRARY_BACKUP_KEY);
     const prevUnreadable = safeStorageGet(LIBRARY_UNREADABLE_KEY);
+    const prevRecovery = safeStorageGet(IMPORT_RECOVERY_STORAGE_KEY);
     try {
       window.localStorage.removeItem(LIBRARY_BACKUP_KEY);
       window.localStorage.removeItem(LIBRARY_UNREADABLE_KEY);
@@ -183,10 +185,18 @@ function writePrimaryWithQuotaRetry(payload: string): void {
     }
     try {
       window.localStorage.setItem(LIBRARY_KEY_V2, payload);
-    } catch (retryError) {
-      restoreStorageKey(LIBRARY_BACKUP_KEY, prevBackup);
-      restoreStorageKey(LIBRARY_UNREADABLE_KEY, prevUnreadable);
-      throw retryError;
+      return;
+    } catch {
+      try {
+        window.localStorage.removeItem(IMPORT_RECOVERY_STORAGE_KEY);
+        window.localStorage.setItem(LIBRARY_KEY_V2, payload);
+        return;
+      } catch (retryError) {
+        restoreStorageKey(LIBRARY_BACKUP_KEY, prevBackup);
+        restoreStorageKey(LIBRARY_UNREADABLE_KEY, prevUnreadable);
+        restoreStorageKey(IMPORT_RECOVERY_STORAGE_KEY, prevRecovery);
+        throw retryError;
+      }
     }
   }
 }
@@ -382,9 +392,7 @@ export function loadWorkspaceHandle(): Promise<FileSystemDirectoryHandle | null>
         db.close();
       }
       const record = value && typeof value === 'object' ? (value as { handle?: unknown }) : null;
-      return record && record.handle && typeof record.handle === 'object'
-        ? (record.handle as FileSystemDirectoryHandle)
-        : null;
+      return record && isDirHandleLike(record.handle) ? (record.handle as FileSystemDirectoryHandle) : null;
     } catch {
       return null;
     }
@@ -397,17 +405,27 @@ function openFileHandleDb(): Promise<IDBDatabase> {
       reject(new Error('indexedDB unavailable'));
       return;
     }
+    let settled = false;
     const request = window.indexedDB.open('mdstudio-files', 1);
     request.onupgradeneeded = function () {
       if (!request.result.objectStoreNames.contains('handles')) request.result.createObjectStore('handles');
     };
     request.onsuccess = function () {
+      if (settled) {
+        request.result.close();
+        return;
+      }
+      settled = true;
       resolve(request.result);
     };
     request.onerror = function () {
+      if (settled) return;
+      settled = true;
       reject(request.error);
     };
     request.onblocked = function () {
+      if (settled) return;
+      settled = true;
       reject(new Error('indexedDB blocked'));
     };
   });

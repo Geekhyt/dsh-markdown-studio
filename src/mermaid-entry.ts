@@ -42,7 +42,11 @@ const SVG_PAINT_ATTRS = ['fill', 'stroke', 'filter', 'clip-path', 'mask'];
 function scanQuotedEnd(text: string, openIndex: number): number {
   const quote = text[openIndex];
   for (let i = openIndex + 1; i < text.length; i++) {
-    if (text[i] === '\\' && quote === '"') {
+    if (quote === '"' && text[i] === '\\') {
+      i++;
+      continue;
+    }
+    if (quote === "'" && text[i] === "'" && text[i + 1] === "'") {
       i++;
       continue;
     }
@@ -51,12 +55,25 @@ function scanQuotedEnd(text: string, openIndex: number): number {
   return text.length - 1;
 }
 
+function isYamlCommentStart(text: string, index: number, bound: number): boolean {
+  return text[index] === '#' && (index === bound || /[\s{,[\n]/.test(text[index - 1]));
+}
+
+function findLineBreakOrEnd(text: string, from: number): number {
+  const nl = text.indexOf('\n', from);
+  return nl === -1 ? text.length : nl;
+}
+
 function findDirectiveBraceEnd(source: string, openBrace: number): number {
   let depth = 1;
   for (let i = openBrace + 1; i < source.length; i++) {
     const ch = source[i];
     if (ch === '"' || ch === "'") {
       i = scanQuotedEnd(source, i);
+      continue;
+    }
+    if (isYamlCommentStart(source, i, openBrace + 1)) {
+      i = findLineBreakOrEnd(source, i);
       continue;
     }
     if (ch === '{') depth++;
@@ -68,31 +85,124 @@ function findDirectiveBraceEnd(source: string, openBrace: number): number {
   return -1;
 }
 
+function stripYamlComments(text: string): string {
+  let out = '';
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"' || ch === "'") {
+      i = scanQuotedEnd(text, i);
+      continue;
+    }
+    if (isYamlCommentStart(text, i, 0)) {
+      out += text.slice(start, i);
+      const nl = findLineBreakOrEnd(text, i);
+      i = nl - 1;
+      start = nl;
+    }
+  }
+  return start === 0 ? text : out + text.slice(start);
+}
+
 function splitDirectiveEntries(body: string): string[] {
+  const clean = stripYamlComments(body);
   const entries: string[] = [];
   let start = 0;
   let depth = 0;
-  for (let i = 0; i < body.length; i++) {
-    const ch = body[i];
+  for (let i = 0; i < clean.length; i++) {
+    const ch = clean[i];
     if (ch === '"' || ch === "'") {
-      i = scanQuotedEnd(body, i);
+      i = scanQuotedEnd(clean, i);
       continue;
     }
     if (ch === '{' || ch === '[') depth++;
     else if ((ch === '}' || ch === ']') && depth > 0) depth--;
     else if (depth === 0 && (ch === ',' || ch === '\n')) {
-      entries.push(body.slice(start, i));
+      entries.push(clean.slice(start, i));
       start = i + 1;
     }
   }
-  entries.push(body.slice(start));
+  entries.push(clean.slice(start));
   return entries;
 }
 
+const YAML_SIMPLE_ESCAPES: Record<string, string> = {
+  b: '\b',
+  f: '\f',
+  n: '\n',
+  r: '\r',
+  t: '\t',
+  '/': '/',
+  '\\': '\\',
+  '"': '"',
+};
+
+function decodeYamlHexEscape(hex: string): string {
+  const code = parseInt(hex, 16);
+  return code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : '\ufffd';
+}
+
+function decodeYamlDoubleQuoted(raw: string): string {
+  return raw.replace(
+    /\\(?:x([0-9a-f]{2})|u([0-9a-f]{4})|U([0-9a-f]{8})|([\s\S]))/gi,
+    function (_m, x2?: string, u4?: string, u8?: string, lit?: string) {
+      const hex = x2 || u4 || u8;
+      if (hex) return decodeYamlHexEscape(hex);
+      return lit ? (YAML_SIMPLE_ESCAPES[lit] ?? lit) : '';
+    },
+  );
+}
+
+function stripYamlNodeProps(text: string): string {
+  let rest = text.trimStart();
+  while (rest) {
+    const m = /^(?:!<[^>]+>|![^\s,{}[\]]*|&[^\s,{}[\]]*)\s*/.exec(rest);
+    if (!m) break;
+    rest = rest.slice(m[0].length);
+  }
+  return rest;
+}
+
+function parseYamlEntryKey(entry: string): { key: string; explicitOnly: boolean } {
+  let rest = entry.trim();
+  let explicit = false;
+  if (/^\?(?:\s|$)/.test(rest)) {
+    explicit = true;
+    rest = rest.slice(1).trimStart();
+  }
+  rest = stripYamlNodeProps(rest);
+  if (!rest) return { key: '', explicitOnly: false };
+  if (rest[0] === '"' || rest[0] === "'") {
+    const end = scanQuotedEnd(rest, 0);
+    const rawKey = rest.slice(1, end);
+    const after = rest.slice(end + 1).trimStart();
+    const decoded = rest[0] === '"' ? decodeYamlDoubleQuoted(rawKey) : rawKey.replace(/''/g, "'");
+    if (after.startsWith(':')) return { key: decoded, explicitOnly: false };
+    return { key: explicit ? decoded : '', explicitOnly: explicit && !after };
+  }
+  const colon = rest.indexOf(':');
+  if (colon > 0) return { key: rest.slice(0, colon).trim(), explicitOnly: false };
+  return { key: explicit ? rest : '', explicitOnly: explicit };
+}
+
 function stripImgFromDirectiveBody(body: string): string {
-  const kept = splitDirectiveEntries(body)
+  const entries = splitDirectiveEntries(body)
     .map((entry) => entry.trim())
-    .filter((entry) => entry && !/^img\s*:/i.test(entry));
+    .filter(Boolean);
+  const kept: string[] = [];
+  let skipNextValue = false;
+  for (const entry of entries) {
+    if (skipNextValue) {
+      skipNextValue = false;
+      if (entry.startsWith(':')) continue;
+    }
+    const parsed = parseYamlEntryKey(entry);
+    if (parsed.key.trim().toLowerCase() === 'img') {
+      skipNextValue = parsed.explicitOnly;
+      continue;
+    }
+    kept.push(entry);
+  }
   if (!kept.length) return '';
   return body.includes('\n') ? '\n  ' + kept.join('\n  ') + '\n' : ' ' + kept.join(', ') + ' ';
 }

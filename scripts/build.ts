@@ -14,7 +14,7 @@ const minifyChromeCssPlugin: Plugin = {
     pluginBuild.onLoad({ filter: /styles\.ts$/ }, async (args) => {
       if (path.resolve(args.path) !== stylesPath) return undefined;
       const src = fs.readFileSync(args.path, 'utf8');
-      const match = src.match(/(export const CHROME_CSS: string = `)([\s\S]*)(`;)/);
+      const match = src.match(/(export const CHROME_CSS: string = `)([\s\S]*?)(`;)/);
       if (!match) return undefined;
       const exprs: string[] = [];
       const tokenized = match[2].replace(/\$\{([^}]+)\}/g, (_, expr: string) => `__TPL_${exprs.push(expr) - 1}__`);
@@ -23,7 +23,8 @@ const minifyChromeCssPlugin: Plugin = {
         throw new Error(`CHROME_CSS minify warnings: ${min.warnings.map((w) => w.text).join('; ')}`);
       }
       let restoredCount = 0;
-      const compacted = min.code.trim().replace(/__TPL_(\d+)__/g, (_, idx: string) => {
+      const escaped = min.code.trim().replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$\{/g, '\\${');
+      const compacted = escaped.replace(/__TPL_(\d+)__/g, (_, idx: string) => {
         restoredCount++;
         return '${' + exprs[Number(idx)] + '}';
       });
@@ -31,7 +32,7 @@ const minifyChromeCssPlugin: Plugin = {
         throw new Error(`CHROME_CSS interpolation mismatch (${restoredCount}/${exprs.length})`);
       }
       return {
-        contents: src.replace(match[0], match[1] + compacted + match[3]),
+        contents: src.replace(match[0], () => match[1] + compacted + match[3]),
         loader: 'ts',
       };
     });
@@ -124,7 +125,7 @@ var primitives = null;
 try { primitives = require('@deepseek-ai/dsh-client-ui-primitives'); } catch (_e) {}
 return module.exports.create(require('react'), primitives, function () { return require.async('./client.studio.js'); }); } });
 `;
-const MAX_COLD_BOOT_BYTES = 50 * 1024;
+const MAX_COLD_BOOT_BYTES = 12 * 1024;
 if (Buffer.byteLength(clientOutput, 'utf8') >= MAX_COLD_BOOT_BYTES) {
   throw new Error(`cold-boot size gate: dist/client.js exceeds ${MAX_COLD_BOOT_BYTES} bytes`);
 }

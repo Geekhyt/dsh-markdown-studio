@@ -22,6 +22,10 @@ function readPublishedClearance(target: HTMLElement): number | null {
   return parseClearance(window.getComputedStyle(target).getPropertyValue('--dsh-frame-leading-clearance'));
 }
 
+function isCoarsePointer(): boolean {
+  return typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+}
+
 function resolveHostClearance(target: HTMLElement): number {
   const published = readPublishedClearance(target);
   if (published !== null) return published;
@@ -31,6 +35,7 @@ function resolveHostClearance(target: HTMLElement): number {
     return docEl?.hasAttribute('data-fullscreen') ? 84 : 160;
   }
   if (platform) return 84;
+  if (isCoarsePointer()) return 0;
   return window.innerWidth > 720 ? 160 : 0;
 }
 

@@ -8,7 +8,7 @@ const ASSET_URL_PREFIX = '/api/markdown-studio/assets/';
 
 import { createHash, randomBytes } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
-import { lstat, mkdir, open, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, open, readdir, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { SAMPLE_IMAGE_BUFFER, SAMPLE_IMAGE_FILENAME, SAMPLE_IMAGE_MIME } from '../sample-asset';
 
@@ -157,6 +157,28 @@ function assetFilename(input: unknown): string | null {
   return match ? match[1] : null;
 }
 
+function isMissingOrSymlinkError(error: unknown): boolean {
+  const code = error && (error as NodeJS.ErrnoException).code;
+  return code === 'ENOENT' || code === 'ELOOP';
+}
+
+async function readRegularFileNoFollow(filePath: string): Promise<string | null> {
+  const flags = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0);
+  let handle: Awaited<ReturnType<typeof open>>;
+  try {
+    handle = await open(filePath, flags);
+  } catch (error) {
+    if (isMissingOrSymlinkError(error)) return null;
+    throw error;
+  }
+  try {
+    const info = await handle.stat();
+    return info.isFile() ? await handle.readFile({ encoding: 'utf8' }) : null;
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+}
+
 export class ImageHostService {
   readonly storageDir: string;
   localServerInfo: LocalServerInfo | null = null;
@@ -179,15 +201,10 @@ export class ImageHostService {
 
   private async loadManifest(): Promise<Manifest> {
     if (this.manifestCache) return this.manifestCache;
-    let raw: string;
-    try {
-      raw = await readFile(this.manifestPath(), 'utf8');
-    } catch (error) {
-      if (error && (error as NodeJS.ErrnoException).code === 'ENOENT') {
-        this.manifestCache = {};
-        return this.manifestCache;
-      }
-      throw error;
+    const raw = await readRegularFileNoFollow(this.manifestPath());
+    if (raw === null) {
+      this.manifestCache = {};
+      return this.manifestCache;
     }
     try {
       const parsed: unknown = JSON.parse(raw);
@@ -248,7 +265,7 @@ export class ImageHostService {
         const temp =
           file + '.' + process.pid + '-' + Date.now().toString(36) + '-' + randomBytes(6).toString('hex') + '.tmp';
         try {
-          await writeFile(temp, image.buffer, { mode: 0o644 });
+          await writeFile(temp, image.buffer, { mode: 0o600 });
           await rename(temp, file);
         } catch (error) {
           await unlink(temp).catch(() => undefined);
@@ -353,25 +370,33 @@ export class ImageHostService {
     });
   }
 
-  async deleteAsset(input: unknown): Promise<{ filename: string; deleted: true }> {
+  async deleteAsset(input: unknown): Promise<{ filename: string; deleted: boolean }> {
     const filename = assetFilename(input);
     if (!filename) {
       throw new ImageHostError('ASSET_NOT_FOUND', '本地图片不存在', '请刷新图片列表。');
     }
+    const rawExpected = field(input, 'expectedStoredAt');
+    const expectedStoredAt = typeof rawExpected === 'string' ? rawExpected.trim() : '';
+    let deleted = false;
     await this.enqueueManifest(async () => {
+      const manifest = await this.loadManifest();
+      const current = manifest[filename];
+      if (expectedStoredAt && current && current.storedAt !== expectedStoredAt) {
+        return;
+      }
       try {
         await unlink(path.join(this.assetsDir(), filename));
       } catch (error) {
         if (!error || (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       }
-      const manifest = await this.loadManifest();
-      if (manifest[filename]) {
+      if (current) {
         const next: Manifest = { ...manifest };
         delete next[filename];
         await this.saveManifest(next);
       }
+      deleted = true;
     });
-    return { filename, deleted: true };
+    return { filename, deleted };
   }
 
   info(): { assets: true; loopbackOnly: true; localServerUrl: string; localServerPort: number } {

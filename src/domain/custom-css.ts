@@ -250,15 +250,36 @@ function candidateHasExternalUrl(candidate: string): boolean {
   return isExternalUrlArg(trimmed);
 }
 
-function precleanCss(value: string): string {
-  return stripCssComments(value).replace(/\\(?:\r\n|\r|\n|\f)/g, '');
+function skipCssComment(text: string, index: number): number {
+  const close = text.indexOf('*/', index + 2);
+  return close === -1 ? text.length - 1 : close + 1;
 }
 
-export function hasExternalCssUrl(value: string): boolean {
-  const raw = precleanCss(value);
-  const importProbe = decodeCssEscapes(
-    raw.replace(/(["'])(?:\\[\s\S]|(?!\1)[^\\\n])*\1/g, '""').replace(/<!--|-->/g, ' '),
-  );
+function precleanCss(value: string, commentReplacement = ' '): string {
+  return stripCssComments(value, commentReplacement).replace(/\\(?:\r\n|\r|\n|\f)/g, '');
+}
+
+function stripCssStringsForImportProbe(raw: string): string {
+  let out = '';
+  let start = 0;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (ch === '\\') {
+      i = skipCssEscape(raw, i);
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      const end = readQuotedStringEnd(raw, i);
+      out += raw.slice(start, i) + '""';
+      i = end;
+      start = i + 1;
+    }
+  }
+  return (start === 0 ? raw : out + raw.slice(start)).replace(/<!--|-->/g, ' ');
+}
+
+function hasExternalInPrecleaned(raw: string): boolean {
+  const importProbe = decodeCssEscapes(stripCssStringsForImportProbe(raw));
   if (isAtImportSegment(raw) || /(?:^|[;{}])\s*@import\b/i.test(importProbe)) return true;
   let cursor = 0;
   while (cursor < raw.length) {
@@ -273,6 +294,11 @@ export function hasExternalCssUrl(value: string): boolean {
     cursor = call.close + 1;
   }
   return false;
+}
+
+export function hasExternalCssUrl(value: string): boolean {
+  if (hasExternalInPrecleaned(precleanCss(value, ' '))) return true;
+  return value.includes('/*') && hasExternalInPrecleaned(precleanCss(value, ''));
 }
 
 function replacePlainExternalUrls(segment: string): string {
@@ -308,11 +334,15 @@ function splitCssSegments(css: string): string[] {
       continue;
     }
     if (quote) {
-      if (ch === quote) quote = '';
+      if (ch === quote || ch === '\n') quote = '';
       continue;
     }
     if (ch === '"' || ch === "'") {
       if (hasClosingQuote(css, i + 1, ch)) quote = ch;
+      continue;
+    }
+    if (ch === '/' && css[i + 1] === '*') {
+      i = skipCssComment(css, i);
       continue;
     }
     if (ch === '(') depth++;
@@ -336,17 +366,39 @@ export interface CssRule {
   declarations: CssDeclaration[];
 }
 
-/** Strip CSS comments outside quoted strings after CSS Syntax Level 3 preprocessing. */
-export function stripCssComments(css: string): string {
-  return preprocessCssInput(css).replace(
-    /("(?:\\[\s\S]|[^"\\\n])*"|'(?:\\[\s\S]|[^'\\\n])*')|\/\*[\s\S]*?\*\//g,
-    function (_match, quoted?: string) {
-      return quoted ?? '';
-    },
-  );
+/**
+ * Strip CSS comments (including unclosed `/*` to EOF per CSS Syntax Level 3 §4.3.2) outside quoted strings.
+ * Defaults to replacing comments with a single space so adjacent tokens (e.g. `red/**\/url(...)`) never merge.
+ */
+export function stripCssComments(css: string, replacement = ' '): string {
+  const text = preprocessCssInput(css);
+  let out = '';
+  let start = 0;
+  let quote = '';
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '\\') {
+      i = skipCssEscape(text, i);
+      continue;
+    }
+    if (quote) {
+      if (ch === quote || ch === '\n') quote = '';
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      if (hasClosingQuote(text, i + 1, ch)) quote = ch;
+      continue;
+    }
+    if (ch === '/' && text[i + 1] === '*') {
+      out += text.slice(start, i) + replacement;
+      i = skipCssComment(text, i);
+      start = i + 1;
+    }
+  }
+  return start === 0 ? text : out + text.slice(start);
 }
 
-/** Split CSS text on `separator` at top level (outside quotes, escapes, parens, and brackets). */
+/** Split CSS text on `separator` at top level (outside comments, quotes, escapes, parens, and brackets). */
 export function splitCssTopLevel(text: string, separator: string): string[] {
   const parts: string[] = [];
   let depth = 0;
@@ -366,6 +418,10 @@ export function splitCssTopLevel(text: string, separator: string): string[] {
       if (hasClosingQuote(text, i + 1, ch)) quote = ch;
       continue;
     }
+    if (ch === '/' && text[i + 1] === '*') {
+      i = skipCssComment(text, i);
+      continue;
+    }
     if (ch === '(' || ch === '[') depth++;
     else if (ch === ')' || ch === ']') depth = Math.max(0, depth - 1);
     else if (ch === separator && depth === 0) {
@@ -377,7 +433,7 @@ export function splitCssTopLevel(text: string, separator: string): string[] {
   return parts;
 }
 
-/** Find the next `{` outside CSS strings and escapes, or `-1`. */
+/** Find the next `{` outside CSS comments, strings, and escapes, or `-1`. */
 export function findCssBlockOpen(css: string, from = 0): number {
   let quote = '';
   for (let i = from; i < css.length; i++) {
@@ -394,12 +450,16 @@ export function findCssBlockOpen(css: string, from = 0): number {
       if (hasClosingQuote(css, i + 1, ch)) quote = ch;
       continue;
     }
+    if (ch === '/' && css[i + 1] === '*') {
+      i = skipCssComment(css, i);
+      continue;
+    }
     if (ch === '{') return i;
   }
   return -1;
 }
 
-/** Find the matching `}` for an opening `{` at `openIndex` outside CSS strings and escapes. */
+/** Find the matching `}` for an opening `{` at `openIndex` outside CSS comments, strings, and escapes. */
 export function findCssBlockEnd(css: string, openIndex: number): number {
   let depth = 1;
   let quote = '';
@@ -417,6 +477,10 @@ export function findCssBlockEnd(css: string, openIndex: number): number {
       if (hasClosingQuote(css, i + 1, ch)) quote = ch;
       continue;
     }
+    if (ch === '/' && css[i + 1] === '*') {
+      i = skipCssComment(css, i);
+      continue;
+    }
     if (ch === '{') depth++;
     else if (ch === '}' && --depth === 0) return i;
   }
@@ -425,7 +489,8 @@ export function findCssBlockEnd(css: string, openIndex: number): number {
 
 /** True when a CSS value or SVG paint attribute invokes any URL-loading CSS function (escape- and comment-aware). */
 export function hasCssUrlRef(value: string): boolean {
-  return findNextFunctionCall(precleanCss(value), 0) !== null;
+  if (findNextFunctionCall(precleanCss(value, ' '), 0) !== null) return true;
+  return value.includes('/*') && findNextFunctionCall(precleanCss(value, ''), 0) !== null;
 }
 
 /** Parse semicolon-separated CSS declarations safely across quotes and parenthesized expressions. */
@@ -501,8 +566,8 @@ export function isRootThemeSelector(selector: string): boolean {
  * controls, backslash protocol-relative URLs, and multi-URL functions cannot bypass sanitization.
  */
 export function stripExternalCssUrls(css: string): string {
-  const cleaned = precleanCss(css);
-  const parts = splitCssSegments(cleaned);
+  const normalized = preprocessCssInput(css);
+  const parts = splitCssSegments(normalized);
   let out = '';
   for (let i = 0; i < parts.length; i++) {
     const segment = parts[i];
@@ -510,14 +575,17 @@ export function stripExternalCssUrls(css: string): string {
       out += segment;
       continue;
     }
-    if (isAtImportSegment(segment)) {
-      const leadWs = /^\s*/.exec(segment)?.[0] || '';
+    const cleaned = precleanCss(segment, ' ');
+    const squashed = segment.includes('/*') ? precleanCss(segment, '') : '';
+    if (isAtImportSegment(cleaned) || (squashed && isAtImportSegment(squashed))) {
+      const leadWs = /^\s*/.exec(cleaned)?.[0] || '';
       out += leadWs;
       if (parts[i + 1] === ';') i++;
       continue;
     }
-    const replaced = replacePlainExternalUrls(segment);
-    out += hasExternalCssUrl(replaced) ? '' : replaced;
+    if (squashed && hasExternalInPrecleaned(squashed)) continue;
+    const replaced = replacePlainExternalUrls(cleaned);
+    out += hasExternalInPrecleaned(replaced) ? '' : replaced;
   }
   return out;
 }

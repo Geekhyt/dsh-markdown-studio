@@ -514,8 +514,8 @@ body[data-ds-dark-theme] .mdstudio-switch.is-on .mdstudio-switch-thumb { backgro
 .mdstudio-modal-footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 20px; }
 .mdstudio-modal.mdstudio-dialog-prompt { width: min(420px, calc(100vw - 32px)); }
 .mdstudio-modal.mdstudio-import-mode-dialog { width: min(440px, calc(100vw - 32px)); }
-.mdstudio-modal.mdstudio-library-modal { width: min(680px, calc(100vw - 32px)); max-height: min(82vh, 720px); overflow: hidden; padding: 0; gap: 0; display: flex; flex-direction: column; }
-.mdstudio-modal.mdstudio-workspace-modal { width: min(640px, calc(100vw - 32px)); max-height: min(82vh, 720px); overflow: hidden; padding: 0; gap: 0; display: flex; flex-direction: column; }
+.mdstudio-modal.mdstudio-library-modal { width: min(680px, calc(100vw - 32px)); max-height: min(82vh, 720px, 100%); overflow: hidden; padding: 0; gap: 0; display: flex; flex-direction: column; }
+.mdstudio-modal.mdstudio-workspace-modal { width: min(640px, calc(100vw - 32px)); max-height: min(82vh, 720px, 100%); overflow: hidden; padding: 0; gap: 0; display: flex; flex-direction: column; }
 .mdstudio-fallback-modal.is-headless { padding: 0; }
 .mdstudio-modal.mdstudio-conflict-dialog { width: min(560px, calc(100vw - 32px)); max-height: min(640px, 100%); display: flex; flex-direction: column; overflow: hidden; }
 .mdstudio-library-head { display: flex; align-items: center; gap: 8px; padding: 12px 12px 10px 14px; border-bottom: 0.5px solid var(--mdstudio-ui-border-3); flex: none; }
@@ -660,7 +660,7 @@ body[data-ds-dark-theme] .mdstudio-switch.is-on .mdstudio-switch-thumb { backgro
 .mdstudio-ai-inline-btns { display: inline-flex; align-items: center; gap: 6px; flex: none; }
 .mdstudio-diff-outline-btn { background: var(--mdstudio-ui-card-bg); box-shadow: inset 0 0 0 0.5px var(--mdstudio-ui-border-2); }
 .mdstudio-diff-outline-btn:hover:not(:disabled) { background: var(--mdstudio-ui-bg-1); box-shadow: inset 0 0 0 0.5px var(--mdstudio-ui-border-4); }
-.mdstudio-modal.mdstudio-skill-modal { width: min(680px, calc(100vw - 32px)); max-width: 680px; max-height: min(84vh, 620px); padding: 0; gap: 0; display: flex; flex-direction: column; overflow: hidden; }
+.mdstudio-modal.mdstudio-skill-modal { width: min(680px, calc(100vw - 32px)); max-width: 680px; max-height: min(84vh, 620px, 100%); padding: 0; gap: 0; display: flex; flex-direction: column; overflow: hidden; }
 .mdstudio-skill-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 12px 10px 16px; border-bottom: 0.5px solid var(--mdstudio-ui-border-3); }
 .mdstudio-skill-head-title { flex: none; font-size: 13.5px; font-weight: 600; color: var(--mdstudio-ui-fg-1); margin-right: 2px; }
 .mdstudio-skill-tabs { flex: 0 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 2px; overflow-x: auto; scrollbar-width: none; padding: 2px; border-radius: calc(var(--mdstudio-ui-radius-sm) + 2px); background: var(--mdstudio-ui-seg-track); }

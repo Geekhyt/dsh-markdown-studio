@@ -38,7 +38,9 @@ const png = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl9sAAAAASUVORK5CYII=',
   'base64',
 );
-const html = `<!doctype html><html lang="zh-CN"><head><title>Markdown Studio smoke</title></head><body><style>html,body,#root{height:100%;margin:0}</style><div id="root"></div>
+function makeSmokeHtml(localeId: 'zh' | 'en' = 'zh'): string {
+  const htmlLang = localeId === 'en' ? 'en' : 'zh-CN';
+  return `<!doctype html><html lang="${htmlLang}"><head><title>Markdown Studio smoke</title></head><body><style>html,body,#root{height:100%;margin:0}</style><div id="root"></div>
 <script>
   window.__chunks = {};
   window.__ModuleLoader__ = {
@@ -54,11 +56,11 @@ const html = `<!doctype html><html lang="zh-CN"><head><title>Markdown Studio smo
 <script>
   const dict = {};
   const locale = {
-    getSnapshot: () => ({ revision: 1, locales: [{ id: 'zh' }] }),
-    getLocale: () => ({ active: 'zh' }),
+    getSnapshot: () => ({ revision: 1, locales: [{ id: '${localeId}' }] }),
+    getLocale: () => ({ active: '${localeId}' }),
     subscribe: () => () => {},
     register: (ns, id, messages) => { dict[id] = Object.assign({}, dict[id] || {}, messages); return () => {}; },
-    bind: () => (key) => (dict.zh && dict.zh[key]) || key,
+    bind: () => (key) => (dict['${localeId}'] && dict['${localeId}'][key]) || key,
   };
   const registrations = [];
   const ctx = {
@@ -95,12 +97,13 @@ const html = `<!doctype html><html lang="zh-CN"><head><title>Markdown Studio smo
   const main = registrations.find((entry) => entry.options.name === 'main').component;
   ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(main, {}));
 </script></body></html>`;
+}
 
 const server = http.createServer((req, res) => {
-  const url = req.url || '/';
-  if (url === '/') {
+  const url = (req.url || '/').split('?')[0];
+  if (url === '/' || url === '/en') {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    res.end(html);
+    res.end(makeSmokeHtml(url === '/en' ? 'en' : 'zh'));
     return;
   }
   const files: Record<string, { path: string; type: string }> = {
@@ -147,50 +150,54 @@ if (recordCoverage) await page.coverage.startJSCoverage({ resetOnNavigation: fal
 const errors: string[] = [];
 page.on('pageerror', (error) => errors.push(error.message));
 
-await page.route('**/api/markdown-studio/wechat', async (route) => {
-  const body = route.request().postDataJSON() as { action?: string };
-  if (body.action === 'health') {
-    await route.fulfill({ json: { ok: true, localServerUrl: 'http://127.0.0.1:4010', localServerPort: 4010 } });
-    return;
-  }
-  if (body.action === 'asset.list') {
-    await route.fulfill({ json: { ok: true, assets: [] } });
-    return;
-  }
-  if (body.action === 'asset.store') {
-    await route.fulfill({
-      json: {
-        ok: true,
-        filename: 'mock.png',
-        assetPath: 'assets/mock.png',
-        localUrl: 'http://127.0.0.1:4010/uploads/mock.png',
-        url: '',
-        mime: 'image/png',
-        bytes: png.length,
-      },
-    });
-    return;
-  }
-  await route.fulfill({ json: { ok: true } });
-});
-await page.route('**/uploads/**', async (route) => {
-  await route.fulfill({ status: 200, contentType: 'image/png', body: png });
-});
-await page.route('**/api/markdown-studio/ai', async (route) => {
-  const body = route.request().postDataJSON() as { action?: string };
-  if (body.action === 'ai.status') {
-    await route.fulfill({
-      json: { ok: true, available: true, provider: 'deepseek', model: 'deepseek-chat', models: [] },
-    });
-    return;
-  }
-  const ndjson =
-    [
-      JSON.stringify({ type: 'delta', text: '清理套话后的自然正文。' }),
-      JSON.stringify({ type: 'done', provider: 'deepseek', model: 'deepseek-chat' }),
-    ].join('\n') + '\n';
-  await route.fulfill({ status: 200, contentType: 'application/x-ndjson; charset=utf-8', body: ndjson });
-});
+async function attachSmokeApiMocks(targetPage: import('playwright').Page): Promise<void> {
+  await targetPage.route('**/api/markdown-studio/wechat', async (route) => {
+    const body = route.request().postDataJSON() as { action?: string };
+    if (body.action === 'health') {
+      await route.fulfill({ json: { ok: true, localServerUrl: 'http://127.0.0.1:4010', localServerPort: 4010 } });
+      return;
+    }
+    if (body.action === 'asset.list') {
+      await route.fulfill({ json: { ok: true, assets: [] } });
+      return;
+    }
+    if (body.action === 'asset.store') {
+      await route.fulfill({
+        json: {
+          ok: true,
+          filename: 'mock.png',
+          assetPath: 'assets/mock.png',
+          localUrl: 'http://127.0.0.1:4010/uploads/mock.png',
+          url: '',
+          mime: 'image/png',
+          bytes: png.length,
+        },
+      });
+      return;
+    }
+    await route.fulfill({ json: { ok: true } });
+  });
+  await targetPage.route('**/uploads/**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'image/png', body: png });
+  });
+  await targetPage.route('**/api/markdown-studio/ai', async (route) => {
+    const body = route.request().postDataJSON() as { action?: string };
+    if (body.action === 'ai.status') {
+      await route.fulfill({
+        json: { ok: true, available: true, provider: 'deepseek', model: 'deepseek-chat', models: [] },
+      });
+      return;
+    }
+    const ndjson =
+      [
+        JSON.stringify({ type: 'delta', text: '清理套话后的自然正文。' }),
+        JSON.stringify({ type: 'done', provider: 'deepseek', model: 'deepseek-chat' }),
+      ].join('\n') + '\n';
+    await route.fulfill({ status: 200, contentType: 'application/x-ndjson; charset=utf-8', body: ndjson });
+  });
+}
+
+await attachSmokeApiMocks(page);
 
 await page.goto(`http://127.0.0.1:${address.port}/`);
 await page.waitForSelector('.cm-editor', { timeout: 15000 });
@@ -1826,6 +1833,183 @@ assert.equal(
   '开始写 Markdown…',
   'empty editor uses a neutral writing placeholder',
 );
+
+// Anti-blindspot external-oracle & extreme environment matrix gates:
+// 1. Dark mode + dark Night theme + light GitHub Light codeTheme luminance adaptation
+// 2. External Chromium network oracle proving Mermaid 11 quoted "img" triggers 0 outbound SSRF requests
+// 3. CodeMirror active selection does not hijack 1st Escape from Outline
+// 4. Destructive confirm focuses Cancel (not red Delete) & Escape restores visible focus (not body)
+// 5. Turkish İ Unicode case-folding highlight accuracy in LibraryDialog
+// 6. Short-viewport (960x265 + SearchBar) SlashMenu clamping inside .mdstudio-editor-wrap
+// 7. 736px touch tablet (pointer: coarse, EN) header has no phantom 160px clearance or title collapse
+{
+  const matrixMod = process.platform === 'darwin' ? 'Meta' : 'Control';
+  const matrixPage = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  matrixPage.on('pageerror', (error) => errors.push('matrix: ' + error.message));
+  await attachSmokeApiMocks(matrixPage);
+  const ssrfHits: string[] = [];
+  await matrixPage.route('**://ssrf-probe.invalid/**', async (route) => {
+    ssrfHits.push(route.request().url());
+    await route.fulfill({ status: 200, contentType: 'image/png', body: png });
+  });
+  await matrixPage.goto(`http://127.0.0.1:${address.port}/`);
+  await matrixPage.waitForSelector('.cm-editor', { timeout: 15000 });
+
+  // 1. Dark mode + Night theme + GitHub Light codeTheme luminance (< 0.35, never blinding white #f6f8fa)
+  await matrixPage.evaluate(() => document.body.setAttribute('data-ds-dark-theme', ''));
+  await matrixPage.locator('.mdstudio-style-btn').click();
+  await matrixPage.waitForSelector('.mdstudio-drawer', { timeout: 3000 });
+  await matrixPage.locator('.mdstudio-theme-card', { hasText: '黑金' }).first().click();
+  await matrixPage.locator('.mdstudio-code-card', { hasText: 'GitHub Light' }).first().click();
+  await matrixPage.waitForTimeout(380);
+  const darkNightPre = await matrixPage.evaluate(() => {
+    const pre = document.querySelector<HTMLElement>('.mdstudio-preview-article pre');
+    if (!pre) return { bg: 'none', lum: 1 };
+    const bg = getComputedStyle(pre).backgroundColor;
+    const mRgb = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(bg);
+    const mSrgb = /color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/.exec(bg);
+    const lum = mRgb
+      ? (0.2126 * +mRgb[1] + 0.7152 * +mRgb[2] + 0.0722 * +mRgb[3]) / 255
+      : mSrgb
+        ? 0.2126 * +mSrgb[1] + 0.7152 * +mSrgb[2] + 0.0722 * +mSrgb[3]
+        : 1;
+    return { bg, lum: Number(lum.toFixed(2)) };
+  });
+  assert.ok(
+    darkNightPre.lum < 0.35,
+    `dark mode adapts light GitHub code block inside Night theme (${JSON.stringify(darkNightPre)})`,
+  );
+  await matrixPage.locator('.mdstudio-drawer .mdstudio-icon-btn').click();
+  await matrixPage.evaluate(() => document.body.removeAttribute('data-ds-dark-theme'));
+  await matrixPage.waitForTimeout(120);
+
+  // 2. External Chromium network oracle: Mermaid 11 quoted "img" key triggers 0 outbound SSRF hits
+  await matrixPage.locator('.cm-content').click();
+  await matrixPage.keyboard.press(`${matrixMod}+A`);
+  await matrixPage.keyboard.insertText(
+    '# SSRF Probe\n\n```mermaid\nflowchart LR\n  A@{ "img": "https://ssrf-probe.invalid/quoted.png", label: "Safe Node" } --> B[Done]\n```\n\n## Section Two\n\nSelect this exact sentence before opening Outline.',
+  );
+  await matrixPage.waitForSelector('.mdstudio-preview-article img[alt="Mermaid diagram"]', { timeout: 10000 });
+  await matrixPage.waitForTimeout(200);
+  assert.deepEqual(ssrfHits, [], `Mermaid 11 quoted "img" triggers 0 outbound SSRF requests: ${ssrfHits.join(', ')}`);
+
+  // 3. CodeMirror active selection does not hijack 1st Escape from Outline
+  const selLine = matrixPage.locator('.cm-line', { hasText: 'Select this exact sentence' }).first();
+  await selLine.click();
+  await matrixPage.keyboard.press('Home');
+  await matrixPage.keyboard.down('Shift');
+  await matrixPage.keyboard.press('End');
+  await matrixPage.keyboard.up('Shift');
+  await matrixPage.waitForTimeout(100);
+  await matrixPage.locator('button[aria-label="大纲"]').click();
+  await matrixPage.waitForSelector('.mdstudio-outline', { timeout: 3000 });
+  await matrixPage.keyboard.press('Escape');
+  await matrixPage.waitForTimeout(120);
+  assert.equal(
+    await matrixPage.locator('.mdstudio-outline').count(),
+    0,
+    '1st Escape closes Outline with active CM selection',
+  );
+  const keptSel = await matrixPage.evaluate(() => (window.getSelection()?.toString() || '').length);
+  assert.ok(keptSel > 5, `1st Escape closing Outline preserves active CM selection (len=${keptSel})`);
+
+  // 4. Destructive confirm focuses Cancel (never red submit) & Escape restores visible focus (not body)
+  await matrixPage.locator('.mdstudio-header button[aria-label="更多"]').click();
+  await matrixPage.getByRole('menuitem', { name: /清空当前文章/ }).click();
+  await matrixPage.waitForSelector('.mdstudio-modal-footer', { timeout: 3000 });
+  await matrixPage.waitForTimeout(80);
+  const dangerFocus = await matrixPage.evaluate(() => {
+    const active = document.activeElement as HTMLElement | null;
+    const dialog = document.querySelector('[role="dialog"]');
+    return {
+      isDanger: Boolean(
+        active?.classList.contains('is-danger-fill') || active?.classList.contains('mdstudio-dialog-submit'),
+      ),
+      isCancel: Boolean(active?.classList.contains('mdstudio-dialog-cancel')),
+      hasLabel: Boolean(dialog?.getAttribute('aria-label') || dialog?.getAttribute('aria-labelledby')),
+    };
+  });
+  assert.equal(dangerFocus.isDanger, false, 'destructive confirm never auto-focuses red delete button');
+  assert.equal(dangerFocus.isCancel, true, 'destructive confirm auto-focuses safe Cancel button');
+  assert.equal(dangerFocus.hasLabel, true, 'destructive confirm dialog exposes an accessible name');
+  await matrixPage.keyboard.press('Escape');
+  await matrixPage.waitForSelector('.mdstudio-modal-footer', { state: 'detached', timeout: 3000 });
+  await matrixPage.waitForTimeout(80);
+  const postEscTag = await matrixPage.evaluate(() => document.activeElement?.tagName.toLowerCase() || 'null');
+  assert.notEqual(postEscTag, 'body', 'closing destructive confirm restores focus to visible control instead of body');
+
+  // 5. Turkish İ Unicode case-folding exact highlight in LibraryDialog
+  await matrixPage.locator('.mdstudio-title-input').fill('İstanbul Guide 2026');
+  await matrixPage.locator('.cm-content').click();
+  await matrixPage.keyboard.press(`${matrixMod}+A`);
+  await matrixPage.keyboard.insertText('# İstanbul Guide 2026\n\nİstanbul Guide covers Turkish Unicode case folding.');
+  await matrixPage.waitForTimeout(160);
+  await matrixPage.locator('.mdstudio-library-btn').click();
+  await matrixPage.waitForSelector('.mdstudio-library-modal', { timeout: 3000 });
+  await matrixPage.locator('.mdstudio-library-search').fill('guide');
+  await matrixPage.waitForTimeout(120);
+  const unicodeMarks = await matrixPage.evaluate(() =>
+    Array.from(document.querySelectorAll('.mdstudio-library-modal mark.mdstudio-search-hit')).map((m) => m.textContent),
+  );
+  assert.ok(
+    unicodeMarks.length >= 2 && unicodeMarks.every((text) => text?.toLowerCase() === 'guide'),
+    `Turkish İ highlight has zero +1 offset drift (${JSON.stringify(unicodeMarks)})`,
+  );
+  await matrixPage.keyboard.press('Escape');
+  await matrixPage.waitForSelector('.mdstudio-library-modal', { state: 'detached', timeout: 3000 });
+
+  // 6. Short-viewport (960x265 + SearchBar) SlashMenu clamping
+  await matrixPage.setViewportSize({ width: 960, height: 265 });
+  await matrixPage.locator('.cm-content').click();
+  await matrixPage.keyboard.press(`${matrixMod}+A`);
+  await matrixPage.keyboard.insertText('Line 1\nLine 2\n');
+  await matrixPage.keyboard.press(`${matrixMod}+F`);
+  await matrixPage.waitForSelector('.mdstudio-searchbar', { timeout: 3000 });
+  await matrixPage.locator('.cm-line').nth(2).click();
+  await matrixPage.keyboard.type('/');
+  await matrixPage.waitForSelector('.mdstudio-slash', { timeout: 3000 });
+  const slashClamp = await matrixPage.evaluate(() => {
+    const wrap = document.querySelector<HTMLElement>('.mdstudio-editor-wrap')!.getBoundingClientRect();
+    const slash = document.querySelector<HTMLElement>('.mdstudio-slash')!.getBoundingClientRect();
+    return {
+      clippedTop: slash.top < wrap.top - 1,
+      clippedBottom: slash.bottom > wrap.bottom + 1,
+      slashTop: Math.round(slash.top),
+      wrapTop: Math.round(wrap.top),
+    };
+  });
+  assert.ok(
+    !slashClamp.clippedTop && !slashClamp.clippedBottom,
+    `short-viewport SlashMenu stays clamped inside editor wrap (${JSON.stringify(slashClamp)})`,
+  );
+  await matrixPage.close();
+
+  // 7. 736px touch tablet (pointer: coarse, EN) header has no phantom 160px inset or title collapse
+  const touchCtx = await browser.newContext({ viewport: { width: 736, height: 900 }, hasTouch: true, locale: 'en-US' });
+  const touchPage = await touchCtx.newPage();
+  touchPage.on('pageerror', (error) => errors.push('touch736: ' + error.message));
+  await attachSmokeApiMocks(touchPage);
+  await touchPage.goto(`http://127.0.0.1:${address.port}/en`);
+  await touchPage.waitForSelector('.cm-editor', { timeout: 15000 });
+  await touchPage.waitForTimeout(200);
+  const touchHdr = await touchPage.evaluate(() => {
+    const header = document.querySelector<HTMLElement>('.mdstudio-header')!;
+    const title = document.querySelector<HTMLElement>('.mdstudio-title-input')!;
+    const copyBtn = document.querySelector<HTMLElement>('.mdstudio-copy-btn')!;
+    return {
+      paddingLeft: Math.round(parseFloat(getComputedStyle(header).paddingLeft)),
+      titleW: Math.round(title.getBoundingClientRect().width),
+      headerOverflow: header.scrollWidth > header.clientWidth + 1,
+      copyClipped: copyBtn.getBoundingClientRect().right > header.getBoundingClientRect().right + 1,
+    };
+  });
+  assert.ok(
+    touchHdr.paddingLeft <= 20 && touchHdr.titleW >= 80 && !touchHdr.headerOverflow && !touchHdr.copyClipped,
+    `736px touch EN header avoids phantom 160px inset and title collapse (${JSON.stringify(touchHdr)})`,
+  );
+  await touchCtx.close();
+}
+
 assert.deepEqual(errors, [], `no page errors: ${errors.join(' | ')}`);
 if (recordCoverage) {
   if (!process.env.NODE_V8_COVERAGE) throw new Error('Run browser coverage under c8');

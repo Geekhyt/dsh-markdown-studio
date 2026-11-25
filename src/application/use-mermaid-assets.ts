@@ -28,8 +28,8 @@ function loadMermaidModule(): Promise<MermaidModule | null> {
     script.async = true;
     script.setAttribute('data-plugin', 'dsh-markdown-studio');
     script.onload = function () {
+      sharedMermaidLoadPromise = null;
       if (!window.__MDSTUDIO_MERMAID__) {
-        sharedMermaidLoadPromise = null;
         script.remove();
       }
       resolve(window.__MDSTUDIO_MERMAID__ || null);
@@ -84,7 +84,7 @@ export function extractMermaidBlocks(markdown: unknown): string[] {
 }
 
 export function prependMermaidDirective(code: string, directive: string): string {
-  const fm = /^---\r?\n(?:[\s\S]*?\r?\n)?---(?:\r?\n|$)/.exec(code);
+  const fm = /^---[ \t]*\r?\n(?:[\s\S]*?\r?\n)?---[ \t]*(?:\r?\n|$)/.exec(code);
   if (fm) return fm[0] + (fm[0].endsWith('\n') ? '' : '\n') + directive + '\n' + code.slice(fm[0].length);
   return directive + '\n' + code;
 }

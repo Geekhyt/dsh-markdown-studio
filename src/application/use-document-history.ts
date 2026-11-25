@@ -214,10 +214,10 @@ export function useDocumentHistory(options: DocumentHistoryOptions): DocumentHis
   }
 
   function redo(): boolean {
-    composingBaseRef.current = null;
     const history = historyRef.current;
     const entry = history.redo.pop();
     if (!entry) return false;
+    composingBaseRef.current = null;
     const current = options.getSelection();
     const currentMarkdown = markdownRef.current;
     pushUndoSnapshot(history, { markdown: currentMarkdown, selStart: current.start, selEnd: current.end });

@@ -54,4 +54,9 @@ export function unmountPluginStyles(): void {
     const candidate = node as { remove?: () => void };
     if (typeof candidate.remove === 'function') candidate.remove();
   });
+  if (typeof window !== 'undefined') {
+    const win = window as unknown as Record<string, unknown>;
+    delete win.__MDSTUDIO_MATH__;
+    delete win.__MDSTUDIO_MERMAID__;
+  }
 }

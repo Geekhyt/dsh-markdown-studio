@@ -139,6 +139,20 @@ function validateStreamTexts(systemRaw: unknown, promptRaw: unknown): { system: 
   return { system, prompt };
 }
 
+const AUTH_STREAM_ERR_RE =
+  /(?:(?:http|status)[\s:]*40[13]\b|\b(?:api[_ -]?key|unauthori[sz]ed|invalid[_ -]?key|authentication)\b)/i;
+const RATE_STREAM_ERR_RE = /(?:(?:http|status)[\s:]*429\b|\b(?:rate[_ -]?limit|too many requests|quota)\b)/i;
+
+const SAFE_AUTH_CODES = new Set([
+  'API_KEY_MISSING',
+  'INVALID_API_KEY',
+  'UNAUTHORIZED',
+  'AUTHENTICATION_ERROR',
+  'HTTP_401',
+]);
+const SAFE_RATE_CODES = new Set(['RATE_LIMIT', 'RATE_LIMITED', 'QUOTA_EXCEEDED', 'HTTP_429']);
+const SAFE_OTHER_CODES = new Set(['OUTPUT_TRUNCATED', 'ABORTED', 'LLM_ERROR', 'MODEL_UNCONFIGURED']);
+
 function checkTerminalChunk(reason: { kind: string; failure?: { code?: string; message?: string } }): void {
   if (reason.kind === 'stop') return;
   if (reason.kind === 'max-tokens') {
@@ -148,13 +162,21 @@ function checkTerminalChunk(reason: { kind: string; failure?: { code?: string; m
   if (reason.kind === 'aborted') {
     throw new AiHostError('ABORTED', '已停止生成');
   }
-  const code = trimString(reason.failure?.code) || 'LLM_ERROR';
-  const msg = trimString(reason.failure?.message) || '宿主模型返回错误';
-  throw new AiHostError(code, msg);
+  const rawCode = trimString(reason.failure?.code);
+  const rawMsg = trimString(reason.failure?.message);
+  if (SAFE_AUTH_CODES.has(rawCode) || AUTH_STREAM_ERR_RE.test(rawMsg)) {
+    throw new AiHostError(
+      SAFE_AUTH_CODES.has(rawCode) ? rawCode : 'API_KEY_MISSING',
+      '模型鉴权失败或未配置 API Key',
+      '请检查 DeepSeek Harness 模型设置。',
+    );
+  }
+  if (SAFE_RATE_CODES.has(rawCode) || RATE_STREAM_ERR_RE.test(rawMsg)) {
+    throw new AiHostError(SAFE_RATE_CODES.has(rawCode) ? rawCode : 'RATE_LIMITED', '模型请求过于频繁，请稍后重试');
+  }
+  const safeCode = SAFE_OTHER_CODES.has(rawCode) ? rawCode : 'LLM_ERROR';
+  throw new AiHostError(safeCode, '宿主模型返回错误');
 }
-
-const AUTH_STREAM_ERR_RE = /\b(?:401|403|api[_ -]?key|unauthori[sz]ed|invalid[_ -]?key|authentication)\b/i;
-const RATE_STREAM_ERR_RE = /\b(?:429|rate[_ -]?limit|too many requests|quota)\b/i;
 
 function rethrowStreamFailure(error: unknown, signal?: AbortSignal): never {
   if (error instanceof AiHostError) throw error;
@@ -226,6 +248,16 @@ export class AiHostService {
     const explicitModel = trimString(reqModel);
     if (explicitProvider && explicitModel) {
       return { provider: explicitProvider, model: explicitModel };
+    }
+    try {
+      const def = this.getDefaultModel()?.currentSelection();
+      const defProvider = trimString(def?.provider);
+      const defModel = trimString(def?.model);
+      if (defProvider && defModel) {
+        return { provider: defProvider, model: defModel };
+      }
+    } catch {
+      /* fallback to full catalog discovery */
     }
     const current = await this.status();
     if (!current.provider || !current.model) {

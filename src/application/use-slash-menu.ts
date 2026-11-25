@@ -467,7 +467,8 @@ export function useSlashMenu(options: SlashMenuOptions): SlashMenuApi {
       setSlash(null);
       return;
     }
-    const tokenEnd = Math.max(slash.start + 1, range.end);
+    let tokenEnd = Math.max(slash.start + 1, range.end);
+    while (tokenEnd < value.length && !/[\s/]/.test(value.charAt(tokenEnd))) tokenEnd++;
     const next = value.slice(0, slash.start) + command.text + value.slice(tokenEnd);
     const selStart = slash.start + (command.selectStart == null ? command.text.length : command.selectStart);
     const selEnd = slash.start + (command.selectEnd == null ? command.text.length : command.selectEnd);

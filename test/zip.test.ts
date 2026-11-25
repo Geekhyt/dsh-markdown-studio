@@ -241,4 +241,17 @@ await assert.rejects(
   'aggregate archive compression ratio guard rejects split <=1 MiB zip bombs',
 );
 
+// Darwin (macOS versionMadeBy host OS = 19) symlink entry must be skipped just like Unix (3) symlinks
+const darwinSymBuf = Buffer.from(
+  await zipStore([{ name: 'link.txt', data: new TextEncoder().encode('/etc/passwd') }]).arrayBuffer(),
+);
+const darwinCd = darwinSymBuf.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+assert.ok(darwinCd >= 0, 'central directory header located');
+darwinSymBuf.writeUInt16LE((19 << 8) | 20, darwinCd + 4);
+darwinSymBuf.writeUInt32LE((0o120777 << 16) >>> 0, darwinCd + 38);
+const darwinEntries = await unzipEntries(
+  darwinSymBuf.buffer.slice(darwinSymBuf.byteOffset, darwinSymBuf.byteOffset + darwinSymBuf.byteLength) as ArrayBuffer,
+);
+assert.equal(darwinEntries.length, 0, 'Darwin (OS=19) symlink entry is skipped cleanly');
+
 console.log('ok - ZIP large round trips, shared budgets and bounded decompression');

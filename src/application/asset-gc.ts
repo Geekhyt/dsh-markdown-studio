@@ -70,21 +70,17 @@ export function createAssetGarbageCollector(options: AssetGarbageCollectorOption
     }
     const after = liveReferences();
     const now = nowFn();
-    const orphans = stored
-      .filter(function (item) {
-        if (before.has(item.filename) || after.has(item.filename)) return false;
-        if (bypassGrace.has(item.filename)) return true;
-        return !isWithinGraceWindow(item.storedAt, minAgeMs, now);
-      })
-      .map(function (item) {
-        return item.filename;
-      });
+    const orphans = stored.filter(function (item) {
+      if (before.has(item.filename) || after.has(item.filename)) return false;
+      if (bypassGrace.has(item.filename)) return true;
+      return !isWithinGraceWindow(item.storedAt, minAgeMs, now);
+    });
     const removed: string[] = [];
     await Promise.all(
-      orphans.map(async function (filename) {
+      orphans.map(async function (item) {
         try {
-          await options.hostClient.deleteAsset(filename);
-          removed.push(filename);
+          await options.hostClient.deleteAsset(item.filename, item.storedAt);
+          removed.push(item.filename);
         } catch {
           /* best-effort cleanup when host is offline */
         }
