@@ -2,6 +2,36 @@
 
 All notable changes to `dsh-markdown-studio` are documented in this file.
 
+## [0.1.19] - 2026-11-25
+
+### Fixed
+- **CSS Syntax L3 & Mermaid 11 YAML Lexical Security Hardening (`G1`, P0)**:
+  - Upgraded `stripCssComments` in `src/domain/custom-css.ts` to replace CSS comments with single spaces by default (blocking `red/**/url(...)` token-merge bypasses), consume unclosed `/*` comments to EOF (preserving downstream `codeTheme` styles in `src/themes.ts` even when external CSS resources are enabled), strip escape-aware quoted strings before `@import` detection (`content: "\\"`), check both space- and collapsed-comment forms (`u/*x*/rl()`), and skip comments in `formatCssSource`.
+  - Replaced regex `img:` filtering in `src/mermaid-entry.ts` with a YAML-aware node metadata directive parser handling double/single-quoted keys (`"img"`, `'img'`), YAML tags/anchors (`!!str img`), `#` comments inside braces, and explicit `? img` keys, eliminating outbound Mermaid 11 SSRF requests (`2 → 0 hits`) in both standalone Chromium and real DeepSeek Harness, and fixed `prependMermaidDirective` frontmatter ordering with trailing whitespace on closing `---`.
+- **Real DeepSeek Harness Prefix Route Contract, RFC 9110 Security & Optimistic Asset Concurrency (`G2`, P0)**:
+  - Fixed `index.ts` registering the Cordis `webServer` asset prefix route with a trailing slash (`/api/markdown-studio/assets/`), which caused real DeepSeek Harness `GET`/`HEAD` requests to fail with `404` (`pathname.startsWith(prefix + '/')`); real DSH asset routes now return `200 OK`, wired with transactional `AbortController` hot-disable cleanup across `index.ts`, `host/http/ai-route.ts`, and `host/local-server.ts`.
+  - Tightened `host/http/routes.ts` to strict RFC 9110 loopback `Host` + port range (`1..65535`) and exact `parsed.origin` checks (blocking userinfo smuggling like `http://attacker@127.0.0.1`), added macOS Darwin (`hostOS=19`) symlink rejection in `src/adapters/zip.ts`, and threaded `expectedStoredAt` optimistic concurrency locks end-to-end across `host/application/image-store.ts`, `src/adapters/host-client.ts`, and `src/application/asset-gc.ts`.
+  - Required HTTP/status context for AI auth/rate-limit classification (preventing `"worker failed at line 401"` false positives), scrubbed upstream provider error text in `host/application/ai-service.ts`, and localized `HOST_BAD_RESPONSE` / `RATE_LIMIT` / malformed NDJSON errors in `src/adapters/ai-client.ts` & `src/locales/ui-strings.ts`.
+- **Cross-Tab Local Disk Protection, Field-Level Dirty Merge & Workspace Flush Ordering (`G3`, P0)**:
+  - Modeled `EXTERNAL_STORAGE_SYNC` in `src/domain/file-session.machine.ts` (verified via exhaustive BFS) and updated `src/app.ts` to immediately detach linked local file handles and disarm autosave when another tab updates shared `localStorage` markdown, preventing sibling tabs from silently overwriting local `.md` disk files.
+  - Upgraded `src/application/document-store.ts` with field-level dirty tracking (`title` / `markdown` / `settings` / `view`) and per-theme `pendingThemeIntents` (`upsert` / `delete`) so toggling view never clobbers sibling markdown edits and simultaneous custom themes merge cleanly.
+  - Added `flushBeforeOpen` to `src/application/use-workspace.ts` so re-opening the currently dirty file flushes V2 to disk before calling `handle.getFile()`, preventing V2 → V1 reverts.
+- **Engine Linear-Time Performance, WeChat DOM Validity & Dark-Root Code Theme Adaptation (`G4`)**:
+  - Eliminated ReDoS/quadratic paths in `src/css-inliner.ts` (`evaluatePseudoContent` `77.7ms → 8.5ms`), `src/markdown-parser.ts` (`buildBracketMatchMap` + failure caching: `***a` `574.9ms → 15.7ms`, `[a` `149.5ms → 2.4ms`), and `src/domain/images.ts` (`<img ` linear scanner + code-fence masking); fixed `var()` depth/cycle leak prevention, sibling custom properties, repeated root-alias folding, attribute-selector specificity, `==url==` delimiter parity, 2-space nested lists across blank lines, and `$$` block link-def isolation.
+  - Upgraded `src/adapters/wechat-clipboard-dom.ts` to downgrade `<section>` inside `<h1>..<h6>` to `inline-block` `<span>` and recursively lift `<section>` out of inline phrasing containers (`0` invalid nested sections).
+  - Updated `src/adapters/dark-preview.ts` to run `finalizeDarkRoot(root)` even on natively dark themes (e.g., Night + GitHub Light codeTheme, adapting blinding white `lum=0.97` code blocks to `lum=0.22`), and moved `CssWorkbench` `Mod+S` handling to the container level.
+- **Editor Escape LIFO, CJK Two-Stage Diff, Unicode Highlight, Short/Touch Layout & Safe Dialog Focus (`G5`)**:
+  - Filtered `'Escape'` out of CodeMirror `defaultKeymap` (`src/ui/codemirror-core.ts`) so active selections never hijack 1st `Escape` from Outline or Immersive Write while keeping selections intact.
+  - Implemented two-stage clause-LCS + word-level diff refinement in `src/domain/text-diff.ts` (`addRatio` on 600-char CJK edits `1.00 → 0.01`), replaced `toLowerCase().indexOf()` in `src/ui/library-dialogs.ts` with length-preserving RegExp `"i"` (zero `+1` offset drift after Turkish `İ`), fixed short-viewport `SlashMenu` clamping (`src/domain/surface-geometry.ts`), synced first narrow `split → preview` scroll (`src/app.ts`), eliminated phantom `160px` macOS traffic-light clearance on `736px` `pointer: coarse` tablets (`src/adapters/host-shell.ts`), focused safe `Cancel` on destructive confirm dialogs with visible focus restoration on `Escape` (`src/ui/dialog-host.ts`, `src/ui/dsh-primitives.ts`), added localized `ai.inlineCardLabel`, and unified `SkillManagerDialog` `Mod+S` with `!canSaveDraft`.
+
+### Changed & Permanent Regression Gates
+- Codified post-review anti-blindspot discipline into `AGENTS.md`, `.agents/skills/bug-to-rule/SKILL.md`, and `.agents/skills/verify-state-machines/SKILL.md` (external oracles over self-oracles, cross-subsystem seam audits, single canonical guards, and semantic/combinatorial assertions).
+- Added permanent AST gates in `test/architecture.test.ts` (Cordis prefix trailing-slash ban, CodeMirror `Escape` hijack ban, danger confirm `Cancel` focus guard, `SkillManagerDialog` single-guard `Mod+S`, and `src/ui/` `toLowerCase().indexOf()` slice ban), semantic CJK diff precision oracle (`addRatio < 0.15`) in `test/fuzz-and-perf.test.ts`, and 7 real-Chromium external-oracle & extreme-matrix gates in `test/browser-smoke.ts` plus real DSH `/api/markdown-studio/assets/*` `200 OK` checks in `test/dsh-e2e.ts`.
+
+### Verification & Regression Gates
+- Passed 24/24 live BEFORE→AFTER audit probes (`0/24 → 24/24`, 16 annotated visual comparison pairs across standalone Chromium and real DeepSeek Harness).
+- All release gates passed locally: `format` / `lint` / `typecheck` (170 files, 0 issues), `verify:models` (52,220 Overlay + 525,000 FileSession transitions + 128-state AssetGC), `test:fuzz`, `quality` (`>= 94%` statements / `>= 89%` branches / `>= 96%` functions; `0` AST functions `> CRAP 30`; 5/5 raw+gzip budgets with `dist/client.js` `5.9 / 2.7 KiB`), `mutation` (42/42 killed), `licenses:check`, `check:host-api`, `test:browser`, and `test:dsh`.
+
 ## [0.1.18] - 2026-11-24
 
 ### Changed & Refactored
