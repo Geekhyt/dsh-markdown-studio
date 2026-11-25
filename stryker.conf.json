@@ -3,7 +3,7 @@
   "packageManager": "npm",
   "testRunner": "command",
   "commandRunner": {
-    "command": "node_modules/.bin/tsx test/domain.test.ts && node_modules/.bin/tsx test/writing-skills.test.ts && node_modules/.bin/tsx test/engine.test.ts && node_modules/.bin/tsx test/library-search.test.ts && node_modules/.bin/tsx test/library-backup.test.ts && node_modules/.bin/tsx test/document-store.test.ts && node_modules/.bin/tsx test/zip.test.ts"
+    "command": "node_modules/.bin/tsx scripts/stryker-runner.ts"
   },
   "mutate": [
     "src/domain/article.ts",
@@ -22,7 +22,8 @@
     "fileName": "reports/mutation.json"
   },
   "concurrency": 4,
-  "timeoutMS": 30000,
+  "timeoutMS": 10000,
+  "timeoutFactor": 2,
   "thresholds": {
     "high": 80,
     "low": 60,

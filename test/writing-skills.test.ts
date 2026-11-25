@@ -310,10 +310,39 @@ await check('computeTextDiff pinpoints Chinese/English word & punctuation deleti
 
   const same = computeTextDiff('完全一致的句子。', '完全一致的句子。');
   assert.equal(same.delOffsets.length, 0);
+  assert.equal(same.addOffsets.length, 0);
+  assert.deepEqual(same.segments, [{ type: 'equal', text: '完全一致的句子。' }]);
+  assert.deepEqual(same.delParts, [{ text: '完全一致的句子。', changed: false }]);
+  assert.deepEqual(same.addParts, [{ text: '完全一致的句子。', changed: false }]);
+  assert.equal(diff.delParts.map((p) => p.text).join(''), orig, 'delParts reconstruct original text verbatim');
+  assert.equal(diff.addParts.map((p) => p.text).join(''), next, 'addParts reconstruct replacement text verbatim');
   assert.deepEqual(tokenizeDiff(''), []);
+  assert.deepEqual(tokenizeDiff('hello  世界🇨🇳!'), ['hello', '  ', '世', '界', '🇨🇳', '!']);
+  const flagDiff = computeTextDiff('我喜欢🇨🇳排版', '我喜欢🇨🇦排版');
+  assert.deepEqual(
+    flagDiff.segments,
+    [
+      { type: 'equal', text: '我喜欢' },
+      { type: 'delete', text: '🇨🇳' },
+      { type: 'insert', text: '🇨🇦' },
+      { type: 'equal', text: '排版' },
+    ],
+    'flag emoji grapheme clusters diff atomically',
+  );
+  assert.deepEqual(computeTextDiff('', '新增').segments, [{ type: 'insert', text: '新增' }]);
+  assert.deepEqual(computeTextDiff('删掉', '').segments, [{ type: 'delete', text: '删掉' }]);
+  const clauseA = '首句保持不变。' + '甲'.repeat(320) + '，尾句不变。';
+  const clauseB = '首句保持不变。' + '乙'.repeat(320) + '，尾句不变。';
+  const clauseDiff = computeTextDiff(clauseA, clauseB);
+  assert.equal(clauseDiff.delParts.map((p) => p.text).join(''), clauseA);
+  assert.equal(clauseDiff.addParts.map((p) => p.text).join(''), clauseB);
+  assert.ok(clauseDiff.segments.some((s) => s.type === 'equal' && s.text.includes('首句保持不变')));
+  assert.ok(clauseDiff.segments.some((s) => s.type === 'equal' && s.text.includes('尾句不变')));
   const hugeA = '甲 '.repeat(600);
   const hugeB = '乙 '.repeat(600);
   const fallback = computeTextDiff(hugeA, hugeB);
+  assert.equal(fallback.delParts.map((p) => p.text).join(''), hugeA);
+  assert.equal(fallback.addParts.map((p) => p.text).join(''), hugeB);
   assert.equal(
     fallback.delParts.some((p) => p.changed),
     true,
