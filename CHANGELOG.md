@@ -2,6 +2,29 @@
 
 All notable changes to `dsh-markdown-studio` are documented in this file.
 
+## [0.1.21] - 2026-11-26
+
+### Performance & Architecture
+- **Lazy-Loaded `dist/darkmode.js` Bundle & Authenticated Host Route (`-155.6 KiB` studio raw / `-53.2 KiB` gzip)**:
+  - Extracted `mp-darkmode` out of the main studio bundle into a dedicated standalone UMD-safe chunk (`src/darkmode-entry.ts` → `dist/darkmode.js`, `159.4 KiB` raw / `54.8 KiB` gzip), cutting `dist/client.studio.js` from `1,210.8 KiB` (`372.4 KiB` gzip) down to `1,055.2 KiB` (`319.2 KiB` gzip) and eliminating all dark-mode bundle network/parse cost in light mode.
+  - Added `host/http/darkmode-route.ts` and wired `/api/markdown-studio/darkmode.js` in `index.ts` via `createStaticBundleRoute` with real DeepSeek Harness `checkAuth` enforcement (`401` unauthenticated, `200 OK` + ETag authenticated).
+  - Loaded `/api/markdown-studio/darkmode.js` on demand via a singleton `<script data-plugin="dsh-markdown-studio">` loader in `src/adapters/dark-preview.ts` with plugin-unmount lifecycle cleanup and an automatic FastDOM fallback when offline.
+- **FastDOM Single-Pass & Incremental Dark Preview (`4.7×–6.2×` faster dark typing in Chromium)**:
+  - Replaced interleaved `getComputedStyle` ↔ `style.setProperty` DOM walks and `O(N × depth)` ancestor scans in `src/adapters/dark-preview.ts` with a single top-down Read → Compute → Write pass (`planDarkSubtree` + `flushDarkAdjustments`) propagating effective `RgbTuple` backgrounds directly down the tree.
+  - Added incremental `dirtyBlocks` dark conversion (`Darkmode.run(nodes, { mode: 'dark' }, target)` + scoped `finalizeDarkRoot`) so live typing edits only darken modified blocks (real Chromium dark preview update: `14.62ms → 0.4ms` on 2.9k chars, `36.03ms → 0.6ms` on 11.7k chars, `85.13ms → 1.0ms` on 29.2k chars; full cold dark pass `-20%` to `-49%`).
+- **Compiled-CSS LRU Cache & Block-Level Preview DOM Morphing**:
+  - Added a 16-entry compiled stylesheet LRU cache in `src/css-inliner.ts` precomputing rule specificity, normal/pseudo splits, and declaration flags (`isVar`, `isCounter`, `usesVar`, `hasExternalUrl`), while skipping `closest('svg')` on SVG-free docs, `cloneNode(false)` on unstyled elements, and `buildElementVars` when no `var()` is present (`inlineCss` `-21%` to `-43%` in Chromium).
+  - Upgraded `usePreviewHtmlSurface` in `src/runtime/dom-surfaces.ts` with `#mdstudio` direct-child prefix/suffix DOM morphing (`tryMorphMountedArticle` + `spliceMountedBlocks`), preserving untouched DOM nodes across edits and capping incremental dark patches at 32 edits before performing a clean full reset (real Chromium end-to-end dark typing latency: 2.9k chars `29.39ms → 4.7ms`, 11.7k chars `63.33ms → 13.5ms`, 29.2k chars `147.09ms → 30.9ms`).
+
+### Changed & Permanent Regression Gates
+- Tightened `dist/client.studio.js` bundle budget to `1.10 MiB` raw / `365 KiB` gzip and added `dist/darkmode.js` budget (`200 KiB` / `65 KiB`) in `scripts/bundle-budget.ts`.
+- Added permanent AST & packaging gates in `test/architecture.test.ts` and `test/oss-readiness.test.ts` forbidding `mp-darkmode` imports outside `src/darkmode-entry.ts`, verifying `dist/client.studio.js` never re-inlines `convertCssToDark`, and checking `darkmode-route.ts` `checkAuth` wiring.
+- Updated `scripts/third-party-licenses.ts`, `THIRD_PARTY_NOTICES.md`, and `THIRD_PARTY_LICENSES.txt` to track `dist/darkmode.js`.
+- Extended `test/dom.test.ts`, `test/host.test.ts`, `test/browser-smoke.ts`, and `test/dsh-e2e.ts` to verify CSS LRU eviction, incremental/already-dark/offline-fallback dark preview, zero `darkmode.js` load in light mode, DOM node identity preservation during dark-mode typing, and real DSH `401`/`200` `/api/markdown-studio/darkmode.js` routing.
+
+### Verification & Regression Gates
+- All release gates passed locally on final code: `format` / `lint` / `typecheck` (174 files, 0 issues), `check:host-api` (verified against real `/Applications/DeepSeek Harness.app/Contents/Resources/app.asar`), `test` (33/33 suites), `verify:models` (52,220 Overlay + 525,000 FileSession transitions + Multi-Tab + 128-state AssetGC), `quality` (`94.36%` statements / `89.03%` branches / `95.97%` functions; `2,683` AST functions `100% <= CRAP 30`; 6/6 raw+gzip budgets with `dist/client.js` `6.1 / 2.7 KiB` and `dist/client.studio.js` `1055.2 / 319.2 KiB`), `mutation` (`51/51` killed), `licenses:check` (81 packages), `test:browser`, and `test:dsh`.
+
 ## [0.1.20] - 2026-11-25
 
 ### Fixed
