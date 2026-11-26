@@ -2,6 +2,21 @@
 
 All notable changes to `dsh-markdown-studio` are documented in this file.
 
+## [0.1.22] - 2026-11-26
+
+### Changed & Permanent Regression Gates
+- **Engineering Workflows & Contributor Agent Skills (adapted from `pstack v0.15.48`)**:
+  - Upgraded `.agents/skills/verify-state-machines/SKILL.md` with a formal `Coverage & Sync Commit` table (`8cc18e6`), a `Drift Audit & Maintenance Pass` (`in sync` / `updated` / `bug` / `blocked`), mandatory ability-to-fail verification after model updates, and optional human-readable Mermaid statechart projection.
+  - Upgraded `.agents/skills/bug-to-rule/SKILL.md` with the 4-level encoding ladder (architecture → types/actionable AST or lint ratchet → behavioral test → prose last), `Attack the Premise` stop-loss after two failed fixes sharing one premise, the two-edit behavior-test filter, and comment-smell cleanup discipline.
+  - Added three focused workspace skills tailored to `dsh-markdown-studio`: `.agents/skills/blast-radius/SKILL.md` (5-level safety-fact certainty ladder + evidence-only adversarial interrogation), `.agents/skills/typescript-discipline/SKILL.md` (constructive modeling, simplest total types, branded guard discipline, cross-realm narrowing hierarchy, boundary parsing), and `.agents/skills/perf-benchmark/SKILL.md` (7-question benchmark checklist, 7 performance mantras, and `decision.tsv` hillclimb trail).
+  - Refactored `AGENTS.md` around a concise `Rule ↔ Enforcer` table, updated the bundle contract to all 6 chunks (including `dist/darkmode.js`), and documented `cursor/plugins/pstack` (MIT) attribution in `THIRD_PARTY_NOTICES.md`.
+- **Static AST TypeScript Cast Ratchet & Skill Hygiene Gates (`test/architecture.test.ts`)**:
+  - Added high-water-mark AST ratchets across all 115 production files (`src/`, `host/`, `index.ts`) capping non-`as const` assertions (`<= 140` total, `<= 7` in `src/domain/`), double casts (`<= 13` total, `0` in `src/domain/`), and enforcing zero `@ts-ignore` / `@ts-expect-error` / `@ts-nocheck` / `biome-ignore` suppressions with actionable remediation guidance.
+  - Added automated validation of `.agents/skills/*/SKILL.md` YAML frontmatter, relative Markdown link integrity across `AGENTS.md` and `.agents/skills/`, and `verify-state-machines` coverage of every `src/domain/*.machine.ts` file.
+
+### Verification & Regression Gates
+- All release gates passed locally on final code: `format` / `lint` / `typecheck` (174 files, 0 issues), `check:host-api` (verified against real `/Applications/DeepSeek Harness.app/Contents/Resources/app.asar`), `test` (33/33 suites), `verify:models` (52,220 Overlay + 525,000 FileSession transitions + Multi-Tab + 128-state AssetGC), `quality` (`94.36%` statements / `89.05%` branches / `95.97%` functions; `2,683` AST functions `100% <= CRAP 30`; 6/6 raw+gzip budgets with `dist/client.js` `6.1 / 2.7 KiB` and `dist/client.studio.js` `1055.2 / 319.2 KiB`), `mutation` (`51/51` killed), `licenses:check` (81 packages), `test:browser`, and `test:dsh`.
+
 ## [0.1.21] - 2026-11-26
 
 ### Performance & Architecture
