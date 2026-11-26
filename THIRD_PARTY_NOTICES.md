@@ -54,5 +54,6 @@ SOFTWARE.
 | Content | License | Where |
 | :--- | :--- | :--- |
 | Adapted from Vercel's [`react-best-practices`](https://github.com/vercel-labs/agent-skills/tree/main/skills/react-best-practices) agent skill (`vercel-labs/agent-skills`) | MIT (© Vercel, Inc.) | `.agents/skills/vercel-react-best-practices/` (contributor AI-agent guidance) |
+| Workflows and engineering checklists adapted from [`cursor/plugins/pstack`](https://github.com/cursor/plugins/tree/main/pstack) (`maintain-formal-verification-skill`, `correct`, `blast-radius`, `interrogate`, `typescript-best-practices`, `benchmark-checklist`, `perf-issue`) | MIT (© Lauren Tan) | `.agents/skills/{verify-state-machines,bug-to-rule,blast-radius,typescript-discipline,perf-benchmark}/` (contributor AI-agent guidance) |
 
 Development-only tooling (TypeScript, esbuild, Biome, Playwright, c8, Stryker, jsdom, and others listed under `devDependencies`) is not redistributed.

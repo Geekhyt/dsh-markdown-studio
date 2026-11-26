@@ -796,6 +796,125 @@ const unusedLocaleKeys = Object.keys(UI_STRINGS_ZH).filter(
 );
 assert.deepEqual(unusedLocaleKeys, [], 'every locale key is referenced by runtime source');
 
+// TypeScript `as` cast high-water-mark ratchet & lint/type suppression ban across production files.
+// Lower these ceilings whenever legacy casts are replaced (see .agents/skills/typescript-discipline/SKILL.md).
+{
+  const MAX_PROD_NON_CONST_AS = 140;
+  const MAX_DOMAIN_NON_CONST_AS = 7;
+  const MAX_PROD_DOUBLE_AS = 13;
+  const prodFiles = [...files('src'), ...files('host'), 'index.ts'];
+  let totalNonConstAs = 0;
+  let domainNonConstAs = 0;
+  let totalDoubleAs = 0;
+  let domainDoubleAs = 0;
+
+  for (const relPath of prodFiles) {
+    const normalized = relPath.replace(/\\/g, '/');
+    const source = fs.readFileSync(path.join(root, relPath), 'utf8');
+    assert.equal(
+      /@(?:ts-ignore|ts-expect-error|ts-nocheck)\b/.test(source),
+      false,
+      `${normalized} must not contain @ts-ignore/@ts-expect-error/@ts-nocheck — fix the type boundary instead (see .agents/skills/typescript-discipline/SKILL.md)`,
+    );
+    assert.equal(
+      /\bbiome-ignore\b/.test(source),
+      false,
+      `${normalized} must not contain biome-ignore — fix the underlying lint issue instead`,
+    );
+
+    const sf = ts.createSourceFile(normalized, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const inDomain = normalized.startsWith('src/domain/');
+    function visitCasts(node: ts.Node): void {
+      if (ts.isAsExpression(node)) {
+        const isAsConst =
+          ts.isTypeReferenceNode(node.type) &&
+          ts.isIdentifier(node.type.typeName) &&
+          node.type.typeName.text === 'const';
+        if (!isAsConst) {
+          totalNonConstAs++;
+          if (inDomain) domainNonConstAs++;
+          let inner: ts.Expression = node.expression;
+          while (ts.isParenthesizedExpression(inner)) inner = inner.expression;
+          if (ts.isAsExpression(inner)) {
+            totalDoubleAs++;
+            if (inDomain) domainDoubleAs++;
+          }
+        }
+      }
+      ts.forEachChild(node, visitCasts);
+    }
+    visitCasts(sf);
+  }
+
+  assert.ok(
+    totalNonConstAs <= MAX_PROD_NON_CONST_AS,
+    `Production non-\`as const\` assertions grew (${totalNonConstAs} > ${MAX_PROD_NON_CONST_AS}). Narrow via discriminant switch, \`in\`, \`typeof\`, cross-realm nodeType/tagName guards, \`satisfies\`, or boundary parsers — see .agents/skills/typescript-discipline/SKILL.md`,
+  );
+  assert.ok(
+    domainNonConstAs <= MAX_DOMAIN_NON_CONST_AS,
+    `src/domain non-\`as const\` assertions grew (${domainNonConstAs} > ${MAX_DOMAIN_NON_CONST_AS}). Keep domain code cast-free via constructive types and boundary parsing — see .agents/skills/typescript-discipline/SKILL.md`,
+  );
+  assert.ok(
+    totalDoubleAs <= MAX_PROD_DOUBLE_AS,
+    `Production double casts (\`as ... as ...\`) grew (${totalDoubleAs} > ${MAX_PROD_DOUBLE_AS}). Isolate untyped host/DOM interop behind a typed boundary adapter — see .agents/skills/typescript-discipline/SKILL.md`,
+  );
+  assert.equal(
+    domainDoubleAs,
+    0,
+    `src/domain must have zero double casts (\`as ... as ...\`, found ${domainDoubleAs}) — see .agents/skills/typescript-discipline/SKILL.md`,
+  );
+}
+
+// Workspace agent-skill frontmatter, link integrity, and formal-model coverage table freshness.
+{
+  const skillsDir = path.join(root, '.agents/skills');
+  const skillEntries = fs.readdirSync(skillsDir, { withFileTypes: true }).filter((e) => e.isDirectory());
+  assert.ok(skillEntries.length >= 1, '.agents/skills contains workspace skills');
+
+  const mdFilesToCheck: string[] = [path.join(root, 'AGENTS.md')];
+  for (const entry of skillEntries) {
+    const skillDir = path.join(skillsDir, entry.name);
+    const skillMd = path.join(skillDir, 'SKILL.md');
+    assert.ok(fs.existsSync(skillMd), `.agents/skills/${entry.name}/SKILL.md must exist`);
+    const raw = fs.readFileSync(skillMd, 'utf8');
+    const fmMatch = /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw);
+    assert.ok(fmMatch, `.agents/skills/${entry.name}/SKILL.md must start with YAML frontmatter`);
+    const fm = fmMatch[1];
+    assert.ok(
+      new RegExp(`^name:\\s*['"]?${entry.name}['"]?\\s*$`, 'm').test(fm),
+      `.agents/skills/${entry.name}/SKILL.md frontmatter name must match folder name "${entry.name}"`,
+    );
+    assert.ok(
+      /^description:\s*\S+/m.test(fm),
+      `.agents/skills/${entry.name}/SKILL.md frontmatter must declare a non-empty description`,
+    );
+    mdFilesToCheck.push(skillMd);
+  }
+
+  for (const mdPath of mdFilesToCheck) {
+    const content = fs.readFileSync(mdPath, 'utf8').replace(/```[\s\S]*?```/g, '');
+    for (const m of content.matchAll(/!?\[[^\]]*\]\(([^)#\s]+)(?:#[^)]*)?\)/g)) {
+      const target = m[1];
+      if (/^(?:https?:|mailto:|data:)/.test(target)) continue;
+      const resolved = path.resolve(path.dirname(mdPath), target);
+      assert.ok(fs.existsSync(resolved), `${path.relative(root, mdPath)} references missing link target: ${target}`);
+    }
+  }
+
+  const verifyMachinesSkill = fs.readFileSync(path.join(root, '.agents/skills/verify-state-machines/SKILL.md'), 'utf8');
+  assert.ok(
+    /\|\s*`[0-9a-f]{7,40}`\s*\|/.test(verifyMachinesSkill),
+    '.agents/skills/verify-state-machines/SKILL.md must record a Sync Commit hash in its coverage table',
+  );
+  for (const machineFile of files('src/domain').filter((f) => f.replace(/\\/g, '/').endsWith('.machine.ts'))) {
+    const normalized = machineFile.replace(/\\/g, '/');
+    assert.ok(
+      verifyMachinesSkill.includes(normalized),
+      `.agents/skills/verify-state-machines/SKILL.md must list ${normalized} in its Coverage & Sync Commit table`,
+    );
+  }
+}
+
 console.log(
-  'ok - architecture boundaries, business-layer useEffect ban, hook honesty, and unified mdstudio brand naming hold',
+  'ok - architecture boundaries, business-layer useEffect ban, hook honesty, TS cast ratchet, skill hygiene, and unified mdstudio brand naming hold',
 );

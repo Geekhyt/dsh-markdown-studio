@@ -1,16 +1,19 @@
 # Agent Engineering Guidelines (`dsh-markdown-studio`)
 
-Always-on architecture and React quality rules for AI coding agents working in this repository. Activate workspace skills as relevant:
+Always-on architecture, type-safety, and verification rules for AI coding agents working in this repository. Activate workspace skills as relevant:
 - [vercel-react-best-practices](./.agents/skills/vercel-react-best-practices/SKILL.md) for React components, hooks, state management, bundle splits, or async flows in `src/`.
-- [verify-state-machines](./.agents/skills/verify-state-machines/SKILL.md) before modifying concurrent UI overlays, Escape/focus routing, local file sessions, multi-tab sync, or asset GC.
-- [bug-to-rule](./.agents/skills/bug-to-rule/SKILL.md) after fixing any non-trivial bug to encode the root cause into a permanent automated gate.
+- [verify-state-machines](./.agents/skills/verify-state-machines/SKILL.md) before modifying concurrent UI overlays, Escape/focus routing, local file sessions, multi-tab sync, or asset GC — and for formal-model drift audits.
+- [bug-to-rule](./.agents/skills/bug-to-rule/SKILL.md) after fixing any non-trivial bug to encode the root cause into the highest-level permanent gate.
+- [blast-radius](./.agents/skills/blast-radius/SKILL.md) before high-risk refactors, host/security changes, or releases to hunt non-grep breakage and prove load-bearing safety facts.
+- [typescript-discipline](./.agents/skills/typescript-discipline/SKILL.md) when designing domain types, boundary parsers, or removing `as` assertions in `src/`, `host/`, or `index.ts`.
+- [perf-benchmark](./.agents/skills/perf-benchmark/SKILL.md) before reporting a speedup/regression or iterating on parser, inliner, DOM morph, dark preview, or bundle boot latency.
 
 ## 1. DeepSeek Harness (Cordis) Plugin Contract
 
 - **Official Seams Only**: Integrate exclusively through documented DSH APIs (`sidebar.panellist`, `main`, `locale`, `@deepseek-ai/dsh-client-ui-primitives`, `window.__ModuleLoader__.load` + `require.async`, and Cordis `webServer`). Verify with `npm run check:host-api`.
-- **Real Host Route Contract**: Cordis `webServer.register({ kind: 'prefix', path })` matches `pathname === prefix || pathname.startsWith(prefix + '/')` — never pass a trailing slash on `prefix` routes (enforced by `test/architecture.test.ts`), and verify every registered host route against the real DSH runtime in `test/dsh-e2e.ts` rather than relying solely on standalone `http.createServer` mocks.
-- **Five-Bundle Lazy Budget (Raw + Gzip)**: Keep cold-boot `dist/client.js` strictly minimal (`<= 12 KiB` raw / `<= 5 KiB` gzip hard gate, `~5 KiB` raw target). CodeMirror 6 (`dist/client.studio.js`), MathJax 3 (`dist/math.js`), and Mermaid 11 (`dist/mermaid.js`) must remain lazy-loaded and stay under both raw and gzip ceilings in `scripts/bundle-budget.ts`.
-- **Reversible Lifecycle**: Register disposable resources via `ctx.effect(...)` and tag every `<style>` / `<script>` element with `data-plugin="dsh-markdown-studio"` (enforced by `test/architecture.test.ts`) so hot disabling/re-enabling leaves zero leaked DOM or listeners.
+- **Real Host Route Contract**: Cordis `webServer.register({ kind: 'prefix', path })` matches `pathname === prefix || pathname.startsWith(prefix + '/')` — never pass a trailing slash on `prefix` routes, and verify every registered host route against the real DSH runtime in `test/dsh-e2e.ts` rather than relying solely on standalone `http.createServer` mocks.
+- **Six-Bundle Lazy Budget (Raw + Gzip)**: Keep cold-boot `dist/client.js` strictly minimal (`<= 12 KiB` raw / `<= 5 KiB` gzip hard gate, `~5 KiB` raw target). CodeMirror 6 (`dist/client.studio.js`), MathJax 3 (`dist/math.js`), Mermaid 11 (`dist/mermaid.js`), and `mp-darkmode` (`dist/darkmode.js`) must remain lazy-loaded and stay under both raw and gzip ceilings in `scripts/bundle-budget.ts`.
+- **Reversible Lifecycle**: Register disposable resources via `ctx.effect(...)` and tag every `<style>` / `<script>` element with `data-plugin="dsh-markdown-studio"` so hot disabling/re-enabling leaves zero leaked DOM or listeners.
 
 ## 2. Clean Unidirectional Architecture
 
@@ -19,23 +22,31 @@ Always-on architecture and React quality rules for AI coding agents working in t
 - `DocumentStore` (`src/application/document-store.ts`) is the single source of truth for library documents, recycle bin, and custom CSS themes.
 - `host/` and `src/` must never cross-import implementation modules.
 
-## 3. Strict React & Vercel Best-Practices Guardrails (Enforced by `test/architecture.test.ts`)
+## 3. Rule ↔ Enforcer Table
 
-1. **Business-Layer `useEffect` Ban**: Direct `useEffect` and `useLayoutEffect` calls are **strictly forbidden** everywhere outside `src/runtime/`. Derive state during render, reset transient form state with React `key`, subscribe via `useExternalStore`, or add reusable primitives to `src/runtime/`.
-2. **Zero Render-Phase `ref.current` Mutations**: Never assign `someRef.current = ...` at the top level of a component or hook body outside `src/runtime/`. Use `useLatest(React, value)` from `src/runtime/react-lifecycle.ts` for live callback refs, `useState(() => new Service())` for singletons (`rerender-lazy-state-init`), and ref/event callbacks for DOM handles.
-3. **Honest Hook Naming**: Every `src/application/use-*.ts` module must invoke real React or `src/runtime/` hooks. Stateless command builders must use `create*` file/function names (e.g. `article-exporter.ts`, `editor-formatting.ts`).
-4. **No Barrel Files (`bundle-barrel-imports`)**: Do not add `index.ts` barrel files under `src/`. Import directly from concrete module paths.
-5. **Bounded Component Props & Uniform Vocabulary**: Keep every exported `*Props` interface in `src/ui/` at `<= 15` direct fields by grouping cohesive state/callbacks (`state`, `actions`, `toolbar`, `assets`) and passing `ui: UiKit` uniformly instead of unpacking individual primitive components. Never declare nested component functions inside another component.
-6. **Eliminate Async Waterfalls & Hidden Re-render Work**: Use `Promise.all()` for independent async tasks (`async-parallel`), gate expensive document/library scans behind panel `open` flags (`rerender-defer-reads`), model multi-step UI flows as discriminated unions instead of boolean state soup, and use explicit ternaries (`cond ? node : null`) rather than numeric `&&`.
-7. **Filepath Contract (`*.machine.ts`) & Cross-Subsystem Formal Verification**: Pure concurrent state machines live in `src/domain/*.machine.ts`, must have zero nondeterminism/DOM/timer/React dependencies (enforced by `test/architecture.test.ts`), share policy predicates directly with production callers, and must pass exhaustive bounded BFS verification in `test/formal-models.test.ts` (`npm run verify:models`). Whenever adding a cross-subsystem side effect (e.g. multi-tab `storage` sync, workspace open/flush ordering, or third-party keymaps like CodeMirror `defaultKeymap`), model that external event in the machine AND verify the real runtime seam in `test/browser-smoke.ts` / `test/dsh-e2e.ts`.
-8. **Bug → Permanent Automated Gate**: Never leave a recurring defect protected only by convention. Encode structural regressions in `test/architecture.test.ts` (cross-realm `instanceof Element/HTMLElement` ban, monotonic `Z_LAYERS` table with zero raw numeric `z-index`, container `.clientWidth` vs `window.innerWidth` guard, `data-plugin` DOM tagging, Cordis prefix-route trailing-slash ban, CodeMirror `Escape` hijack ban, safe danger-dialog focus guard, Unicode `toLowerCase().indexOf` slice ban in `src/ui/`), state interleavings in `test/formal-models.test.ts`, and security/parser boundaries in `test/fuzz-and-perf.test.ts` + `scripts/mutation-smoke.ts`.
-9. **Anti-Blindspot Verification Discipline**:
-   - **Independent External Oracles (No Self-Oracle)**: Never validate a security sanitizer only with its own detector or regex; use stateful lexical scanners (CSS Syntax L3 / YAML 1.2 / CommonMark) backed by external Chromium/DSH runtime checks (network request interception proving `0` SSRF hits, `getComputedStyle` truth, real DSH HTTP `200`).
-   - **Semantic Quality Oracles**: Performance and "no crash" assertions are insufficient — assert semantic bounds (e.g. long CJK diff `addRatio < 0.15`, destructive confirm focusing `Cancel` + restoring visible focus on `Escape`, Unicode length-changing case folds like Turkish `İ` producing exact highlights).
-   - **Single Canonical Guard**: UI `disabled` flags and keyboard shortcuts (`Mod+S`, `Escape`), sanitizer/detector helpers, and host route prefixes must share one canonical predicate/constant instead of duplicating logic across entry points.
-   - **Extreme Environment Matrix**: Keep `test/browser-smoke.ts` verifying extreme combinations: `736px + pointer: coarse + EN`, `960×265 + SearchBar` popover clamping, `dark mode + Night theme + GitHub Light codeTheme`, and CodeMirror active selection + 1st `Escape`.
+Every structural invariant maps to an automated gate; drop prose once architecture or types make a mistake impossible:
 
-## 4. Verification Commands
+| Rule | Automated Enforcer |
+| :--- | :--- |
+| Zero `useEffect` / `useLayoutEffect` & zero render-phase `ref.current` writes outside `src/runtime/` (use `useLatest` / lazy `useState` / `key`) | `test/architecture.test.ts` |
+| Honest `use-*` hook naming, zero `src/**/index.ts` barrels, `<= 15` direct fields per `*Props` interface, no nested component definitions | `test/architecture.test.ts` |
+| Cross-realm `instanceof Element/HTMLElement` ban, monotonic `Z_LAYERS`, `data-plugin` DOM tags, container `.clientWidth` guard, Cordis `prefix` trailing-slash ban, CodeMirror `Escape` hijack ban, danger confirm `Cancel` focus guard, Unicode `toLowerCase().indexOf` slice ban | `test/architecture.test.ts` |
+| TypeScript `as` cast high-water-mark ratchet, zero `src/domain/` double casts, zero `@ts-ignore`/`@ts-expect-error`/`biome-ignore` in production code | `test/architecture.test.ts` |
+| Pure `src/domain/*.machine.ts` determinism, skill frontmatter/link hygiene & `verify-state-machines` machine coverage | `test/architecture.test.ts` |
+| Bounded BFS state-machine safety invariants, `Escape` `<= 8` liveness, multi-tab merge & 128-state AssetGC matrix | `test/formal-models.test.ts` (`npm run verify:models`) |
+| Markdown/CSS/URL security fuzzing, ReDoS bounds, semantic CJK diff quality & 10k-char performance ceilings | `test/fuzz-and-perf.test.ts` (`npm run test:fuzz`) |
+| Cold-boot + lazy 6-chunk raw/gzip ceilings, `>= 90%` coverage, `CRAP <= 30`, mutation killing | `npm run quality` & `npm run mutation` |
+| Official DSH host APIs, real Chromium visual/a11y/SSRF/extreme-matrix smoke & real DSH runtime E2E | `npm run check:host-api`, `npm run test:browser`, `npm run test:dsh` |
+
+## 4. Judgment Guardrails (Not Mechanically Checkable Alone)
+
+1. **Eliminate Async Waterfalls & Hidden Re-render Work**: Use `Promise.all()` for independent async tasks, gate expensive scans behind panel `open` flags, model multi-step UI flows as discriminated unions (`kind`) with `never` exhaustiveness, and use explicit ternaries (`cond ? node : null`) rather than numeric `&&`.
+2. **Bug → Highest-Level Gate (`bug-to-rule`)**: Try encoding top-down — architecture → types / actionable lint or AST ratchet → behavioral test → prose last. After 2 failed fixes sharing one premise fail the same gate, stop and falsify the premise first (**Attack the Premise**).
+3. **Test Behavior, Not Implementation**: Every test must fail when observable behavior breaks and survive pure internal refactors. Never rely on self-oracles (`detector(sanitizer(x))`) or weak "no crash / fast" checks; pair with independent runtime/semantic oracles (`0` Chromium SSRF hits, `getComputedStyle`, `addRatio < 0.1`, real DSH `200 OK`) and single canonical guard predicates shared across UI `disabled` and keyboard shortcuts.
+4. **Evidence-Backed Impact & Benchmarks**: Before high-risk merges, use `blast-radius` (prove the 1–2 load-bearing safety facts with runnable code; drop unrun review claims). Before reporting a speedup, pass `perf-benchmark`'s 7-question checklist (limiter, production parity, Amdahl check, error count, `>= 5` alternating runs median+range, end-to-end share, work verified).
+5. **Comment Discipline**: Do not leave `IMPORTANT` / `do not remove` / workaround sermons for our own code — encode the invariant in types, AST rules, or tests and delete the comment. Keep comments only for legal headers, public contracts, or verified external platform quirks.
+
+## 5. Verification Commands
 
 Run before concluding code changes:
 
