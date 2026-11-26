@@ -73,6 +73,13 @@ function extractSyncRequires(code: string): string[] {
     ),
     'dist/client.studio.js wraps in official DSH chunk envelope',
   );
+  assert.ok(
+    !studioCode.includes('convertCssToDark'),
+    'mp-darkmode stays out of dist/client.studio.js (served via lazy dist/darkmode.js)',
+  );
+  const darkmodePath = path.join(root, 'dist/darkmode.js');
+  assert.ok(fs.existsSync(darkmodePath), 'dist/darkmode.js lazy chunk is emitted');
+  assert.ok(pkg.files.includes('dist/darkmode.js'), 'dist/darkmode.js is listed in package.json files');
   const syncRequires = extractSyncRequires(studioCode);
   for (const spec of syncRequires) {
     assert.ok(!spec.startsWith('.'), `dist/client.studio.js must have zero relative sync requires (${spec})`);

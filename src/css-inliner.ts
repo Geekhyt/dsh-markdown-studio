@@ -21,6 +21,13 @@ interface Declaration {
   important: boolean;
 }
 
+interface CompiledDecl extends Declaration {
+  isVar: boolean;
+  isCounter: boolean;
+  usesVar: boolean;
+  hasExternalUrl: boolean;
+}
+
 interface ParsedRule {
   selectors: string[];
   decls: Declaration[];
@@ -30,9 +37,14 @@ interface ParsedRule {
 interface CssEntry {
   selector: string;
   pseudo: string | null;
-  decls: Declaration[];
+  decls: CompiledDecl[];
   order: number;
   specificity: SpecificityTuple;
+}
+
+interface CompiledStylesheet {
+  normalEntries: CssEntry[];
+  pseudoEntries: CssEntry[];
 }
 
 type SpecificityTuple = readonly [number, number, number];
@@ -46,6 +58,9 @@ interface StyleValue extends StyleCandidate {
   specificity: SpecificityTuple;
   order: number;
   index: number;
+  isCounter?: boolean;
+  usesVar?: boolean;
+  hasExternalUrl?: boolean;
 }
 
 function compareSpecificity(a: SpecificityTuple, b: SpecificityTuple): number {
@@ -622,7 +637,7 @@ function isSvgInterior(element: Element): boolean {
   return element.tagName.toLowerCase() !== 'svg' && Boolean(element.closest('svg'));
 }
 
-function queryAll(root: HTMLElement, selector: string): HTMLElement[] {
+function queryAll(root: HTMLElement, selector: string, checkSvg: boolean): HTMLElement[] {
   const found: HTMLElement[] = [];
   if (matchesElement(root, selector)) found.push(root);
   let list: NodeListOf<Element>;
@@ -633,9 +648,95 @@ function queryAll(root: HTMLElement, selector: string): HTMLElement[] {
   }
   for (let i = 0; i < list.length; i++) {
     const el = list[i];
-    if (!isSvgInterior(el)) found.push(el as HTMLElement);
+    if (!checkSvg || !isSvgInterior(el)) found.push(el as HTMLElement);
   }
   return found;
+}
+
+const COMPILED_CSS_CACHE_LIMIT = 16;
+const compiledCssCache = new Map<string, CompiledStylesheet>();
+const COUNTER_PROP_RE = /^counter-(?:reset|increment)$/i;
+const VAR_CALL_RE = /var\(/i;
+
+function compileDeclarations(decls: readonly Declaration[]): CompiledDecl[] {
+  return decls.map(function (decl) {
+    const isVar = decl.prop.indexOf('--') === 0;
+    const usesVar = VAR_CALL_RE.test(decl.value);
+    return {
+      prop: decl.prop,
+      value: decl.value,
+      important: decl.important,
+      isVar,
+      isCounter: !isVar && COUNTER_PROP_RE.test(decl.prop),
+      usesVar,
+      hasExternalUrl: !usesVar && hasExternalCssUrl(decl.value),
+    };
+  });
+}
+
+function compileStylesheet(css: string): CompiledStylesheet {
+  const cached = compiledCssCache.get(css);
+  if (cached) {
+    compiledCssCache.delete(css);
+    compiledCssCache.set(css, cached);
+    return cached;
+  }
+  const rawRules = parseRules(css);
+  const normalEntries: CssEntry[] = [];
+  const pseudoEntries: CssEntry[] = [];
+  rawRules.forEach(function (rule) {
+    const compiledDecls = compileDeclarations(rule.decls);
+    rule.selectors.forEach(function (selector) {
+      const normalized = normalizeSelector(selector);
+      if (!normalized) return;
+      const pseudo = splitPseudoElement(normalized);
+      const baseSelector = pseudo ? pseudo.base : normalized;
+      if (isStateSelector(baseSelector)) return;
+      if (pseudo && pseudo.pseudo === 'skip') return;
+      const specSelector = normalizeSelector(selector, '.mdstudio-content');
+      const specPseudo = splitPseudoElement(specSelector);
+      const entry: CssEntry = {
+        selector: baseSelector,
+        pseudo: pseudo ? pseudo.pseudo : null,
+        decls: compiledDecls,
+        order: rule.order,
+        specificity: selectorSpecificityTuple(specPseudo ? specPseudo.base : specSelector),
+      };
+      if (entry.pseudo) pseudoEntries.push(entry);
+      else normalEntries.push(entry);
+    });
+  });
+  const compiled: CompiledStylesheet = { normalEntries, pseudoEntries };
+  if (compiledCssCache.size >= COMPILED_CSS_CACHE_LIMIT) {
+    const oldest = compiledCssCache.keys().next().value;
+    if (oldest !== undefined) compiledCssCache.delete(oldest);
+  }
+  compiledCssCache.set(css, compiled);
+  return compiled;
+}
+
+function resolveInlineDeclValue(
+  decl: StyleValue,
+  elementVars: Record<string, string>,
+  allowExternal: boolean,
+): string | null {
+  if (!decl.usesVar) {
+    if (!allowExternal && decl.hasExternalUrl) return null;
+    return decl.value;
+  }
+  const checked = resolveVarsChecked(decl.value, elementVars, 0, new Set<string>(), { steps: 0 });
+  if (!checked.valid) return null;
+  if (!allowExternal && hasExternalCssUrl(checked.value)) return null;
+  return checked.value;
+}
+
+function elementUsesCssVars(props: Map<string, StyleValue[]>): boolean {
+  for (const list of props.values()) {
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].usesVar) return true;
+    }
+  }
+  return false;
 }
 
 const VOID_TAGS = /^(img|input|br|hr|source|track|wbr|video|audio|iframe|embed|area|base|col|link|meta|param)$/i;
@@ -707,34 +808,16 @@ function reapplyOriginalInlineStyles(element: HTMLElement, original: CSSStyleDec
 export function inlineCss<T extends HTMLElement>(root: T, css: string, options?: InlineCssOptions): T {
   if (!root || !css) return root;
   const allowExternal = Boolean(options?.allowExternalCssResources);
-  const rawRules = parseRules(css);
-  const entries: CssEntry[] = [];
-  rawRules.forEach(function (rule) {
-    rule.selectors.forEach(function (selector) {
-      const normalized = normalizeSelector(selector);
-      if (!normalized) return;
-      const pseudo = splitPseudoElement(normalized);
-      const specSelector = normalizeSelector(selector, '.mdstudio-content');
-      const specPseudo = splitPseudoElement(specSelector);
-      entries.push({
-        selector: pseudo ? pseudo.base : normalized,
-        pseudo: pseudo ? pseudo.pseudo : null,
-        decls: rule.decls,
-        order: rule.order,
-        specificity: selectorSpecificityTuple(specPseudo ? specPseudo.base : specSelector),
-      });
-    });
-  });
+  const { normalEntries, pseudoEntries } = compileStylesheet(css);
+  const checkSvg = Boolean(root.querySelector('svg'));
 
   const styleMap = new Map<HTMLElement, Map<string, StyleValue[]>>();
   const varMap = new Map<HTMLElement, Map<string, StyleValue>>();
-  entries.forEach(function (entry) {
-    if (entry.pseudo) return;
-    if (isStateSelector(entry.selector)) return;
-    const elements = queryAll(root, entry.selector);
+  normalEntries.forEach(function (entry) {
+    const elements = queryAll(root, entry.selector, checkSvg);
     elements.forEach(function (element) {
       entry.decls.forEach(function (decl, index) {
-        if (decl.prop.indexOf('--') === 0) {
+        if (decl.isVar) {
           const existingProps = varMap.get(element);
           const props: Map<string, StyleValue> = existingProps || new Map<string, StyleValue>();
           if (!existingProps) varMap.set(element, props);
@@ -761,6 +844,9 @@ export function inlineCss<T extends HTMLElement>(root: T, css: string, options?:
           specificity: entry.specificity,
           order: entry.order,
           index: index,
+          isCounter: decl.isCounter,
+          usesVar: decl.usesVar,
+          hasExternalUrl: decl.hasExternalUrl,
         });
         props.set(decl.prop, list);
       });
@@ -770,13 +856,15 @@ export function inlineCss<T extends HTMLElement>(root: T, css: string, options?:
   const varCache = new Map<HTMLElement, Record<string, string>>();
   const originalStyles = new Map<HTMLElement, CSSStyleDeclaration>();
   styleMap.forEach(function (_props, element) {
-    originalStyles.set(element, (element.cloneNode(false) as HTMLElement).style);
+    if (element.hasAttribute('style')) {
+      originalStyles.set(element, (element.cloneNode(false) as HTMLElement).style);
+    }
   });
 
+  const EMPTY_VARS: Record<string, string> = {};
   styleMap.forEach(function (props, element) {
     const original = originalStyles.get(element);
-    if (!original) return;
-    const elementVars = buildElementVars(element, root, varMap, varCache);
+    const elementVars = elementUsesCssVars(props) ? buildElementVars(element, root, varMap, varCache) : EMPTY_VARS;
     const ordered: Array<[string, StyleValue]> = [];
     props.forEach(function (list, prop) {
       for (const decl of list) ordered.push([prop, decl]);
@@ -784,30 +872,30 @@ export function inlineCss<T extends HTMLElement>(root: T, css: string, options?:
     ordered.sort(cascadeOrder).forEach(function (pair) {
       const prop = pair[0];
       const decl = pair[1];
-      if (/^counter-(?:reset|increment)$/i.test(prop)) return;
-      const existing = original.getPropertyValue(prop);
-      if (existing) {
-        const existingImportant = original.getPropertyPriority(prop) === 'important';
-        if (!(decl.important && !existingImportant)) return;
+      if (decl.isCounter) return;
+      if (original) {
+        const existing = original.getPropertyValue(prop);
+        if (existing) {
+          const existingImportant = original.getPropertyPriority(prop) === 'important';
+          if (!(decl.important && !existingImportant)) return;
+        }
       }
-      const checked = resolveVarsChecked(decl.value, elementVars, 0, new Set<string>(), { steps: 0 });
-      if (!checked.valid) return;
-      if (!allowExternal && hasExternalCssUrl(checked.value)) return;
+      const resolvedValue = resolveInlineDeclValue(decl, elementVars, allowExternal);
+      if (resolvedValue === null) return;
       try {
-        element.style.setProperty(prop, checked.value, decl.important ? 'important' : '');
+        element.style.setProperty(prop, resolvedValue, decl.important ? 'important' : '');
       } catch {
         /* invalid value: leave it to the browser */
       }
     });
-    if (original.length > 0) reapplyOriginalInlineStyles(element, original);
+    if (original && original.length > 0) reapplyOriginalInlineStyles(element, original);
   });
 
   const pseudoMap = new Map<HTMLElement, Record<string, Map<string, StyleValue[]>>>();
-  entries.forEach(function (entry) {
+  pseudoEntries.forEach(function (entry) {
     const pseudoName = entry.pseudo;
-    if (!pseudoName || pseudoName === 'skip') return;
-    if (isStateSelector(entry.selector)) return;
-    const elements = queryAll(root, entry.selector);
+    if (!pseudoName) return;
+    const elements = queryAll(root, entry.selector, checkSvg);
     elements.forEach(function (element) {
       if (VOID_TAGS.test(element.tagName || '')) return;
       let record = pseudoMap.get(element);
@@ -825,6 +913,9 @@ export function inlineCss<T extends HTMLElement>(root: T, css: string, options?:
           specificity: entry.specificity,
           order: entry.order,
           index: index,
+          isCounter: decl.isCounter,
+          usesVar: decl.usesVar,
+          hasExternalUrl: decl.hasExternalUrl,
         });
         props.set(decl.prop, list);
       });
@@ -866,17 +957,16 @@ export function inlineCss<T extends HTMLElement>(root: T, css: string, options?:
       const content = evaluatePseudoContent(rawContent, elementCounters);
       const orderedPseudo: Array<[string, StyleValue]> = [];
       props.forEach(function (list, prop) {
-        if (prop === 'content' || prop.indexOf('--') === 0 || /^counter-(?:reset|increment)$/i.test(prop)) return;
+        if (prop === 'content' || prop.indexOf('--') === 0 || COUNTER_PROP_RE.test(prop)) return;
         for (const decl of list) orderedPseudo.push([prop, decl]);
       });
       orderedPseudo.sort(cascadeOrder).forEach(function (pair) {
         const prop = pair[0];
         const decl = pair[1];
-        const checked = resolveVarsChecked(decl.value, pseudoVars, 0, new Set<string>(), { steps: 0 });
-        if (!checked.valid) return;
-        if (!allowExternal && hasExternalCssUrl(checked.value)) return;
+        const resolvedValue = resolveInlineDeclValue(decl, pseudoVars, allowExternal);
+        if (resolvedValue === null) return;
         try {
-          span.style.setProperty(prop, checked.value, decl.important ? 'important' : '');
+          span.style.setProperty(prop, resolvedValue, decl.important ? 'important' : '');
         } catch {
           /* ignore */
         }

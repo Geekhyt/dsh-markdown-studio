@@ -7,6 +7,7 @@ import { Readable } from 'node:stream';
 import { AiHostService } from '../host/application/ai-service';
 import { ImageHostError, ImageHostService, MAX_IMAGE_BYTES, parseDataUrl } from '../host/application/image-store';
 import { AI_ROUTE_PATH, createAiRoute } from '../host/http/ai-route';
+import { createDarkmodeRoute, DARKMODE_PATH, darkmodeRoute } from '../host/http/darkmode-route';
 import { createMathRoute, MATH_PATH, mathRoute } from '../host/http/math-route';
 import { MERMAID_PATH, mermaidRoute } from '../host/http/mermaid-route';
 import {
@@ -317,6 +318,28 @@ try {
     assert.match(response.headers.get('content-type') || '', /javascript/);
     assert.ok((await response.arrayBuffer()).byteLength > 100_000);
     mathServer.server.close();
+  });
+
+  await check('Darkmode chunk is served as JavaScript with auth and ETag', async () => {
+    const dmServer = await listen((req, res) => {
+      void darkmodeRoute(req, res);
+    });
+    const authDmServer = await listen(
+      createDarkmodeRoute({
+        checkAuth: (req) => (req.headers['x-test-auth'] === 'ok' ? undefined : 401),
+      }),
+    );
+    try {
+      const response = await fetch(`http://127.0.0.1:${dmServer.port}${DARKMODE_PATH}`);
+      assert.equal(response.status, 200);
+      assert.match(response.headers.get('content-type') || '', /javascript/);
+      assert.ok((await response.arrayBuffer()).byteLength > 50_000);
+      const unauth = await fetch(`http://127.0.0.1:${authDmServer.port}${DARKMODE_PATH}`);
+      assert.equal(unauth.status, 401);
+    } finally {
+      dmServer.server.close();
+      authDmServer.server.close();
+    }
   });
 
   await check('authenticated asset route serves HEAD and rejects missing files', async () => {

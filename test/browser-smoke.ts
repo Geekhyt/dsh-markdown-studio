@@ -120,6 +120,10 @@ const server = http.createServer((req, res) => {
       path: path.join(root, bundleDir, 'math.js'),
       type: 'text/javascript; charset=utf-8',
     },
+    '/api/markdown-studio/darkmode.js': {
+      path: path.join(root, bundleDir, 'darkmode.js'),
+      type: 'text/javascript; charset=utf-8',
+    },
     '/axe.js': { path: path.join(root, 'node_modules/axe-core/axe.min.js'), type: 'text/javascript; charset=utf-8' },
     '/react.js': {
       path: path.join(root, 'node_modules/react/umd/react.development.js'),
@@ -255,6 +259,10 @@ const lightPreview = await page.evaluate(() => {
     color: article ? getComputedStyle(article).color : '',
   };
 });
+const darkmodeLoadedInLight = await page.evaluate(() =>
+  Boolean((window as unknown as { __MDSTUDIO_DARKMODE__?: unknown }).__MDSTUDIO_DARKMODE__),
+);
+assert.equal(darkmodeLoadedInLight, false, 'darkmode.js stays unloaded in light mode');
 await page.evaluate(() => document.body.setAttribute('data-ds-dark-theme', ''));
 await page.waitForFunction(
   (previous) => {
@@ -271,6 +279,34 @@ await page.waitForFunction(
   },
   lightPreview,
   { timeout: 8000 },
+);
+const darkmodeLoadedInDark = await page.evaluate(() =>
+  Boolean((window as unknown as { __MDSTUDIO_DARKMODE__?: unknown }).__MDSTUDIO_DARKMODE__),
+);
+assert.equal(darkmodeLoadedInDark, true, 'darkmode.js loads lazily when dark mode activates');
+// Verify block-level DOM morph preserves untouched leading block identity during dark-mode typing
+await page.evaluate(() => {
+  (window as unknown as { __morphProbeH1?: Element | null }).__morphProbeH1 = document.querySelector(
+    '.mdstudio-preview-article #mdstudio > h1',
+  );
+});
+await page.click('.cm-content');
+await page.keyboard.press('ControlOrMeta+ArrowDown');
+await page.keyboard.type('\n\nMorph probe tail');
+await page.waitForFunction(
+  () => document.querySelector('.mdstudio-preview-article #mdstudio')?.textContent?.includes('Morph probe tail'),
+  { timeout: 5000 },
+);
+const morphPreserved = await page.evaluate(() => {
+  const probe = (window as unknown as { __morphProbeH1?: Element | null }).__morphProbeH1;
+  const current = document.querySelector('.mdstudio-preview-article #mdstudio > h1');
+  return Boolean(probe && probe === current);
+});
+assert.equal(morphPreserved, true, 'preview block-level DOM morph preserves untouched block identity across edits');
+await page.keyboard.press('ControlOrMeta+z');
+await page.waitForFunction(
+  () => !document.querySelector('.mdstudio-preview-article #mdstudio')?.textContent?.includes('Morph probe tail'),
+  { timeout: 5000 },
 );
 const darkPreview = await page.evaluate(() => {
   const screen = document.querySelector('.mdstudio-device-screen');

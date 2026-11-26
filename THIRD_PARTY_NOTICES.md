@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-`dsh-markdown-studio` distributes self-contained Host and Client bundles (`dist/client.js`, `dist/client.studio.js`, `dist/index.js`, `dist/math.js`, and `dist/mermaid.js`) so end users can install the plugin with zero runtime npm dependency trees. React and `@deepseek-ai/dsh-client-ui-primitives` are provided by the DeepSeek Harness host at runtime and are **not** bundled.
+`dsh-markdown-studio` distributes self-contained Host and Client bundles (`dist/client.js`, `dist/client.studio.js`, `dist/index.js`, `dist/math.js`, `dist/mermaid.js`, and `dist/darkmode.js`) so end users can install the plugin with zero runtime npm dependency trees. React and `@deepseek-ai/dsh-client-ui-primitives` are provided by the DeepSeek Harness host at runtime and are **not** bundled.
 
 > **Full license texts:** the bundles strip embedded legal comments, so the complete copyright notice and license text of **every** bundled package (81 packages at the time of writing) ships in [THIRD_PARTY_LICENSES.txt](./THIRD_PARTY_LICENSES.txt). That file is generated from esbuild's bundle metafile by `npm run licenses`, and CI fails (`npm run licenses:check`) if it drifts from the installed dependency tree or if any bundled package uses a license outside the allowlist (`MIT`, `ISC`, `BSD-2-Clause`, `BSD-3-Clause`, `Apache-2.0`, `MPL-2.0 OR Apache-2.0`).
 
@@ -9,7 +9,7 @@
 | Package(s) | License | Role in `dsh-markdown-studio` |
 | :--- | :--- | :--- |
 | `@codemirror/*`, `@lezer/*`, `@marijn/find-cluster-break`, `style-mod`, `w3c-keyname`, `crelt` | MIT | Markdown and custom CSS editor engine (`dist/client.studio.js`) |
-| `mp-darkmode` | MIT | Official WeChat Dark Mode color transformation algorithm (`dist/client.studio.js`) |
+| `mp-darkmode` | MIT | Lazy-loaded (`dist/darkmode.js`) official WeChat Dark Mode color transformation algorithm |
 | `mathjax-full`, `mhchemparser` | Apache-2.0 | Lazy-loaded (`dist/math.js`) TeX-to-SVG formula renderer, including its SVG glyph path data |
 | `mermaid`, `@mermaid-js/parser`, `dagre-d3-es`, `cytoscape`, `cytoscape-cose-bilkent`, `cytoscape-fcose`, `cose-base`, `layout-base`, `khroma`, `dayjs`, `es-toolkit`, `lodash-es`, `fastdom`, `marked`, `roughjs`, `stylis`, `ts-dedent`, `uuid`, `@braintree/sanitize-url`, `@iconify/utils`, `@upsetjs/venn.js` | MIT | Lazy-loaded (`dist/mermaid.js`) strict-sandbox diagram parsing, layout, and SVG rendering |
 | `katex` | MIT | Math typesetting support inside Mermaid diagrams (`dist/mermaid.js`) |

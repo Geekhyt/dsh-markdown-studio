@@ -26,7 +26,7 @@ for (const [entry, name, chunk] of [
     logLevel: 'silent',
   });
 }
-for (const name of ['math', 'mermaid']) {
+for (const name of ['math', 'mermaid', 'darkmode']) {
   await build({
     entryPoints: [path.join(root, 'src', name + '-entry.ts')],
     outfile: path.join(destination, name + '.js'),
@@ -43,7 +43,7 @@ for (const name of ['math', 'mermaid']) {
 console.log('Built mapped test-only browser bundles in .testdeps/coverage');
 // c8 filters mapped paths before final resolution; absolute sources avoid treating
 // a relative browser-bundle source as an unrelated file outside the workspace.
-for (const name of ['client', 'client.studio', 'math', 'mermaid']) {
+for (const name of ['client', 'client.studio', 'math', 'mermaid', 'darkmode']) {
   const mapPath = path.join(destination, name + '.js.map');
   const fs = await import('node:fs');
   const map = JSON.parse(fs.readFileSync(mapPath, 'utf8')) as { sources: string[] };

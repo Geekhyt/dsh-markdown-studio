@@ -591,7 +591,7 @@ try {
   assert.match(hostAssetCheck.assetPath || '', /^assets\/[a-f0-9]{24}\.png$/, 'stored asset uses 24-hex SHA-256 path');
   assert.equal(hostAssetCheck.loopbackStatus, 200, 'read-only loopback server serves stored PNG with 200 OK');
 
-  // Unauthenticated external requests (no DSH auth cookie) must receive 401 across all 5 host HTTP routes
+  // Unauthenticated external requests (no DSH auth cookie) must receive 401 across all 6 host HTTP routes
   const origin = new URL(authenticatedUrl).origin;
   const unauthWechat = await fetch(`${origin}/api/markdown-studio/wechat`, {
     method: 'POST',
@@ -609,6 +609,15 @@ try {
   assert.equal(unauthMath.status, 401, 'unauthenticated /api/markdown-studio/math.js returns 401');
   const unauthMermaid = await fetch(`${origin}/api/markdown-studio/mermaid.js`);
   assert.equal(unauthMermaid.status, 401, 'unauthenticated /api/markdown-studio/mermaid.js returns 401');
+  const unauthDarkmode = await fetch(`${origin}/api/markdown-studio/darkmode.js`);
+  assert.equal(unauthDarkmode.status, 401, 'unauthenticated /api/markdown-studio/darkmode.js returns 401');
+  const authDarkmodeCheck = await page.evaluate(async () => {
+    const res = await fetch('/api/markdown-studio/darkmode.js');
+    const text = await res.text();
+    return { status: res.status, hasRuntime: text.includes('__MDSTUDIO_DARKMODE__') };
+  });
+  assert.equal(authDarkmodeCheck.status, 200, 'authenticated /api/markdown-studio/darkmode.js returns 200');
+  assert.equal(authDarkmodeCheck.hasRuntime, true, 'real DSH serves darkmode runtime bundle');
   const unauthAsset = await fetch(
     `${origin}/api/markdown-studio/assets/${(hostAssetCheck.assetPath || '').replace(/^assets\//, '')}`,
   );

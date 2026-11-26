@@ -481,7 +481,9 @@ check('prepareClipboardDom unwraps section blocks nested inside paragraphs with 
       Object.defineProperty(globalThis, key, { configurable: true, value: val });
     }
   }
+  const { darkmodeRuntime } = await import('../src/darkmode-entry');
   Object.assign(dom.window, {
+    __MDSTUDIO_DARKMODE__: darkmodeRuntime,
     requestAnimationFrame: (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0),
     cancelAnimationFrame: (id: number) => clearTimeout(id),
   });
@@ -769,6 +771,77 @@ check('prepareClipboardDom unwraps section blocks nested inside paragraphs with 
       prepareClipboardDom(olTask);
       assert.equal(olTask.querySelectorAll('ol')[1]?.getAttribute('start'), '2', 'split <ol> preserves start="2"');
       assert.equal(olTask.querySelector('path')?.getAttribute('stroke'), 'none', 'explicit stroke="none" is preserved');
+
+      // Tier 1 perf/resilience regressions:
+      // 1. Compiled CSS cache LRU (>16 distinct stylesheets) preserves exact inlining across evictions.
+      for (let i = 0; i < 20; i++) {
+        const cachedBox = document.createElement('section');
+        cachedBox.id = 'mdstudio';
+        cachedBox.innerHTML = '<p>Cache</p>';
+        engine.inlineCss(cachedBox, `#mdstudio p { padding-left: ${i + 1}px; }`);
+        assert.equal(q(cachedBox, 'p').style.paddingLeft, `${i + 1}px`);
+      }
+      // 2. Incremental applyDarkPreview on dirty blocks + offline fallback without __MDSTUDIO_DARKMODE__.
+      const incHost = document.createElement('div');
+      incHost.innerHTML =
+        '<section id="mdstudio" style="background-color: rgb(255, 255, 255); color: rgb(20, 24, 30);">' +
+        '<p>Keep</p><p>Edit</p></section>';
+      document.body.appendChild(incHost);
+      assert.equal(await applyDarkPreview(incHost), true, 'full dark pass succeeds');
+      const sec = incHost.querySelector<HTMLElement>('#mdstudio')!;
+      const freshP = document.createElement('p');
+      freshP.setAttribute('style', 'color: rgb(20, 24, 30); background-color: rgb(250, 250, 250);');
+      freshP.textContent = 'Dirty block';
+      sec.replaceChild(freshP, sec.children[1]);
+      assert.equal(await applyDarkPreview(incHost, undefined, [freshP]), true, 'incremental dark pass succeeds');
+      assert.ok(
+        freshP.className.includes('js_darkmode__') || freshP.style.backgroundColor.includes('color-mix'),
+        'incremental block surface is darkened via mp-darkmode class or FastDOM fallback',
+      );
+      assert.equal(await applyDarkPreview(incHost, undefined, []), true, 'empty dirty block list short-circuits');
+      // Already-dark root (e.g. Night theme) incremental pass adapts newly inserted bright child block
+      const darkIncHost = document.createElement('div');
+      darkIncHost.innerHTML =
+        '<section id="mdstudio" style="background-color: rgb(18, 18, 22); color: rgb(230, 232, 236);">' +
+        '<p>Keep dark</p><p>Old</p></section>';
+      document.body.appendChild(darkIncHost);
+      assert.equal(await applyDarkPreview(darkIncHost), true, 'already-dark full pass succeeds');
+      const darkSec = darkIncHost.querySelector<HTMLElement>('#mdstudio')!;
+      const brightPre = document.createElement('pre');
+      brightPre.setAttribute('style', 'background-color: rgb(246, 248, 250); color: rgb(36, 41, 47);');
+      brightPre.textContent = 'const x = 1;';
+      darkSec.replaceChild(brightPre, darkSec.children[1]);
+      assert.equal(
+        await applyDarkPreview(darkIncHost, undefined, [brightPre]),
+        true,
+        'already-dark incremental pass succeeds',
+      );
+      assert.ok(
+        brightPre.style.backgroundColor.includes('color-mix'),
+        'already-dark incremental pass darkens newly inserted bright block',
+      );
+      darkIncHost.remove();
+      const savedDm = dom.window.__MDSTUDIO_DARKMODE__;
+      delete (dom.window as unknown as Record<string, unknown>).__MDSTUDIO_DARKMODE__;
+      try {
+        const fallbackHost = document.createElement('div');
+        fallbackHost.innerHTML =
+          '<section id="mdstudio" style="background-color: rgb(255, 255, 255); color: rgb(20, 24, 30);"><p style="color: rgb(20, 24, 30);">Offline dark</p></section>';
+        document.body.appendChild(fallbackHost);
+        assert.equal(
+          await applyDarkPreview(fallbackHost),
+          true,
+          'dark preview gracefully falls back to FastDOM surface/contrast pass without mp-darkmode',
+        );
+        assert.ok(
+          fallbackHost.querySelector<HTMLElement>('#mdstudio')!.style.backgroundColor.includes('color-mix'),
+          'offline fallback darkens bright light root surface',
+        );
+        fallbackHost.remove();
+      } finally {
+        dom.window.__MDSTUDIO_DARKMODE__ = savedDm;
+      }
+      incHost.remove();
     } finally {
       window.getComputedStyle = origGetComputedStyle;
       oklchHost.remove();

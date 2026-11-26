@@ -105,6 +105,21 @@ const mathFile = mathBuild.outputFiles[0];
 if (!mathFile) throw new Error('math build emitted no output');
 fs.writeFileSync(path.join(distDir, 'math.js'), mathFile.text);
 
+const darkmodeBuild = await build({
+  entryPoints: [path.join(root, 'src/darkmode-entry.ts')],
+  bundle: true,
+  format: 'iife',
+  platform: 'browser',
+  target: ['es2020'],
+  write: false,
+  minify: true,
+  legalComments: 'none',
+  logLevel: 'silent',
+});
+const darkmodeFile = darkmodeBuild.outputFiles[0];
+if (!darkmodeFile) throw new Error('darkmode build emitted no output');
+fs.writeFileSync(path.join(distDir, 'darkmode.js'), darkmodeFile.text);
+
 const studioChunkOutput = `window.__ModuleLoader__.load({ id: ${JSON.stringify(pkg.name)}, chunk: "client.studio.js", factory: (require) => {
 var module = { exports: {} }; var exports = module.exports;
 (function (module, exports, require) {
@@ -144,7 +159,7 @@ const hostBuild = await build({
 });
 if (hostBuild.errors.length) throw new Error('host build failed');
 
-for (const name of ['client.js', 'client.studio.js', 'index.js', 'math.js', 'mermaid.js']) {
+for (const name of ['client.js', 'client.studio.js', 'index.js', 'math.js', 'mermaid.js', 'darkmode.js']) {
   const bytes = fs.statSync(path.join(distDir, name)).size;
   console.log(`built dist/${name} (${(bytes / 1024).toFixed(1)} KiB)`);
 }

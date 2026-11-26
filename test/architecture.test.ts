@@ -620,11 +620,25 @@ for (const hostRouteFile of ['host/http/ai-route.ts', 'host/http/static-bundle-r
     `${hostRouteFile} must delegate Host/Origin/Auth validation to canonical helpers in host/http/routes.ts`,
   );
 }
-for (const bundleRouteFile of ['host/http/math-route.ts', 'host/http/mermaid-route.ts']) {
+for (const bundleRouteFile of [
+  'host/http/math-route.ts',
+  'host/http/mermaid-route.ts',
+  'host/http/darkmode-route.ts',
+]) {
   const src = stripComments(fs.readFileSync(path.join(root, bundleRouteFile), 'utf8'));
   assert.ok(
     src.includes('createStaticBundleRoute'),
     `${bundleRouteFile} must delegate loopback/auth/ETag handling to createStaticBundleRoute`,
+  );
+}
+// Lazy dark-mode bundle boundary: only src/darkmode-entry.ts may import `mp-darkmode` so CJS bundling never inlines it into client.studio.js.
+for (const file of files('src')) {
+  const normalized = file.replace(/\\/g, '/');
+  if (normalized === 'src/darkmode-entry.ts') continue;
+  const code = stripComments(fs.readFileSync(path.join(root, file), 'utf8'));
+  assert.ok(
+    !/\bmp-darkmode\b/.test(code),
+    `${file} must not import mp-darkmode directly (lazy-load via /api/markdown-studio/darkmode.js)`,
   );
 }
 // Native DSH Tooltip must opt into `portal: true` so fixed tooltips escape immersive dock flex layout.
@@ -636,8 +650,8 @@ assert.ok(
 {
   const indexCode = stripComments(fs.readFileSync(path.join(root, 'index.ts'), 'utf8'));
   assert.ok(
-    indexCode.includes('requestRejection') && (indexCode.match(/\bcheckAuth\b/g) || []).length >= 5,
-    'index.ts must wire DSH host connection.requestRejection auth checker into all 5 HTTP routes',
+    indexCode.includes('requestRejection') && (indexCode.match(/\bcheckAuth\b/g) || []).length >= 6,
+    'index.ts must wire DSH host connection.requestRejection auth checker into all 6 HTTP routes',
   );
 }
 

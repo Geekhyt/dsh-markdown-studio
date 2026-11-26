@@ -12,7 +12,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { AiHostService, type HostDefaultModelSource, type HostLlmRuntime } from './host/application/ai-service';
 import { ImageHostService } from './host/application/image-store';
-import { createAiRoute, AI_ROUTE_PATH } from './host/http/ai-route';
+import { AI_ROUTE_PATH, createAiRoute } from './host/http/ai-route';
+import { createDarkmodeRoute, DARKMODE_PATH } from './host/http/darkmode-route';
 import { createMathRoute, MATH_PATH } from './host/http/math-route';
 import { createMermaidRoute, MERMAID_PATH } from './host/http/mermaid-route';
 import { ASSET_PREFIX, createAssetRoute, createImageRoute, type HostAuthChecker, ROUTE_PATH } from './host/http/routes';
@@ -67,6 +68,7 @@ export function apply(ctx: HostContext): void {
     const aiHandler = createAiRoute({ service: aiService, signal: abort.signal, checkAuth });
     const mathHandler = createMathRoute({ checkAuth, signal: abort.signal });
     const mermaidHandler = createMermaidRoute({ checkAuth, signal: abort.signal });
+    const darkmodeHandler = createDarkmodeRoute({ checkAuth, signal: abort.signal });
     disposers.push(async function () {
       abort.abort();
       try {
@@ -89,6 +91,7 @@ export function apply(ctx: HostContext): void {
       );
       disposers.push(ctx.webServer.register({ kind: 'exact', path: MERMAID_PATH, handler: mermaidHandler }));
       disposers.push(ctx.webServer.register({ kind: 'exact', path: MATH_PATH, handler: mathHandler }));
+      disposers.push(ctx.webServer.register({ kind: 'exact', path: DARKMODE_PATH, handler: darkmodeHandler }));
       disposers.push(ctx.webServer.register({ kind: 'exact', path: AI_ROUTE_PATH, handler: aiHandler }));
     } catch (error) {
       void rollback();

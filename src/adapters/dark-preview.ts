@@ -1,20 +1,50 @@
+import { isPluginLifecycleMounted, onPluginLifecycleUnmount } from '../runtime/react-lifecycle';
 import { contrast, DARK_STAGE_DEFAULT, ensureContrast, parseHex, rgbToHex } from '../theme-system/color';
 
 const DARK_TEXT_MIN_CONTRAST = 4.6;
 const COLOR_CACHE_LIMIT = 256;
+const DARK_SURFACE_MIX_RGB: [number, number, number] = [27, 29, 34];
+const DARK_STAGE_RGB: [number, number, number] = parseHex(DARK_STAGE_DEFAULT);
+const MEDIA_TAG_RE = /^(?:IMG|VIDEO|IFRAME|CANVAS)$/i;
 
 type RgbaTuple = [number, number, number, number];
+type RgbTuple = [number, number, number];
+
+interface DarkmodeApi {
+  run(nodes: HTMLElement[], opt?: { mode?: string }, container?: HTMLElement): void;
+  reset(nodes: HTMLElement[]): void;
+}
+
+interface DarkAdjustmentPlan {
+  bgImageClears: HTMLElement[];
+  surfaceDarkens: Array<[HTMLElement, string]>;
+  colorLifts: Array<[HTMLElement, string]>;
+  darkened: Set<HTMLElement>;
+}
 
 let probeCanvasCtx: CanvasRenderingContext2D | null | undefined;
 const browserRgbaCache = new Map<string, RgbaTuple | null>();
+let loadedDarkmode: DarkmodeApi | null = null;
+let sharedDarkmodeLoadPromise: Promise<DarkmodeApi | null> | null = null;
+
+onPluginLifecycleUnmount(() => {
+  sharedDarkmodeLoadPromise = null;
+  loadedDarkmode = null;
+});
 
 function isProbeSample(data: Uint8ClampedArray): boolean {
   return data[0] === 1 && data[1] === 2 && data[2] === 3 && data[3] === 255;
 }
 
+function isJsdomEnvironment(): boolean {
+  const winUa = typeof window !== 'undefined' && window.navigator ? window.navigator.userAgent : '';
+  const navUa = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+  return /jsdom/i.test(winUa) || /jsdom/i.test(navUa);
+}
+
 function getColorProbeContext(): CanvasRenderingContext2D | null {
   if (probeCanvasCtx !== undefined) return probeCanvasCtx;
-  if (typeof document === 'undefined' || /jsdom/i.test(typeof navigator !== 'undefined' ? navigator.userAgent : '')) {
+  if (typeof document === 'undefined' || isJsdomEnvironment()) {
     return (probeCanvasCtx = null);
   }
   try {
@@ -78,7 +108,7 @@ function srgbToLinear(v: number): number {
   return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
 }
 
-function oklabToRgb(L: number, a: number, b: number): [number, number, number] {
+function oklabToRgb(L: number, a: number, b: number): RgbTuple {
   const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
   const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
   const s_ = L - 0.0894841775 * a - 1.291485548 * b;
@@ -126,7 +156,7 @@ function hslChannel(hDeg: number, s: number, l: number, n: number): number {
   return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
 }
 
-function hslToRgbTuple(hRad: number, sPct: number, lPct: number): [number, number, number] {
+function hslToRgbTuple(hRad: number, sPct: number, lPct: number): RgbTuple {
   const hDeg = ((((hRad * 180) / Math.PI) % 360) + 360) % 360;
   const s = Math.max(0, Math.min(1, sPct / 100));
   const l = Math.max(0, Math.min(1, lPct / 100));
@@ -137,7 +167,7 @@ function hslToRgbTuple(hRad: number, sPct: number, lPct: number): [number, numbe
   ];
 }
 
-function parseCssColor4Fallback(color: string): [number, number, number] | null {
+function parseCssColor4Fallback(color: string): RgbTuple | null {
   const value = color.trim();
   const hex4 = HEX_ALPHA_4_RE.exec(value);
   if (hex4) return [parseInt(hex4[1] + hex4[1], 16), parseInt(hex4[2] + hex4[2], 16), parseInt(hex4[3] + hex4[3], 16)];
@@ -190,7 +220,7 @@ function parseCssColor4Fallback(color: string): [number, number, number] | null 
   return null;
 }
 
-function rgbTuple(color: string): [number, number, number] | null {
+function rgbTuple(color: string): RgbTuple | null {
   const value = String(color || '').trim();
   const rgb = RGB_PREFIX_RE.exec(value);
   if (rgb) {
@@ -221,66 +251,23 @@ export function alphaOf(color: string): number {
   return native ? native[3] : 1;
 }
 
+function channelToLinear(channel: number): number {
+  const c = channel / 255;
+  return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+}
+
+function rgbLuminance(rgb: RgbTuple): number {
+  return 0.2126 * channelToLinear(rgb[0]) + 0.7152 * channelToLinear(rgb[1]) + 0.0722 * channelToLinear(rgb[2]);
+}
+
 function luminance(color: string): number {
   const rgb = rgbTuple(color);
-  if (!rgb) return 1;
-  const channels = rgb.map(function (value) {
-    const c = value / 255;
-    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-  });
-  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+  return rgb ? rgbLuminance(rgb) : 1;
 }
 
-function compositeOver(
-  fg: [number, number, number],
-  alpha: number,
-  bg: [number, number, number],
-): [number, number, number] {
+function compositeOver(fg: RgbTuple, alpha: number, bg: RgbTuple): RgbTuple {
   const a = Math.max(0, Math.min(1, alpha));
   return [fg[0] * a + bg[0] * (1 - a), fg[1] * a + bg[1] * (1 - a), fg[2] * a + bg[2] * (1 - a)];
-}
-
-function readBgLayer(element: HTMLElement): { rgb: [number, number, number]; alpha: number } | null {
-  const bg = window.getComputedStyle(element).backgroundColor;
-  const alpha = alphaOf(bg);
-  if (alpha <= 0.01) return null;
-  const rgb = rgbTuple(bg);
-  return rgb ? { rgb, alpha } : null;
-}
-
-function nextAncestor(cursor: HTMLElement, stopAt: HTMLElement): HTMLElement | null {
-  return cursor === stopAt ? null : cursor.parentElement;
-}
-
-function blendColorLayers(
-  layers: Array<{ rgb: [number, number, number]; alpha: number }>,
-  baseRgb: [number, number, number],
-): [number, number, number] {
-  let blended = baseRgb;
-  for (let i = layers.length - 1; i >= 0; i--) {
-    blended = compositeOver(layers[i].rgb, layers[i].alpha, blended);
-  }
-  return blended;
-}
-
-function nearestOpaqueBgHex(
-  element: HTMLElement,
-  stopAt: HTMLElement,
-): { rgb: [number, number, number]; hex: string; lum: number } {
-  const layers: Array<{ rgb: [number, number, number]; alpha: number }> = [];
-  let baseRgb: [number, number, number] = parseHex(DARK_STAGE_DEFAULT);
-  for (let cursor: HTMLElement | null = element; cursor; cursor = nextAncestor(cursor, stopAt)) {
-    const layer = readBgLayer(cursor);
-    if (!layer) continue;
-    if (layer.alpha >= 0.99) {
-      baseRgb = layer.rgb;
-      break;
-    }
-    layers.push(layer);
-  }
-  const blended = blendColorLayers(layers, baseRgb);
-  const hex = rgbToHex(blended[0], blended[1], blended[2]);
-  return { rgb: blended, hex, lum: luminance(`rgb(${blended[0]}, ${blended[1]}, ${blended[2]})`) };
 }
 
 function isNonEmptyTextNode(node: ChildNode): boolean {
@@ -295,8 +282,7 @@ function hasDirectTextOrMath(element: HTMLElement): boolean {
   return false;
 }
 
-function resolveFgHex(element: HTMLElement, bgRgb: [number, number, number]): string | null {
-  const raw = window.getComputedStyle(element).color;
+function resolveColorHex(raw: string, bgRgb: RgbTuple): string | null {
   const fgRgb = rgbTuple(raw);
   if (!fgRgb) return null;
   const alpha = alphaOf(raw);
@@ -307,7 +293,6 @@ function resolveFgHex(element: HTMLElement, bgRgb: [number, number, number]): st
 }
 
 function shouldLiftElement(element: HTMLElement, darkened: ReadonlySet<HTMLElement>): boolean {
-  if (element.closest('svg')) return false;
   return element.tagName === 'LI' || darkened.has(element) || hasDirectTextOrMath(element);
 }
 
@@ -315,71 +300,137 @@ function needsContrastLift(fgHex: string | null, bgHex: string): fgHex is string
   return Boolean(fgHex) && contrast(fgHex as string, bgHex) < DARK_TEXT_MIN_CONTRAST;
 }
 
-function liftElementContrast(element: HTMLElement, root: HTMLElement, darkened: ReadonlySet<HTMLElement>): void {
-  if (!shouldLiftElement(element, darkened)) return;
-  const bg = nearestOpaqueBgHex(element, root);
-  // Cover mid-luminance surfaces up to 0.45 so no dead-zone exists between normalizeSurfaceElement (>0.42) and contrast lifting.
-  if (bg.lum >= 0.45) return;
-  const fgHex = resolveFgHex(element, bg.rgb);
-  if (!needsContrastLift(fgHex, bg.hex)) return;
-  element.style.setProperty('color', ensureContrast(fgHex, bg.hex, DARK_TEXT_MIN_CONTRAST), 'important');
+function evaluateSurfaceBg(
+  element: HTMLElement,
+  bg: string,
+  parentBgRgb: RgbTuple,
+  plan: DarkAdjustmentPlan,
+): RgbTuple {
+  const alpha = alphaOf(bg);
+  if (alpha <= 0.01) return parentBgRgb;
+  const rgb = rgbTuple(bg);
+  if (!rgb) return parentBgRgb;
+  const blended = alpha < 0.99 ? compositeOver(rgb, alpha, parentBgRgb) : rgb;
+  if (alpha >= 0.08 && rgbLuminance(blended) > 0.42) {
+    plan.surfaceDarkens.push([element, 'color-mix(in srgb, ' + bg + ' 12%, #1b1d22)']);
+    plan.darkened.add(element);
+    return compositeOver(blended, 0.12, DARK_SURFACE_MIX_RGB);
+  }
+  return blended;
+}
+
+function planDarkSubtree(element: HTMLElement, parentBgRgb: RgbTuple, plan: DarkAdjustmentPlan): void {
+  if (element.tagName.toLowerCase() === 'svg') return;
+  const isMedia = MEDIA_TAG_RE.test(element.tagName);
+  const style = window.getComputedStyle(element);
+  let effectiveBgRgb = parentBgRgb;
+  if (!isMedia) {
+    const bgImage = style.backgroundImage;
+    if (bgImage && bgImage !== 'none' && bgImage.indexOf('url(') === -1) {
+      plan.bgImageClears.push(element);
+    }
+    effectiveBgRgb = evaluateSurfaceBg(element, style.backgroundColor, parentBgRgb, plan);
+    if (shouldLiftElement(element, plan.darkened) && rgbLuminance(effectiveBgRgb) < 0.45) {
+      const bgHex = rgbToHex(effectiveBgRgb[0], effectiveBgRgb[1], effectiveBgRgb[2]);
+      const fgHex = resolveColorHex(style.color, effectiveBgRgb);
+      if (needsContrastLift(fgHex, bgHex)) {
+        plan.colorLifts.push([element, ensureContrast(fgHex, bgHex, DARK_TEXT_MIN_CONTRAST)]);
+      }
+    }
+  }
+  for (let child = element.firstElementChild; child; child = child.nextElementSibling) {
+    planDarkSubtree(child as HTMLElement, effectiveBgRgb, plan);
+  }
+}
+
+function flushDarkAdjustments(plan: DarkAdjustmentPlan): void {
+  for (let i = 0; i < plan.bgImageClears.length; i++) {
+    plan.bgImageClears[i].style.setProperty('background-image', 'none', 'important');
+  }
+  for (let i = 0; i < plan.surfaceDarkens.length; i++) {
+    const [el, value] = plan.surfaceDarkens[i];
+    el.style.setProperty('background-color', value, 'important');
+  }
+  for (let i = 0; i < plan.colorLifts.length; i++) {
+    const [el, value] = plan.colorLifts[i];
+    el.style.setProperty('color', value, 'important');
+  }
+}
+
+function readRootEffectiveBgRgb(root: HTMLElement): RgbTuple {
+  const raw = window.getComputedStyle(root).backgroundColor;
+  const alpha = alphaOf(raw);
+  if (alpha <= 0.01) return DARK_STAGE_RGB;
+  const rgb = rgbTuple(raw);
+  if (!rgb) return DARK_STAGE_RGB;
+  return alpha < 0.99 ? compositeOver(rgb, alpha, DARK_STAGE_RGB) : rgb;
 }
 
 /**
- * Guarantee WCAG AA (>= 4.5:1) legibility on dark surfaces across every
- * text-bearing element, list marker owner (`<li>`), and darkened surface container.
+ * Single-pass FastDOM Read -> Compute -> Write dark surface normalization and
+ * WCAG AA (>= 4.5:1) contrast lifting, eliminating O(N*depth) layout thrashing.
  */
-function liftDarkText(root: HTMLElement, darkened: ReadonlySet<HTMLElement>): void {
-  if (typeof window === 'undefined') return;
-  liftElementContrast(root, root, darkened);
-  root.querySelectorAll<HTMLElement>('*').forEach(function (element) {
-    liftElementContrast(element, root, darkened);
-  });
-}
-
-function isMediaOrSvg(element: HTMLElement): boolean {
-  return Boolean(element.closest('svg')) || /^(IMG|VIDEO|IFRAME|CANVAS)$/i.test(element.tagName);
-}
-
-function clearNonUrlBgImage(element: HTMLElement, image: string): void {
-  if (image && image !== 'none' && image.indexOf('url(') === -1) {
-    element.style.setProperty('background-image', 'none', 'important');
+function finalizeDarkRoot(root: HTMLElement | null, dirtyBlocks?: readonly HTMLElement[]): void {
+  if (!root || typeof window === 'undefined') return;
+  const plan: DarkAdjustmentPlan = {
+    bgImageClears: [],
+    surfaceDarkens: [],
+    colorLifts: [],
+    darkened: new Set<HTMLElement>(),
+  };
+  if (dirtyBlocks && dirtyBlocks.length > 0) {
+    const rootBgRgb = readRootEffectiveBgRgb(root);
+    for (let i = 0; i < dirtyBlocks.length; i++) {
+      planDarkSubtree(dirtyBlocks[i], rootBgRgb, plan);
+    }
+  } else {
+    planDarkSubtree(root, DARK_STAGE_RGB, plan);
   }
+  flushDarkAdjustments(plan);
 }
 
-function normalizeSurfaceElement(element: HTMLElement, root: HTMLElement, darkened: Set<HTMLElement>): void {
-  if (isMediaOrSvg(element)) return;
-  const style = window.getComputedStyle(element);
-  clearNonUrlBgImage(element, style.backgroundImage);
-  const background = style.backgroundColor;
-  const alpha = alphaOf(background);
-  if (alpha < 0.08) return;
-  const rgb = rgbTuple(background);
-  if (!rgb) return;
-  let effectiveLum = luminance(`rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`);
-  if (alpha < 0.99) {
-    const backdrop =
-      element === root ? parseHex(DARK_STAGE_DEFAULT) : nearestOpaqueBgHex(element.parentElement || root, root).rgb;
-    const blended = compositeOver(rgb, alpha, backdrop);
-    effectiveLum = luminance(`rgb(${blended[0]}, ${blended[1]}, ${blended[2]})`);
+function getWindowDarkmode(): DarkmodeApi | null {
+  if (typeof window === 'undefined') return null;
+  return window.__MDSTUDIO_DARKMODE__ || null;
+}
+
+function loadDarkmodeRuntime(): Promise<DarkmodeApi | null> {
+  const existing = getWindowDarkmode();
+  if (existing) {
+    loadedDarkmode = existing;
+    return Promise.resolve(existing);
   }
-  if (effectiveLum <= 0.42) return;
-  element.style.setProperty('background-color', 'color-mix(in srgb, ' + background + ' 12%, #1b1d22)', 'important');
-  darkened.add(element);
-}
-
-function normalizeDarkSurfaces(root: HTMLElement): Set<HTMLElement> {
-  const darkened = new Set<HTMLElement>();
-  if (typeof window === 'undefined') return darkened;
-  normalizeSurfaceElement(root, root, darkened);
-  root.querySelectorAll<HTMLElement>('*').forEach(function (element) {
-    normalizeSurfaceElement(element, root, darkened);
+  if (typeof document === 'undefined' || isJsdomEnvironment()) {
+    return Promise.resolve(null);
+  }
+  if (sharedDarkmodeLoadPromise) return sharedDarkmodeLoadPromise;
+  sharedDarkmodeLoadPromise = new Promise(function (resolve) {
+    const script = document.createElement('script');
+    script.src = '/api/markdown-studio/darkmode.js';
+    script.async = true;
+    script.setAttribute('data-plugin', 'dsh-markdown-studio');
+    script.onload = function () {
+      sharedDarkmodeLoadPromise = null;
+      if (!isPluginLifecycleMounted()) {
+        delete (window as unknown as Record<string, unknown>).__MDSTUDIO_DARKMODE__;
+        script.remove();
+        resolve(null);
+        return;
+      }
+      const api = getWindowDarkmode();
+      if (!api) script.remove();
+      loadedDarkmode = api;
+      resolve(api);
+    };
+    script.onerror = function () {
+      sharedDarkmodeLoadPromise = null;
+      script.remove();
+      resolve(null);
+    };
+    document.head.appendChild(script);
   });
-  return darkened;
+  return sharedDarkmodeLoadPromise;
 }
-
-type DarkmodeApi = typeof import('mp-darkmode');
-let loadedDarkmode: DarkmodeApi | null = null;
 
 function tagDarkmodeStyles(): void {
   if (typeof document === 'undefined') return;
@@ -391,7 +442,7 @@ function tagDarkmodeStyles(): void {
 export function cleanupDarkPreview(): void {
   if (typeof document === 'undefined') return;
   try {
-    loadedDarkmode?.reset?.([]);
+    (loadedDarkmode || getWindowDarkmode())?.reset?.([]);
   } catch {
     /* ignore reset failure on detached documents */
   }
@@ -418,17 +469,26 @@ function prepareLightRoot(root: HTMLElement | null): void {
   if (!root.style.color) root.style.setProperty('color', '#1f2328');
 }
 
-function runDarkmodeOnTarget(Darkmode: DarkmodeApi, target: HTMLElement): void {
-  if (typeof Darkmode.reset === 'function') Darkmode.reset([]);
-  const nodes = [target, ...Array.from(target.querySelectorAll<HTMLElement>('*'))];
-  Darkmode.run(nodes, { mode: 'dark' });
-  tagDarkmodeStyles();
+function collectSubtreeNodes(roots: readonly HTMLElement[]): HTMLElement[] {
+  const nodes: HTMLElement[] = [];
+  for (let i = 0; i < roots.length; i++) {
+    const block = roots[i];
+    nodes.push(block);
+    const descendants = block.querySelectorAll<HTMLElement>('*');
+    for (let j = 0; j < descendants.length; j++) nodes.push(descendants[j]);
+  }
+  return nodes;
 }
 
-function finalizeDarkRoot(root: HTMLElement | null): void {
-  if (!root) return;
-  const darkened = normalizeDarkSurfaces(root);
-  liftDarkText(root, darkened);
+function runDarkmodeOnTarget(Darkmode: DarkmodeApi, target: HTMLElement, dirtyBlocks?: readonly HTMLElement[]): void {
+  if (dirtyBlocks && dirtyBlocks.length > 0) {
+    Darkmode.run(collectSubtreeNodes(dirtyBlocks), { mode: 'dark' }, target);
+    tagDarkmodeStyles();
+    return;
+  }
+  if (typeof Darkmode.reset === 'function') Darkmode.reset([]);
+  Darkmode.run(collectSubtreeNodes([target]), { mode: 'dark' });
+  tagDarkmodeStyles();
 }
 
 function warnDarkPreviewFailure(error: unknown): void {
@@ -441,21 +501,32 @@ function warnDarkPreviewFailure(error: unknown): void {
  * Apply WeChat's official Dark Mode transform to a preview clone. The source
  * HTML and clipboard output stay in the authored light theme.
  */
-export async function applyDarkPreview(article: HTMLElement, isCancelled?: () => boolean): Promise<boolean> {
+export async function applyDarkPreview(
+  article: HTMLElement,
+  isCancelled?: () => boolean,
+  dirtyBlocks?: readonly HTMLElement[],
+): Promise<boolean> {
   try {
     const root = article.querySelector<HTMLElement>('#mdstudio');
-    if (isAlreadyDarkRoot(root)) {
-      cleanupDarkPreview();
+    if (dirtyBlocks && dirtyBlocks.length === 0) return true;
+    const incremental = Boolean(dirtyBlocks && dirtyBlocks.length > 0 && root);
+    const rootHasMpDark = Boolean(root && /js_darkmode__/.test(root.className));
+    if (isAlreadyDarkRoot(root) && (!incremental || !rootHasMpDark)) {
+      if (!incremental) cleanupDarkPreview();
       // Even when the theme root is already dark (e.g. `night`), adapt bright child blocks (e.g. `codeTheme: 'github'`) and lift contrast.
-      finalizeDarkRoot(root);
+      finalizeDarkRoot(root, incremental ? dirtyBlocks : undefined);
       return true;
     }
-    const Darkmode = await import('mp-darkmode');
+    const Darkmode = await loadDarkmodeRuntime();
     if (isCancelledOrDetached(article, isCancelled)) return false;
-    loadedDarkmode = Darkmode;
-    prepareLightRoot(root);
-    runDarkmodeOnTarget(Darkmode, root || article);
-    finalizeDarkRoot(root);
+    if (Darkmode) {
+      loadedDarkmode = Darkmode;
+      if (!incremental) prepareLightRoot(root);
+      runDarkmodeOnTarget(Darkmode, root || article, incremental ? dirtyBlocks : undefined);
+    } else if (!incremental) {
+      prepareLightRoot(root);
+    }
+    finalizeDarkRoot(root, incremental ? dirtyBlocks : undefined);
     return true;
   } catch (error) {
     cleanupDarkPreview();

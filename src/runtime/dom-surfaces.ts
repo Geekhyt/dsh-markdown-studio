@@ -148,7 +148,11 @@ export interface PreviewSurfaceSpec {
   relayoutKey?: string;
   empty?: boolean;
   stageRef?: ReactNamespace.RefObject<HTMLDivElement | null>;
-  applyDark: (articleEl: HTMLElement, isCancelled?: () => boolean) => Promise<boolean>;
+  applyDark: (
+    articleEl: HTMLElement,
+    isCancelled?: () => boolean,
+    dirtyBlocks?: readonly HTMLElement[],
+  ) => Promise<boolean>;
   cleanupDark?: () => void;
   onMountSurface?: () => void;
   onPreviewRelayout?: () => void;
@@ -196,21 +200,147 @@ interface MountedSurfaceState {
   html: string;
   dark: boolean;
   darkApplied: boolean;
+  rootSignature: string;
+  blockHtmls: string[];
+  incrementalDarkEdits: number;
 }
 
-const EMPTY_MOUNTED_SURFACE: MountedSurfaceState = { node: null, html: '', dark: false, darkApplied: false };
+const MAX_INCREMENTAL_DARK_EDITS = 32;
+
+const EMPTY_MOUNTED_SURFACE: MountedSurfaceState = {
+  node: null,
+  html: '',
+  dark: false,
+  darkApplied: false,
+  rootSignature: '',
+  blockHtmls: [],
+  incrementalDarkEdits: 0,
+};
+
+function rootElementSignature(el: Element): string {
+  const parts: string[] = [el.tagName];
+  for (let i = 0; i < el.attributes.length; i++) {
+    const attr = el.attributes[i];
+    parts.push(attr.name + '=' + attr.value);
+  }
+  return parts.join('\0');
+}
+
+function parseArticleRoot(doc: Document, html: string): HTMLElement | null {
+  const holder = doc.createElement('div');
+  holder.innerHTML = html;
+  return holder.firstElementChild as HTMLElement | null;
+}
+
+function childBlockHtmls(root: Element): string[] {
+  const out: string[] = [];
+  for (let child = root.firstElementChild; child; child = child.nextElementSibling) {
+    out.push(child.outerHTML);
+  }
+  return out;
+}
+
+function findBlockDiffSpan(prev: readonly string[], next: readonly string[]): { head: number; tail: number } {
+  const minLen = Math.min(prev.length, next.length);
+  let head = 0;
+  while (head < minLen && prev[head] === next[head]) head++;
+  let tail = 0;
+  while (head + tail < minLen && prev[prev.length - 1 - tail] === next[next.length - 1 - tail]) tail++;
+  return { head, tail };
+}
+
+function canMorphPreviousState(article: HTMLDivElement, spec: PreviewSurfaceSpec, prev: MountedSurfaceState): boolean {
+  if (prev.node !== article || prev.dark !== spec.dark || !prev.rootSignature) return false;
+  if (!spec.dark) return true;
+  return prev.darkApplied && prev.incrementalDarkEdits < MAX_INCREMENTAL_DARK_EDITS;
+}
+
+function getMorphableRoot(article: HTMLDivElement, expectedChildCount: number): HTMLElement | null {
+  const existingRoot = article.firstElementChild as HTMLElement | null;
+  if (!existingRoot || existingRoot.id !== 'mdstudio') return null;
+  return existingRoot.children.length === expectedChildCount ? existingRoot : null;
+}
+
+function spliceMountedBlocks(
+  existingRoot: HTMLElement,
+  nextRoot: HTMLElement,
+  head: number,
+  removeEnd: number,
+  insertEnd: number,
+): HTMLElement[] {
+  for (let i = removeEnd - 1; i >= head; i--) {
+    existingRoot.children[i]?.remove();
+  }
+  const anchor = existingRoot.children[head] || null;
+  const dirtyBlocks = (Array.from(nextRoot.children) as HTMLElement[]).slice(head, insertEnd);
+  for (let i = 0; i < dirtyBlocks.length; i++) {
+    existingRoot.insertBefore(dirtyBlocks[i], anchor);
+  }
+  return dirtyBlocks;
+}
+
+function tryMorphMountedArticle(
+  article: HTMLDivElement,
+  spec: PreviewSurfaceSpec,
+  prev: MountedSurfaceState,
+): { state: MountedSurfaceState; dirtyBlocks: HTMLElement[] } | null {
+  if (!canMorphPreviousState(article, spec, prev)) return null;
+  const existingRoot = getMorphableRoot(article, prev.blockHtmls.length);
+  if (!existingRoot) return null;
+  const nextRoot = parseArticleRoot(article.ownerDocument, spec.html);
+  if (!nextRoot || nextRoot.id !== 'mdstudio') return null;
+  const nextSig = rootElementSignature(nextRoot);
+  if (nextSig !== prev.rootSignature) return null;
+  const nextHtmls = childBlockHtmls(nextRoot);
+  const { head, tail } = findBlockDiffSpan(prev.blockHtmls, nextHtmls);
+  if (head === 0 && tail === 0 && prev.blockHtmls.length > 0) return null;
+  const dirtyBlocks = spliceMountedBlocks(
+    existingRoot,
+    nextRoot,
+    head,
+    prev.blockHtmls.length - tail,
+    nextHtmls.length - tail,
+  );
+  const hasDirty = dirtyBlocks.length > 0;
+  return {
+    dirtyBlocks,
+    state: {
+      node: article,
+      html: spec.html,
+      dark: spec.dark,
+      darkApplied: prev.darkApplied && !hasDirty,
+      rootSignature: nextSig,
+      blockHtmls: nextHtmls,
+      incrementalDarkEdits: spec.dark && hasDirty ? prev.incrementalDarkEdits + 1 : prev.incrementalDarkEdits,
+    },
+  };
+}
 
 function syncMountedArticle(
   article: HTMLDivElement,
   spec: PreviewSurfaceSpec,
   lastMountedRef: ReactNamespace.MutableRefObject<MountedSurfaceState>,
-): boolean {
+): { changed: boolean; dirtyBlocks?: HTMLElement[] } {
   const prev = lastMountedRef.current;
-  if (prev.node === article && prev.html === spec.html && prev.dark === spec.dark) return false;
+  if (prev.node === article && prev.html === spec.html && prev.dark === spec.dark) return { changed: false };
+  const morphed = tryMorphMountedArticle(article, spec, prev);
+  if (morphed) {
+    lastMountedRef.current = morphed.state;
+    return { changed: true, dirtyBlocks: morphed.dirtyBlocks };
+  }
   resetArticleSurface(article);
   article.innerHTML = spec.html;
-  lastMountedRef.current = { node: article, html: spec.html, dark: spec.dark, darkApplied: false };
-  return true;
+  const mountedRoot = article.firstElementChild;
+  lastMountedRef.current = {
+    node: article,
+    html: spec.html,
+    dark: spec.dark,
+    darkApplied: false,
+    rootSignature: mountedRoot && mountedRoot.id === 'mdstudio' ? rootElementSignature(mountedRoot) : '',
+    blockHtmls: mountedRoot && mountedRoot.id === 'mdstudio' ? childBlockHtmls(mountedRoot) : [],
+    incrementalDarkEdits: 0,
+  };
+  return { changed: true };
 }
 
 function usePreviewRelayoutSync(
@@ -255,7 +385,8 @@ export function usePreviewHtmlSurface(
         return undefined;
       }
       const freshNode = lastMountedRef.current.node !== article;
-      const contentChanged = syncMountedArticle(article, spec, lastMountedRef);
+      const syncResult = syncMountedArticle(article, spec, lastMountedRef);
+      const contentChanged = syncResult.changed;
       if (freshNode) onMountSurfaceRef.current?.();
       if (contentChanged || spec.relayoutKey !== undefined) onRelayoutRef.current?.();
       if (!spec.dark) {
@@ -263,7 +394,7 @@ export function usePreviewHtmlSurface(
         cleanupDarkRef.current?.();
         return undefined;
       }
-      if (!contentChanged && lastMountedRef.current.darkApplied) {
+      if (lastMountedRef.current.darkApplied) {
         paintStageBackground(
           screen,
           spec.paper ? spec.surfaceBg : resolveDarkStageBg(article, spec.darkFallbackBg),
@@ -272,13 +403,15 @@ export function usePreviewHtmlSurface(
         );
         return undefined;
       }
-      paintStageBackground(screen, spec.surfaceBg, spec.darkFallbackBg, isDesktop);
+      if (!syncResult.dirtyBlocks) {
+        paintStageBackground(screen, spec.surfaceBg, spec.darkFallbackBg, isDesktop);
+      }
       let cancelled = false;
       void applyDarkRef
-        .current(article, () => cancelled)
+        .current(article, () => cancelled, syncResult.dirtyBlocks)
         .then(function (applied) {
           if (cancelled || !applied) return;
-          lastMountedRef.current = { node: article, html: spec.html, dark: spec.dark, darkApplied: true };
+          lastMountedRef.current = { ...lastMountedRef.current, darkApplied: true };
           if (!spec.paper) {
             paintStageBackground(
               screen,

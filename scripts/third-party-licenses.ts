@@ -19,6 +19,7 @@ const ENTRIES: Array<{ entry: string; platform: 'browser' | 'node'; artifact: st
   { entry: 'src/plugin-entry.ts', platform: 'browser', artifact: 'dist/client.studio.js' },
   { entry: 'src/math-entry.ts', platform: 'browser', artifact: 'dist/math.js' },
   { entry: 'src/mermaid-entry.ts', platform: 'browser', artifact: 'dist/mermaid.js' },
+  { entry: 'src/darkmode-entry.ts', platform: 'browser', artifact: 'dist/darkmode.js' },
   { entry: 'index.ts', platform: 'node', artifact: 'dist/index.js' },
 ];
 
